@@ -1,0 +1,11 @@
+[project]
+name = "vpnbot"
+version = "0.1.0"
+description = "..."
+requires-python = ">=3.13"
+dependencies = [
+    'python-telegram-bot',
+    'django',
+    'django-environ',
+    'py3xui',
+]
