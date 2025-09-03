@@ -1,6 +1,6 @@
 from django.db import models
 
-from apps.payments.choices import TransactionSourceChoices, TransactionSourceChoices, TransactionStatusChoices
+from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
 from apps.payments.querysets import TransactionQuerySet
 
 
@@ -66,4 +66,4 @@ class Transaction(models.Model):
         ]
 
     def __str__(self):
-        return f'{self.user.username} - {self.amount} - {self.status}'
+        return f"{self.user.username} - {self.amount} - {self.status}"

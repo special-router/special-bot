@@ -9,3 +9,23 @@ dependencies = [
     'django-environ',
     'py3xui',
 ]
+[tool.isort]
+profile = 'black'
+line_length = 120
+lines_after_imports = 2
+lines_between_sections = 1
+lines_between_types = 0
+force_alphabetical_sort_within_sections = true
+ensure_newline_before_comments = true
+combine_as_imports = true
+combine_star = true
+skip_gitignore = true
+balanced_wrapping = true
+
+[tool.black]
+line-length = 120
+skip-string-normalization = true
+
+[tool.flake8]
+max-line-length = 120
+extend-ignore = ['E704', 'E701']

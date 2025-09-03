@@ -1,5 +1,6 @@
-from django.db import models
 from typing import Self
+
+from django.db import models
 
 
 class TransactionQuerySet(models.QuerySet):

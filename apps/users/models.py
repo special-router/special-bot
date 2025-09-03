@@ -1,5 +1,7 @@
 from django.db import models
+
 from apps.users.querysets import TelegramUserQuerySet
+
 
 class TelegramUser(models.Model):
 
@@ -43,4 +45,4 @@ class TelegramUser(models.Model):
         verbose_name_plural = 'Telegram Users'
 
     def __str__(self):
-        return f'{self.username} {self.telegram_id}'
+        return f"{self.username} {self.telegram_id}"

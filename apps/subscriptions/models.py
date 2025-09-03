@@ -8,9 +8,7 @@ class Subscription(models.Model):
         related_name='subscriptions',
     )
 
-    url = models.URLField(
-        'VPN url'
-    )
+    url = models.URLField('VPN url')
 
     server = models.ForeignKey(
         'servers.Server',
@@ -27,4 +25,4 @@ class Subscription(models.Model):
         verbose_name_plural = 'Подписки'
 
     def __str__(self):
-        return f'{self.telegram_user} {str(self.valid_until)}'
+        return f"{self.telegram_user} {str(self.valid_until)}"

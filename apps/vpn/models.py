@@ -37,4 +37,4 @@ class UserVPN(models.Model):
         unique_together = ['user', 'server']
 
     def __str__(self):
-        return f'{self.user.username} {self.user.telegram_id} - {self.server.name}'
+        return f"{self.user.username} {self.user.telegram_id} - {self.server.name}"

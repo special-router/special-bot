@@ -1,5 +1,5 @@
 from django.conf import settings
-from telegram import Update, LabeledPrice
+from telegram import LabeledPrice, Update
 from telegram.ext import ContextTypes
 
 from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
@@ -7,19 +7,21 @@ from apps.payments.constants import PROMO_AMOUNT
 from apps.payments.models import Transaction
 from apps.servers.models import TariffServer
 from apps.telegram_bot.handlers.balance import show_balance
-from apps.users.models import TelegramUser
 from apps.telegram_bot.utils import get_user
+from apps.users.models import TelegramUser
 
 
 async def top_up_balance_promo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user: TelegramUser = await get_user(update)
 
     if not (
-            await Transaction.objects.filter_by_user(
-                user_id=user.id,
-            ).filter_by_source(
-                source=TransactionSourceChoices.PROMO,
-            ).aexists()
+        await Transaction.objects.filter_by_user(
+            user_id=user.id,
+        )
+        .filter_by_source(
+            source=TransactionSourceChoices.PROMO,
+        )
+        .aexists()
     ):
         await Transaction.objects.acreate(
             user=user,
@@ -38,22 +40,20 @@ async def top_up_balance_promo(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def top_up_balance_one_month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user: TelegramUser = await get_user(update)
-
-    #todo: переделать потом
+    # todo: переделать потом
     tariff: TariffServer = await TariffServer.objects.aget()
 
     amount: int = int(tariff.price * 30 * 100)
 
-    prices = [LabeledPrice("Цена", amount)]
+    prices = [LabeledPrice('Цена', amount)]
 
     await context.bot.send_invoice(
-        chat_id= update.effective_chat.id,
+        chat_id=update.effective_chat.id,
         title=f"Пополнить на {tariff.price * 30} руб.",
         description=f"Пополнить на {tariff.price * 30} руб.",
         payload='one_month',
         provider_token=settings.YOUMONEY_TOKEN,
-        currency="RUB",
+        currency='RUB',
         prices=prices,
     )
 

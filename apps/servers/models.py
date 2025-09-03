@@ -22,6 +22,7 @@ class TariffServer(models.Model):
     def __str__(self):
         return self.name
 
+
 class Server(models.Model):
     # country = models.ForeignKey(
     #     'Country',
@@ -105,6 +106,3 @@ class Server(models.Model):
 
     def __str__(self):
         return self.name
-
-
-

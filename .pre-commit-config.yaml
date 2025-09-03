@@ -1,0 +1,56 @@
+fail_fast: false
+exclude: |
+    (?x)^(
+      .*\b(migrations)\b.*|
+      .*\b(__pycache__)\b.*|
+      .*\b(.git)\b.*
+    )$
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-ast
+      - id: check-case-conflict
+      - id: check-json
+      - id: check-toml
+      - id: debug-statements
+      - id: double-quote-string-fixer
+      - id: pretty-format-json
+        args:
+          - "--autofix"
+          - "--indent=4"
+          - "--no-sort-keys"
+      - id: trailing-whitespace
+      - id: no-commit-to-branch
+        args: [
+          --branch, master,
+        ]
+
+-   repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+    -   id: black
+        args:
+          - "--preview"
+-   repo: https://github.com/asottile/pyupgrade
+    rev: v3.19.1
+    hooks:
+    -   id: pyupgrade
+        args: [--py312-plus]
+
+-   repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+    -   id: isort
+
+-   repo: https://github.com/PyCQA/flake8
+    rev: 7.1.1
+    hooks:
+    -   id: flake8
+        additional_dependencies:
+          - Flake8-pyproject
+          - Flake8-print
+          - Flake8-django
+          - Flake8-simplify
+        exclude: .*\b(__init__)\b.*
+        args: ["--ignore=E203,W503,SIM115,DJ08"]

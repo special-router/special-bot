@@ -1,13 +1,13 @@
-import uuid
 from typing import Final
 
-from apps.servers.models import Server
 from py3xui import AsyncApi, Client, Inbound
 
-from apps.users.models import TelegramUser
+from apps.servers.models import Server
 from apps.vpn.models import UserVPN
 
+
 INBOUND_ID: Final[int] = 1
+
 
 class APIVPNClient:
     def __init__(self, server: Server):
@@ -25,9 +25,9 @@ class APIVPNClient:
 
         inbound: Inbound = await self._api.inbound.get_by_id(self._server.inbound_id)
 
-        public_key = inbound.stream_settings.reality_settings.get("settings").get("publicKey")
-        website_name = inbound.stream_settings.reality_settings.get("serverNames")[0]
-        short_id = inbound.stream_settings.reality_settings.get("shortIds")[0]
+        public_key = inbound.stream_settings.reality_settings.get('settings').get('publicKey')
+        website_name = inbound.stream_settings.reality_settings.get('serverNames')[0]
+        short_id = inbound.stream_settings.reality_settings.get('shortIds')[0]
 
         connection_string = (
             f"vless://{user_vpn.vpn_uuid}@{user_vpn.server.client_vpn_host}"
@@ -36,5 +36,3 @@ class APIVPNClient:
         )
 
         return connection_string
-
-
