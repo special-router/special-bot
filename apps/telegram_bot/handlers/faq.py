@@ -4,13 +4,16 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 
-HELP_TEXT: Final[str] = """
-⚡Инструкция по подключению в этой ссылке: 
+HELP_TEXT: Final[
+    str
+] = """
+⚡Инструкция по подключению в этой ссылке:
 https://telegra.ph/Special-VPN-Instrukciya-04-15
 
-⚡Также наш канал: 
+⚡Также наш канал:
 https://t.me/special_wifi
 """
+
 
 async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await context.bot.send_message(

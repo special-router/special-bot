@@ -59,7 +59,9 @@ async def top_up_balance_year(update: Update, context: ContextTypes.DEFAULT_TYPE
     await top_up_balance_days(update, context, 365, percent=30)
 
 
-async def top_up_balance_days(update: Update, context: ContextTypes.DEFAULT_TYPE, count_days: int, percent: int = 0) -> None:
+async def top_up_balance_days(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, count_days: int, percent: int = 0
+) -> None:
     tariff: TariffServer = await TariffServer.objects.aget()
 
     amount: int = int(tariff.price * count_days * 100)

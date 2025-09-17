@@ -1,6 +1,6 @@
 from typing import Self
 
-from django.db.models import QuerySet, Prefetch
+from django.db.models import Prefetch, QuerySet
 
 
 class UserVPNQuerySet(QuerySet):
@@ -8,7 +8,6 @@ class UserVPNQuerySet(QuerySet):
         if queryset is None:
             return self.select_related('user')
         return self.prefetch_related(Prefetch('user', queryset=queryset))
-
 
     def with_related_server(self) -> Self:
         return self.select_related('server')

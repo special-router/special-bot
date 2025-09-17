@@ -10,7 +10,10 @@ from apps.telegram_bot.handlers.top_up_balance import (
     pre_checkout_callback,
     successful_payment_callback,
     top_up_balance_one_month,
-    top_up_balance_promo, top_up_balance_two_month, top_up_balance_three_month, top_up_balance_six_month,
+    top_up_balance_promo,
+    top_up_balance_six_month,
+    top_up_balance_three_month,
+    top_up_balance_two_month,
     top_up_balance_year,
 )
 
@@ -26,7 +29,9 @@ def register_handlers():
     telegram_bot_app.add_handler(CallbackQueryHandler(top_up_balance_promo, pattern=r'^top_up_balance_promo$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(top_up_balance_one_month, pattern=r'^top_up_balance_one_month'))
     telegram_bot_app.add_handler(CallbackQueryHandler(top_up_balance_two_month, pattern=r'^top_up_balance_two_month'))
-    telegram_bot_app.add_handler(CallbackQueryHandler(top_up_balance_three_month, pattern=r'^top_up_balance_three_month'))
+    telegram_bot_app.add_handler(
+        CallbackQueryHandler(top_up_balance_three_month, pattern=r'^top_up_balance_three_month')
+    )
     telegram_bot_app.add_handler(CallbackQueryHandler(top_up_balance_six_month, pattern=r'^top_up_balance_six_month'))
     telegram_bot_app.add_handler(CallbackQueryHandler(top_up_balance_year, pattern=r'^top_up_balance_year'))
     telegram_bot_app.add_handler(CallbackQueryHandler(list_servers, pattern=r'^list_servers'))

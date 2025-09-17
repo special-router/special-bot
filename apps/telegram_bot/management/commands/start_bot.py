@@ -1,13 +1,11 @@
-import asyncio
-
 from django.core.management import BaseCommand
 
 from apps.servers.models import Server
 from apps.servers.vpn_client import APIVPNClient
-from apps.subscriptions.tasks import update_user_vpn
 from apps.telegram_bot.bot_app import telegram_bot_app
 from apps.telegram_bot.register_handlers import register_handlers
 from apps.vpn.models import UserVPN
+
 
 async def bla():
     # todo:
@@ -18,7 +16,7 @@ async def bla():
 
 class Command(BaseCommand):
     def handle(self, *args, **options):
-        #update_user_vpn()
-        #asyncio.run(bla())
+        # update_user_vpn()
+        # asyncio.run(bla())
         register_handlers()
         telegram_bot_app.run_polling()

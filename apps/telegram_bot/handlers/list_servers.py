@@ -11,6 +11,6 @@ async def list_servers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     await context.bot.send_message(
         user.telegram_id,
-        text=f"Доступные сервера",
+        text="Доступные сервера",
         reply_markup=await get_reply_markup_list_servers(),
     )

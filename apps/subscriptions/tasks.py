@@ -9,9 +9,13 @@ from apps.vpn.models import UserVPN
 
 
 def update_user_vpn():
-    for user_vpn in UserVPN.objects.with_related_user(
-        TelegramUser.objects.all().annotate_balance(),
-    ).with_related_server().filter_by_enabled(True):
+    for user_vpn in (
+        UserVPN.objects.with_related_user(
+            TelegramUser.objects.all().annotate_balance(),
+        )
+        .with_related_server()
+        .filter_by_enabled(True)
+    ):
         tariff: TariffServer = TariffServer.objects.get()
 
         Transaction.objects.create(
@@ -26,5 +30,3 @@ def update_user_vpn():
             user_vpn.save()
 
         asyncio.run(APIVPNClient(user_vpn.server).enable_user(user_vpn, True))
-
-
