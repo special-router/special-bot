@@ -30,6 +30,11 @@ class UserVPN(models.Model):
         default=uuid.uuid4,
     )
 
+    enabled = models.BooleanField(
+        'Enabled',
+        default=True,
+    )
+
     class Meta:
         verbose_name = 'User VPN'
         verbose_name_plural = 'User VPNs'

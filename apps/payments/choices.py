@@ -10,3 +10,4 @@ class TransactionStatusChoices(models.TextChoices):
 class TransactionSourceChoices(models.TextChoices):
     YOUMONEY = 'YOUMONEY', 'Юмани'
     PROMO = 'PROMO', 'Промо-баланс'
+    EVERYDAY_SYSTEM = 'EVERYDAY_SYSTEM', 'Ежедневное списание'

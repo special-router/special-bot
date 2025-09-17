@@ -40,7 +40,7 @@ class Transaction(models.Model):
 
     source = models.CharField(
         'Источник',
-        max_length=9,
+        max_length=15,
         choices=TransactionSourceChoices,
     )
 

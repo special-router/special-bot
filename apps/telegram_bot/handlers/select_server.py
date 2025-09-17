@@ -1,3 +1,4 @@
+import telegram
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -31,7 +32,11 @@ async def select_server(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         user_vpn.vpn_key = await APIVPNClient(server).get_key(user_vpn)
         await user_vpn.asave()
 
+    if not user_vpn.enabled:
+        await APIVPNClient(server).enable_user(user_vpn)
+
     await context.bot.send_message(
         chat_id=update.callback_query.message.chat_id,
-        text=f"Ваш ключ:{user_vpn.vpn_key}",
+        text=f"Ваш ключ:```\n{user_vpn.vpn_key}\n```",
+        parse_mode='MARKDOWN',
     )

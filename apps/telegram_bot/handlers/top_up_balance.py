@@ -40,17 +40,41 @@ async def top_up_balance_promo(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def top_up_balance_one_month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # todo: переделать потом
+    await top_up_balance_days(update, context, 30)
+
+
+async def top_up_balance_two_month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await top_up_balance_days(update, context, 60, percent=5)
+
+
+async def top_up_balance_three_month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await top_up_balance_days(update, context, 90, percent=10)
+
+
+async def top_up_balance_six_month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await top_up_balance_days(update, context, 180, percent=20)
+
+
+async def top_up_balance_year(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await top_up_balance_days(update, context, 365, percent=30)
+
+
+async def top_up_balance_days(update: Update, context: ContextTypes.DEFAULT_TYPE, count_days: int, percent: int = 0) -> None:
     tariff: TariffServer = await TariffServer.objects.aget()
 
-    amount: int = int(tariff.price * 30 * 100)
+    amount: int = int(tariff.price * count_days * 100)
 
     prices = [LabeledPrice('Цена', amount)]
 
+    title: str = f"Пополнить на {tariff.price * count_days} руб."
+
+    if percent > 0:
+        title = f'{title} (+{percent}% к балансу)'
+
     await context.bot.send_invoice(
         chat_id=update.effective_chat.id,
-        title=f"Пополнить на {tariff.price * 30} руб.",
-        description=f"Пополнить на {tariff.price * 30} руб.",
+        title=title,
+        description=title,
         payload='one_month',
         provider_token=settings.YOUMONEY_TOKEN,
         currency='RUB',
@@ -68,10 +92,22 @@ async def successful_payment_callback(update: Update, context):
 
     payment = update.message.successful_payment
 
+    amount = round(payment.total_amount / 100, 2)
+
+    # todo: костыль
+    if amount > 2520:
+        amount = int(amount + amount * 0.3)
+    elif amount > 1250:
+        amount = int(amount + amount * 0.2)
+    elif amount > 600:
+        amount = int(amount + amount * 0.1)
+    elif amount > 400:
+        amount = int(amount + amount * 0.05)
+
     await Transaction.objects.acreate(
         user=user,
         source=TransactionSourceChoices.YOUMONEY,
-        amount=round(payment.total_amount / 100, 2),
+        amount=amount,
         status=TransactionStatusChoices.SUCCESS,
     )
 
