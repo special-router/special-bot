@@ -85,10 +85,11 @@ WSGI_APPLICATION = 'bot.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+# todo: вынести в энвы
 DATABASES = {
     'default': env.db(
         'DATABASE_URL',
-        default='postgres://vpnbot:vpnbot@localhost:5432/vpnbot',
+        default='postgres://vpnbot:vpnbot0981237465@localhost:5432/vpnbot',
     )
 }
 
