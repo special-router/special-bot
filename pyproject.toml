@@ -8,6 +8,9 @@ dependencies = [
     'django',
     'django-environ',
     'py3xui',
+    'celery',
+    'redis',
+    'psycopg[binary]'
 ]
 [tool.isort]
 profile = 'black'

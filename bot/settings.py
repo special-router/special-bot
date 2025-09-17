@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+from celery.schedules import crontab
 
 import environ
 
@@ -85,10 +86,10 @@ WSGI_APPLICATION = 'bot.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': env.db(
+        'DATABASE_URL',
+        default='postgres://vpnbot:vpnbot@localhost:5432/vpnbot',
+    )
 }
 
 
@@ -136,3 +137,21 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 TELEGRAM_BOT_TOKEN = env.str('TELEGRAM_BOT_TOKEN', '')
 YOUMONEY_TOKEN = env.str('YOUMONEY_TOKEN', '')
+
+# Redis / Celery
+REDIS_URL = env.str('REDIS_URL', 'redis://localhost:6379/0')
+
+CELERY_BROKER_URL = REDIS_URL
+CELERY_RESULT_BACKEND = REDIS_URL
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = env.str('TIME_ZONE', 'UTC')
+
+CELERY_BEAT_SCHEDULE = {
+    'update_user_vpn_daily': {
+        'task': 'apps.subscriptions.tasks.update_user_vpn',
+        'schedule': crontab(minute=0, hour=0),  # 00:00 UTC daily
+    },
+}
+

@@ -1,4 +1,5 @@
 import asyncio
+from celery import shared_task
 
 from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
 from apps.payments.models import Transaction
@@ -8,6 +9,7 @@ from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 
 
+@shared_task
 def update_user_vpn():
     for user_vpn in (
         UserVPN.objects.with_related_user(
