@@ -14,6 +14,7 @@ class TelegramUser(models.Model):
     username = models.TextField(
         'Telegram Username',
         blank=True,
+        null=True,
     )
 
     referral_user = models.ForeignKey(
