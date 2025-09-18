@@ -154,5 +154,13 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.subscriptions.tasks.update_user_vpn',
         'schedule': crontab(minute=0, hour=0),  # 00:00 UTC daily
     },
+    'send_scheduled_broadcasts': {
+        'task': 'apps.telegram_bot.tasks.send_scheduled_broadcasts',
+        'schedule': crontab(minute='*/5'),  # Каждые 5 минут
+    },
+    'cleanup_old_broadcasts': {
+        'task': 'apps.telegram_bot.tasks.cleanup_old_broadcasts',
+        'schedule': crontab(minute=0, hour=2),  # 02:00 UTC daily
+    },
 }
 
