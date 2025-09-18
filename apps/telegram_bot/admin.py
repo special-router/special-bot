@@ -187,8 +187,8 @@ class BroadcastAdmin(admin.ModelAdmin):
         for broadcast in queryset:
             if broadcast.can_be_sent():
                 # Запускаем задачу отправки
-                #send_broadcast_task.delay(broadcast.id)
-                send_broadcast_task(broadcast.id)
+                send_broadcast_task.delay(broadcast.id)
+                #send_broadcast_task(broadcast.id)
                 sent_count += 1
             else:
                 self.message_user(
