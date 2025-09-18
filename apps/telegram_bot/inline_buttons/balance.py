@@ -36,7 +36,10 @@ async def get_reply_markup_balance(user: TelegramUser) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text='Выбор сервера', callback_data='list_servers'),
         ],
-        [InlineKeyboardButton(text='👁 Информация', callback_data='faq')],
+        [
+            InlineKeyboardButton(text='👤 Мой профиль', callback_data='profile'),
+            InlineKeyboardButton(text='👁 Инструкция', callback_data='faq'),
+        ],
         [InlineKeyboardButton(text='👨🏻‍🔧Тех.поддержка', url='https://t.me/Special_Wifi_Official')],
     ]
 

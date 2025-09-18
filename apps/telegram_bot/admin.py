@@ -1,8 +1,5 @@
 from django.contrib import admin, messages
 from django.utils.html import format_html
-from django.urls import reverse
-from django.utils.safestring import mark_safe
-from django.db.models import Count
 from django import forms
 from django.core.exceptions import ValidationError
 
@@ -23,9 +20,9 @@ class BroadcastForm(forms.ModelForm):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields['title'].help_text = 'Краткое описание рассылки'
-        self.fields['message'].help_text = 'Текст сообщения для рассылки'
-        self.fields['scheduled_at'].help_text = 'Время для отложенной отправки (оставьте пустым для немедленной отправки)'
+        # self.fields['title'].help_text = 'Краткое описание рассылки'
+        # self.fields['message'].help_text = 'Текст сообщения для рассылки'
+        # self.fields['scheduled_at'].help_text = 'Время для отложенной отправки (оставьте пустым для немедленной отправки)'
     
     def clean_message(self):
         message = self.cleaned_data.get('message')
@@ -190,7 +187,8 @@ class BroadcastAdmin(admin.ModelAdmin):
         for broadcast in queryset:
             if broadcast.can_be_sent():
                 # Запускаем задачу отправки
-                send_broadcast_task.delay(broadcast.id)
+                #send_broadcast_task.delay(broadcast.id)
+                send_broadcast_task(broadcast.id)
                 sent_count += 1
             else:
                 self.message_user(

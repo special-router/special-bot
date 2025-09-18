@@ -35,6 +35,16 @@ class UserVPN(models.Model):
         default=True,
     )
 
+    created_at = models.DateTimeField(
+        'Время создания записи',
+        auto_now_add=True,
+    )
+
+    updated_at = models.DateTimeField(
+        'Время обновления записи',
+        auto_now=True,
+    )
+
     class Meta:
         verbose_name = 'User VPN'
         verbose_name_plural = 'User VPNs'

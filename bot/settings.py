@@ -67,7 +67,7 @@ ROOT_URLCONF = 'bot.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -85,13 +85,19 @@ WSGI_APPLICATION = 'bot.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-# todo: вынести в энвы
 DATABASES = {
     'default': env.db(
         'DATABASE_URL',
         default='postgres://vpnbot:vpnbot@:5432/vpnbot',
     )
 }
+#
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#     }
+# }
 
 
 # Password validation
@@ -148,19 +154,20 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = env.str('TIME_ZONE', 'UTC')
+CELERY_ALWAYS_EAGER = env.bool('CELERY_ALWAYS_EAGER', False)
 
 CELERY_BEAT_SCHEDULE = {
     'update_user_vpn_daily': {
         'task': 'apps.subscriptions.tasks.update_user_vpn',
         'schedule': crontab(minute=0, hour=0),  # 00:00 UTC daily
     },
-    'send_scheduled_broadcasts': {
-        'task': 'apps.telegram_bot.tasks.send_scheduled_broadcasts',
-        'schedule': crontab(minute='*/5'),  # Каждые 5 минут
-    },
-    'cleanup_old_broadcasts': {
-        'task': 'apps.telegram_bot.tasks.cleanup_old_broadcasts',
-        'schedule': crontab(minute=0, hour=2),  # 02:00 UTC daily
-    },
+    # 'send_scheduled_broadcasts': {
+    #     'task': 'apps.telegram_bot.tasks.send_scheduled_broadcasts',
+    #     'schedule': crontab(minute='*/5'),  # Каждые 5 минут
+    # },
+    # 'cleanup_old_broadcasts': {
+    #     'task': 'apps.telegram_bot.tasks.cleanup_old_broadcasts',
+    #     'schedule': crontab(minute=0, hour=2),  # 02:00 UTC daily
+    # },
 }
 

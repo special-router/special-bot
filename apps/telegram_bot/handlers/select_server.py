@@ -7,6 +7,7 @@ from apps.telegram_bot.handlers.balance import show_balance
 from apps.telegram_bot.utils import get_user
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
+from apps.vpn.services.add_vpn_to_user import add_vpn_to_user
 
 
 async def select_server(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -19,20 +20,7 @@ async def select_server(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return await show_balance(update, context)
 
     # переделать на get_or_create
-    user_vpn, is_created = await UserVPN.objects.aget_or_create(
-        user=user,
-        server=server,
-    )
-
-    user_vpn = await UserVPN.objects.with_related_user().with_related_server().aget(id=user_vpn.id)
-
-    if is_created:
-        await APIVPNClient(server).add_user(user_vpn)
-        user_vpn.vpn_key = await APIVPNClient(server).get_key(user_vpn)
-        await user_vpn.asave()
-
-    if not user_vpn.enabled:
-        await APIVPNClient(server).enable_user(user_vpn)
+    user_vpn: UserVPN = add_vpn_to_user(user, server)
 
     await context.bot.send_message(
         chat_id=update.callback_query.message.chat_id,

@@ -4,7 +4,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from apps.telegram_bot.inline_buttons.server_list import get_reply_markup_list_servers
-
+from apps.telegram_bot.utils import get_user
+from apps.users.models import TelegramUser
 
 HELLO_TEXT: Final[str] = (
     """
@@ -26,4 +27,5 @@ HELLO_TEXT: Final[str] = (
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user: TelegramUser = await get_user(update)
     await update.message.reply_text(HELLO_TEXT, reply_markup=await get_reply_markup_list_servers())
