@@ -40,11 +40,11 @@ def update_user_vpn():
                 chat_id=user_vpn.user.telegram_id,
                 text='Закончились деньги на балансе. Доступ к услугам остановлен',
             ))
-
         elif user_vpn.user.balance - tariff.price * 2 < tariff.price:
                 asyncio.run(bot.send_message(
                     chat_id=user_vpn.user.telegram_id,
                     text='Пополните баланс, денег осталось на 1 день',
                 ))
-
-        asyncio.run(APIVPNClient(user_vpn.server).enable_user(user_vpn, True))
+        else:
+            if not user_vpn.enabled:
+                asyncio.run(APIVPNClient(user_vpn.server).enable_user(user_vpn, True))
