@@ -45,6 +45,3 @@ def update_user_vpn():
                     chat_id=user_vpn.user.telegram_id,
                     text='Пополните баланс, денег осталось на 1 день',
                 ))
-        else:
-            if not user_vpn.enabled:
-                asyncio.run(APIVPNClient(user_vpn.server).enable_user(user_vpn, True))
