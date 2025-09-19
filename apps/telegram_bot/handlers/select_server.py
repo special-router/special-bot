@@ -20,7 +20,7 @@ async def select_server(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return await show_balance(update, context)
 
     # переделать на get_or_create
-    user_vpn: UserVPN = add_vpn_to_user(user, server)
+    user_vpn: UserVPN = await add_vpn_to_user(user, server)
 
     await context.bot.send_message(
         chat_id=update.callback_query.message.chat_id,
