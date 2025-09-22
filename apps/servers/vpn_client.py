@@ -1,10 +1,10 @@
 from typing import Final
 
-from py3xui import AsyncApi, Client, Inbound
+from py3xui import Client, Inbound
 
 from apps.servers.models import Server
 from apps.vpn.models import UserVPN
-
+from utils.py3xui.async_api import AsyncApi
 
 INBOUND_ID: Final[int] = 1
 
@@ -46,3 +46,64 @@ class APIVPNClient:
         )
 
         return connection_string
+
+    async def get_raw_inbound_config(self, user_vpn: UserVPN) -> dict:
+        await self._api.login()
+
+        inbound_json = await self._api.inbound.get_raw_config_by_id(self._server.inbound_id)
+        # Prepare values
+        protocol = inbound_json.get('protocol')
+        port = inbound_json.get('port')
+        address = self._server.client_vpn_host
+
+        stream_settings = inbound_json.get('streamSettings', {})
+        reality_settings = stream_settings.get('realitySettings', {})
+        settings_inner = reality_settings.get('settings', {})
+
+        server_names = reality_settings.get('serverNames') or []
+        short_ids = reality_settings.get('shortIds') or []
+
+        server_name = server_names[0] if server_names else ""
+        short_id = short_ids[0] if short_ids else ""
+        public_key = settings_inner.get('publicKey', "")
+        fingerprint = settings_inner.get('fingerprint', "chrome")
+        spider_x = settings_inner.get('spiderX', "/")
+
+        # Build outbound config
+        outbound_config = {
+            "outbounds": [
+                {
+                    "tag": "proxy",
+                    "protocol": protocol,
+                    "settings": {
+                        "vnext": [
+                            {
+                                "address": address,
+                                "port": port,
+                                "users": [
+                                    {
+                                        "id": str(user_vpn.vpn_uuid),
+                                        "encryption": "none",
+                                        "flow": "xtls-rprx-vision",
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                    "streamSettings": {
+                        "sockopt": {"mark": 255},
+                        "network": "tcp",
+                        "security": "reality",
+                        "realitySettings": {
+                            "serverName": server_name,
+                            "fingerprint": fingerprint,
+                            "publicKey": public_key,
+                            "shortId": short_id,
+                            "spiderX": spider_x,
+                        },
+                    },
+                }
+            ]
+        }
+
+        return outbound_config

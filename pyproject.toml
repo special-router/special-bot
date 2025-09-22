@@ -10,7 +10,8 @@ dependencies = [
     'py3xui',
     'celery',
     'redis',
-    'psycopg[binary]'
+    'psycopg[binary]',
+    'djangorestframework==3.15.2',
 ]
 [tool.isort]
 profile = 'black'
