@@ -40,7 +40,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-vpnbot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vpnbot}
       DATABASE_URL: postgres://${POSTGRES_USER:-vpnbot}:${POSTGRES_PASSWORD:-vpnbot}@postgres:5432/${POSTGRES_DB:-vpnbot}
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://:MyRedis2025@redis:6379/0
     depends_on:
       - postgres
       - redis
@@ -59,7 +59,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-vpnbot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vpnbot}
       DATABASE_URL: postgres://${POSTGRES_USER:-vpnbot}:${POSTGRES_PASSWORD:-vpnbot}@postgres:5432/${POSTGRES_DB:-vpnbot}
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://:MyRedis2025@redis:6379/0
     ports:
       - "8000:8000"
     depends_on:
@@ -80,7 +80,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-vpnbot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vpnbot}
       DATABASE_URL: postgres://${POSTGRES_USER:-vpnbot}:${POSTGRES_PASSWORD:-vpnbot}@postgres:5432/${POSTGRES_DB:-vpnbot}
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://:MyRedis2025@redis:6379/0
     depends_on:
       - postgres
       - redis
@@ -99,7 +99,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-vpnbot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vpnbot}
       DATABASE_URL: postgres://${POSTGRES_USER:-vpnbot}:${POSTGRES_PASSWORD:-vpnbot}@postgres:5432/${POSTGRES_DB:-vpnbot}
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://:MyRedis2025@redis:6379/0
     depends_on:
       - postgres
       - redis

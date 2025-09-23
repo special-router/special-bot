@@ -148,7 +148,8 @@ TELEGRAM_BOT_TOKEN = env.str('TELEGRAM_BOT_TOKEN', '')
 YOUMONEY_TOKEN = env.str('YOUMONEY_TOKEN', '')
 
 # Redis / Celery
-REDIS_URL = env.str('REDIS_URL', 'redis://localhost:6379/0')
+# Default includes password for local/docker parity; override via env in production if needed
+REDIS_URL = env.str('REDIS_URL', 'redis://:MyRedis2025@localhost:6379/0')
 
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
@@ -157,6 +158,28 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = env.str('TIME_ZONE', 'UTC')
 CELERY_ALWAYS_EAGER = env.bool('CELERY_ALWAYS_EAGER', False)
+
+# More resilient Redis/Celery connection handling
+# Helps survive Redis restarts/UNBLOCKED events by retrying and keeping sockets alive
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_BROKER_HEARTBEAT = 30
+CELERY_BROKER_POOL_LIMIT = None  # Unlimited; let redis-py pool manage limits
+CELERY_REDIS_MAX_CONNECTIONS = 20
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    'visibility_timeout': 3600,           # Re-queue tasks if worker dies while processing
+    'socket_keepalive': True,
+    'retry_on_timeout': True,
+    'socket_connect_timeout': 5,
+    'socket_timeout': 5,
+    'health_check_interval': 30,
+}
+CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
+    'retry_on_timeout': True,
+    'socket_keepalive': True,
+    'socket_connect_timeout': 5,
+    'socket_timeout': 5,
+    'health_check_interval': 30,
+}
 
 CELERY_BEAT_SCHEDULE = {
     'update_user_vpn_daily': {
