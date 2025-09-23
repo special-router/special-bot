@@ -1,5 +1,6 @@
 from typing import Final
 
+from django.conf import settings
 from django.utils.timezone import now
 from py3xui import Client, Inbound
 
@@ -21,6 +22,7 @@ class APIVPNClient:
             id=str(user_vpn.vpn_uuid),
             email=f'{str(user_vpn.user.telegram_id)} - {now().isoformat()}',
             enable=True,
+            limit_ip=settings.LIMIT_IP,
         )
         await self._api.client.add(self._server.inbound_id, [new_client])
 

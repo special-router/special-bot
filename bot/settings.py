@@ -196,4 +196,8 @@ CELERY_BEAT_SCHEDULE = {
     # },
 }
 
+# Максимальное количество ключей для одного юзера
 MAX_KEYS = env.int('MAX_KEYS', 3)
+
+# Количество IP для одного клиента
+LIMIT_IP = env.int('LIMIT_IP', 2)
