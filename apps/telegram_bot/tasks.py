@@ -1,3 +1,5 @@
+import time
+
 from celery import shared_task
 from django.conf import settings
 from django.utils import timezone
@@ -60,6 +62,7 @@ def send_broadcast_task(self, broadcast_id):
                     parse_mode='HTML'
                 ))
                 sent_count += 1
+                time.sleep(1)
                 
                 # Обновляем счетчики каждые 10 сообщений
                 if (sent_count + failed_count) % 10 == 0:
