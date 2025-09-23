@@ -20,7 +20,7 @@ services:
     image: redis:7
     env_file:
       - .environment
-    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf", "--requirepass", "MyRedis2025"]
     ports:
       - "6379:6379"
     volumes:
