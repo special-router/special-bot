@@ -19,6 +19,6 @@ async def bla():
 class Command(BaseCommand):
     def handle(self, *args, **options):
         # update_user_vpn()
-        asyncio.run(bla())
-        #register_handlers()
-        #telegram_bot_app.run_polling()
+        #asyncio.run(bla())
+        register_handlers()
+        telegram_bot_app.run_polling()
