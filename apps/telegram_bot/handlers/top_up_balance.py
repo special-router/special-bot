@@ -36,8 +36,6 @@ async def top_up_balance_promo(update: Update, context: ContextTypes.DEFAULT_TYP
 
         await show_balance(update, context)
 
-        return
-
 
 async def top_up_balance_one_month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await top_up_balance_days(update, context, 30)

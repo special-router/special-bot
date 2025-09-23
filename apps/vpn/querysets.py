@@ -15,6 +15,9 @@ class UserVPNQuerySet(QuerySet):
     def filter_by_user(self, user_id: int) -> Self:
         return self.filter(user_id=user_id)
 
+    def filter_by_id(self, user_vpn_id: int) -> Self:
+        return self.filter(id=user_vpn_id)
+
     def filter_by_server(self, server_id: int) -> Self:
         return self.filter(server_id=server_id)
 

@@ -34,13 +34,8 @@ async def get_reply_markup_balance(user: TelegramUser) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text='Пополнить на год (+30% к балансу)', callback_data='top_up_balance_year'),
         ],
         [
-            InlineKeyboardButton(text='Выбор сервера', callback_data='list_servers'),
+            InlineKeyboardButton(text='Назад', callback_data='main_menu'),
         ],
-        [
-            InlineKeyboardButton(text='👤 Мой профиль', callback_data='profile'),
-            InlineKeyboardButton(text='👁 Инструкция', callback_data='faq'),
-        ],
-        [InlineKeyboardButton(text='👨🏻‍🔧Тех.поддержка', url='https://t.me/Special_Wifi_Official')],
     ]
 
     if not (

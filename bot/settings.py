@@ -196,3 +196,4 @@ CELERY_BEAT_SCHEDULE = {
     # },
 }
 
+MAX_KEYS = env.int('MAX_KEYS', 3)

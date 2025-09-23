@@ -1,5 +1,6 @@
 from typing import Final
 
+from django.utils.timezone import now
 from py3xui import Client, Inbound
 
 from apps.servers.models import Server
@@ -16,8 +17,17 @@ class APIVPNClient:
 
     async def add_user(self, user_vpn: UserVPN):
         await self._api.login()
-        new_client = Client(id=str(user_vpn.vpn_uuid), email=str(user_vpn.user.telegram_id), enable=True)
+        new_client = Client(
+            id=str(user_vpn.vpn_uuid),
+            email=f'{str(user_vpn.user.telegram_id)} - {now().isoformat()}',
+            enable=True,
+        )
         await self._api.client.add(self._server.inbound_id, [new_client])
+
+    async def remove_user(self, user_vpn: UserVPN):
+        await self._api.login()
+        new_client = Client(id=str(user_vpn.vpn_uuid), email=str(user_vpn.user.telegram_id), enable=True)
+        await self._api.client.delete(self._server.inbound_id, [new_client])
 
     async def enable_user(self, user_vpn: UserVPN, enabled: bool = True):
         await self._api.login()

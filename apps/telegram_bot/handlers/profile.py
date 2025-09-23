@@ -13,7 +13,7 @@ from apps.vpn.models import UserVPN
 
 
 PROFILE_TEXT_TEMPLATE: Final[str] = """
-👤 **Мой профиль**
+👤 **Мой профиль (id: `{user_telegram_id}`)**
 
 💰 **Баланс:** {balance} руб.
 
@@ -61,7 +61,8 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         balance=user_with_balance.balance,
         vpn_keys_info=vpn_keys_info,
         registration_date=user.created_at.strftime("%d.%m.%Y"),
-        vpn_count=len(vpn_connections)
+        vpn_count=len(vpn_connections),
+        user_telegram_id=user.telegram_id,
     )
     
     await context.bot.send_message(

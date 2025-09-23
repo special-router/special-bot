@@ -1,6 +1,7 @@
 import uuid
 
 from django.db import models
+from django.db.models import UniqueConstraint
 
 from apps.vpn.querysets import UserVPNQuerySet
 
@@ -49,7 +50,6 @@ class UserVPN(models.Model):
         verbose_name = 'User VPN'
         verbose_name_plural = 'User VPNs'
 
-        unique_together = ['user', 'server']
 
     def __str__(self):
         return f"{self.user.username} {self.user.telegram_id} - {self.server.name}"
