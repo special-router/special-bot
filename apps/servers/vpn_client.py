@@ -54,7 +54,7 @@ class APIVPNClient:
         # Prepare values
         protocol = inbound_json.get('protocol')
         port = inbound_json.get('port')
-        address = self._server.client_vpn_host
+        address = self._server.client_vpn_host.split(':')[0]
 
         stream_settings = inbound_json.get('streamSettings', {})
         reality_settings = stream_settings.get('realitySettings', {})
