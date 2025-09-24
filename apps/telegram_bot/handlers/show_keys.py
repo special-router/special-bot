@@ -32,7 +32,7 @@ async def show_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await context.bot.send_message(
         user.telegram_id,
-        text=vpn_keys_info,
+        text=vpn_keys_info or 'У вас нет доступных ключей',
         parse_mode='Markdown',
         reply_markup=await get_reply_markup_manage_keys(user),
     )
