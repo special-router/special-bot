@@ -27,7 +27,7 @@ PROFILE_TEXT_TEMPLATE: Final[str] = """
 
 VPN_KEY_INFO_TEMPLATE: Final[str] = """
 🔸 **{server_name}**
-   Ключ: 
+   Ключ (на 2 устройства, цена 7 руб/сутки): 
    `{vpn_key}`
    Статус: {status}
 """
