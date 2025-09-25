@@ -12,7 +12,7 @@ class BroadcastForm(forms.ModelForm):
     
     class Meta:
         model = Broadcast
-        fields = ['title', 'message', 'scheduled_at']
+        fields = ['title', 'message', 'photo', 'scheduled_at']
         widgets = {
             'message': forms.Textarea(attrs={'rows': 10, 'cols': 80}),
             'scheduled_at': forms.DateTimeInput(attrs={'type': 'datetime-local'}),
@@ -72,11 +72,12 @@ class BroadcastAdmin(admin.ModelAdmin):
         'sent_at',
         'success_rate_display',
         'preview_message',
+        'preview_photo',
     ]
     
     fieldsets = (
         ('Основная информация', {
-            'fields': ('title', 'message', 'preview_message')
+            'fields': ('title', 'message', 'preview_message', 'photo', 'preview_photo')
         }),
         ('Настройки отправки', {
             'fields': ('scheduled_at',)
@@ -156,6 +157,15 @@ class BroadcastAdmin(admin.ModelAdmin):
             preview.replace('\n', '<br>')
         )
     preview_message.short_description = 'Превью сообщения'
+
+    def preview_photo(self, obj):
+        if not obj.photo:
+            return 'Фото не загружено'
+        return format_html(
+            '<img src="{}" style="max-width: 300px; height: auto; border-radius: 4px;" />',
+            obj.photo.url
+        )
+    preview_photo.short_description = 'Превью фото'
     
     def has_add_permission(self, request):
         return True
@@ -174,7 +184,7 @@ class BroadcastAdmin(admin.ModelAdmin):
         readonly = list(self.readonly_fields)
         if obj and obj.is_completed():
             # Если рассылка завершена, делаем все поля только для чтения
-            readonly.extend(['title', 'message', 'scheduled_at'])
+            readonly.extend(['title', 'message', 'photo', 'scheduled_at'])
         return readonly
     
     actions = ['send_broadcast', 'duplicate_broadcast']

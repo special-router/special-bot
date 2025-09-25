@@ -86,6 +86,14 @@ class Broadcast(models.Model):
         help_text='Время фактической отправки'
     )
     
+    photo = models.ImageField(
+        'Фото',
+        upload_to='broadcasts/',
+        null=True,
+        blank=True,
+        help_text='Необязательно: изображение, которое будет отправлено вместе с текстом'
+    )
+    
     class Meta:
         verbose_name = 'Рассылка'
         verbose_name_plural = 'Рассылки'

@@ -6,6 +6,7 @@ from apps.servers.models import Server
 from apps.servers.vpn_client import APIVPNClient
 from apps.telegram_bot.bot_app import telegram_bot_app
 from apps.telegram_bot.register_handlers import register_handlers
+from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 
 
@@ -14,7 +15,6 @@ async def bla():
     server = await Server.objects.aget()
     user = await UserVPN.objects.with_related_user().afirst()
     await APIVPNClient(server).get_key(user)
-
 
 class Command(BaseCommand):
     def handle(self, *args, **options):
