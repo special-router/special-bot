@@ -12,3 +12,4 @@ class TransactionSourceChoices(models.TextChoices):
     PROMO = 'PROMO', 'Промо-баланс'
     EVERYDAY_SYSTEM = 'EVERYDAY_SYSTEM', 'Ежедневное списание'
     BUY = 'BUY', 'Покупка'
+    MANUAL = 'MANUAL', 'Руками проставили'

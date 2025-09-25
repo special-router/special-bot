@@ -42,6 +42,7 @@ class Transaction(models.Model):
         'Источник',
         max_length=15,
         choices=TransactionSourceChoices,
+        default=TransactionSourceChoices.MANUAL,
     )
 
     invoice = models.ForeignKey(
