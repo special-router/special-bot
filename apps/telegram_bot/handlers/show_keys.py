@@ -12,7 +12,8 @@ from apps.vpn.models import UserVPN
 
 VPN_KEY_INFO_TEMPLATE: Final[str] = """
 🔸 **{server_name}**
-   Ключ: `{vpn_key}`
+   Ключ: 
+   `{vpn_key}`
    Дата создания: {created_date}
 """
 

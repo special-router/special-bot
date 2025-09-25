@@ -27,7 +27,8 @@ PROFILE_TEXT_TEMPLATE: Final[str] = """
 
 VPN_KEY_INFO_TEMPLATE: Final[str] = """
 🔸 **{server_name}**
-   Ключ: `{vpn_key}`
+   Ключ: 
+   `{vpn_key}`
    Статус: {status}
 """
 
