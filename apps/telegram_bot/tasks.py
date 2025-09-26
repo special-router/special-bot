@@ -32,7 +32,7 @@ def send_broadcast_task(self, broadcast_id):
         broadcast.save()
         
         # Получаем всех активных пользователей
-        users = TelegramUser.objects.all().filter(telegram_id=143480916)
+        users = TelegramUser.objects.all()
         total_users = users.count()
         
         if total_users == 0:

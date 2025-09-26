@@ -2,6 +2,8 @@ import asyncio
 
 from django.core.management import BaseCommand
 
+from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
+from apps.payments.models import Transaction
 from apps.servers.models import Server
 from apps.servers.vpn_client import APIVPNClient
 from apps.telegram_bot.bot_app import telegram_bot_app
