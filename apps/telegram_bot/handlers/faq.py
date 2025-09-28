@@ -6,6 +6,8 @@ from telegram.ext import ContextTypes
 
 
 FAQ_TEXT: Final[str] = """
+« вся инструкция на картинках »
+
 Для работы V*N необходимо установить приложение V2BOX на телефон и Hiddify на компьютер
 Apple Ссылка (iPhone/ MacBook) - https://apps.apple.com/app/id6446814690
 Android Ссылка -  https://play.google.com/store/apps/details?id=dev.hexasoftware.v2box&hl=ru&pli=1

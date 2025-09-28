@@ -12,7 +12,7 @@ from apps.vpn.models import UserVPN
 
 VPN_KEY_INFO_TEMPLATE: Final[str] = """
 🔸 **{server_name}**
-   Ключ (на 2 устройства, цена 7 руб/сутки): 
+   Ключ (на 2 устройства, цена 7 руб/сутки) ( нажмите на ссылку и она скопируется ): 
    `{vpn_key}`
    Дата создания: {created_date}
 """
