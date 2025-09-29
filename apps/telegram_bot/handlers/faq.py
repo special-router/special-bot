@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes
 
 
 FAQ_TEXT: Final[str] = """
-« вся инструкция на картинках »
+⬆️ ИНСТРУКЦИЯ ПО ПОДКЛЮЧЕНИЮ НА КАРТИНКАХ⬆️
 
 Для работы V*N необходимо установить приложение V2BOX на телефон и Hiddify на компьютер
 Apple Ссылка (iPhone/ MacBook) - https://apps.apple.com/app/id6446814690
@@ -34,5 +34,6 @@ async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await context.bot.send_message(
         chat_id=update.callback_query.message.chat_id,
-        text=FAQ_TEXT
+        text=FAQ_TEXT,
+        disable_web_page_preview=True,
     )
