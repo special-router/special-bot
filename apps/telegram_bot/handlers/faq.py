@@ -8,9 +8,9 @@ from telegram.ext import ContextTypes
 FAQ_TEXT: Final[str] = """
 ⬆️ ИНСТРУКЦИЯ ПО ПОДКЛЮЧЕНИЮ НА КАРТИНКАХ⬆️
 
-Для работы V*N необходимо установить приложение V2BOX на телефон и Hiddify на компьютер
-Apple Ссылка (iPhone/ MacBook) - https://apps.apple.com/app/id6446814690
-Android Ссылка -  https://play.google.com/store/apps/details?id=dev.hexasoftware.v2box&hl=ru&pli=1
+Для работы V*N необходимо установить приложение v2raytun на телефон и Hiddify на компьютер
+Apple Ссылка (iPhone/ MacBook) - https://apps.apple.com/app/id6476628951
+Android Ссылка -  https://play.google.com/store/apps/details?id=com.v2raytun.android&hl=ru
 
 Если Вы хотите установить V*N на Ваш Компьютер, скачайте приложение Hiddify, функционал у него точно такой же
 
