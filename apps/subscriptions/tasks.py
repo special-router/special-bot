@@ -1,7 +1,10 @@
 import asyncio
+import logging
+
 from celery import shared_task
 from django.conf import settings
 from telegram import Bot
+from telegram.error import NetworkError
 
 from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
 from apps.payments.models import Transaction
@@ -36,10 +39,13 @@ def update_user_vpn():
             user_vpn.enabled = False
             user_vpn.save()
 
-            asyncio.run(bot.send_message(
-                chat_id=user_vpn.user.telegram_id,
-                text='Закончились деньги на балансе. Доступ к услугам остановлен',
-            ))
+            try:
+                asyncio.run(bot.send_message(
+                    chat_id=user_vpn.user.telegram_id,
+                    text='Закончились деньги на балансе. Доступ к услугам остановлен',
+                ))
+            except NetworkError as exc:
+                logging.INFO(f'Telegram API error: {str(exc)}')
         elif user_vpn.user.balance - tariff.price * 2 < tariff.price:
                 asyncio.run(bot.send_message(
                     chat_id=user_vpn.user.telegram_id,
