@@ -27,7 +27,7 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if redis_client.get(redis_key):
         return
 
-    redis_client.set(redis_key, True, 15)
+    redis_client.set(redis_key, 1, 15)
 
     # отправить пользователю сообщение о том, что у него нет баланса (просто инфу о балансе вывести)
     if user.balance < server.tariff.price:
