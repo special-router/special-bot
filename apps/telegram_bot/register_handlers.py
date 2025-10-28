@@ -42,7 +42,7 @@ def register_handlers():
     telegram_bot_app.add_handler(CallbackQueryHandler(show_profile, pattern=r'^profile$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(main_menu, pattern=r'^main_menu$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(show_keys, pattern=r'^show_keys$'))
-    telegram_bot_app.add_handler(CallbackQueryHandler(add_key, pattern=r'^add_key$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(add_key, pattern=r'^add_key:\d+$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(show_keys_for_remove, pattern=r'^show_keys_for_remove'))
 
     telegram_bot_app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))

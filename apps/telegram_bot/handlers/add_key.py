@@ -1,3 +1,4 @@
+import redis
 from django.conf import settings
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -16,6 +17,17 @@ from apps.vpn.services.add_vpn_to_user import add_vpn_to_user
 async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user: TelegramUser = await get_user(update)
     server: Server = await Server.objects.with_related_tariffs().order_by_random().afirst()
+
+    random_key: int = int(update.callback_query.data.split(':')[1])
+
+    # проверка на повторное добавление ключа
+    redis_client = redis.from_url(settings.REDIS_URL)
+    redis_key = f'{random_key}.{user.id}'
+
+    if redis_client.get(redis_key):
+        return
+
+    redis_client.set(redis_key, True, 15)
 
     # отправить пользователю сообщение о том, что у него нет баланса (просто инфу о балансе вывести)
     if user.balance < server.tariff.price:

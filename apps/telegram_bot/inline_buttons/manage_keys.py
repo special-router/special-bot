@@ -1,4 +1,4 @@
-
+import random
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -8,7 +8,7 @@ from apps.users.models import TelegramUser
 async def get_reply_markup_manage_keys(user: TelegramUser) -> InlineKeyboardMarkup:
     buttons: list[list[InlineKeyboardButton]] = [
         [
-            InlineKeyboardButton(text='🔑Добавить ключ', callback_data='add_key'),
+            InlineKeyboardButton(text='🔑Добавить ключ', callback_data=f'add_key:{random.randint(10000000, 999999999)}'),
             InlineKeyboardButton(text='❌Удалить ключ', callback_data='show_keys_for_remove'),
 
         ],

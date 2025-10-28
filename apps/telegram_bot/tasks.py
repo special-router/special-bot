@@ -55,30 +55,12 @@ def send_broadcast_task(self, broadcast_id):
         
         for user in users:
             try:
-                # Отправляем фото с подписью, если загружено, иначе текст
-                if broadcast.photo:
-                    try:
-                        with open(broadcast.photo.path, 'rb') as f:
-                            asyncio.run(bot.send_photo(
-                                chat_id=user.telegram_id,
-                                photo=f,
-                                caption=broadcast.message or None,
-                                parse_mode='HTML'
-                            ))
-                    except Exception:
-                        # Fallback to URL if path not available (e.g., remote storage)
-                        asyncio.run(bot.send_photo(
-                            chat_id=user.telegram_id,
-                            photo=broadcast.photo.url,
-                            caption=broadcast.message or None,
-                            parse_mode='HTML'
-                        ))
-                else:
-                    asyncio.run(bot.send_message(
-                        chat_id=user.telegram_id,
-                        text=broadcast.message,
-                        parse_mode='HTML'
-                    ))
+                # Отправляем сообщение пользователю
+                asyncio.run(bot.send_message(
+                    chat_id=user.telegram_id,
+                    text=broadcast.message,
+                    parse_mode='HTML'
+                ))
                 sent_count += 1
                 time.sleep(1)
                 

@@ -12,6 +12,7 @@ from apps.servers.models import TariffServer
 from apps.servers.vpn_client import APIVPNClient
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
+from apps.vpn.services.remove_vpn_user_from_server import remove_vpn_user_from_server
 
 
 @shared_task
@@ -36,8 +37,7 @@ def update_user_vpn():
         )
 
         if user_vpn.user.balance - tariff.price < tariff.price:
-            user_vpn.enabled = False
-            user_vpn.save()
+            asyncio.run(remove_vpn_user_from_server(user_vpn))
 
             try:
                 asyncio.run(bot.send_message(
