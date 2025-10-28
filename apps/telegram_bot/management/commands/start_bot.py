@@ -19,7 +19,7 @@ async def bla():
                 TelegramUser.objects.all().annotate_balance(),
             )
             .with_related_server()
-            .filter_by_enabled(False)
+            .filter_by_enabled(True)
     ):
         print(user_vpn.id, user_vpn)
         await remove_vpn_user_from_server(user_vpn)
@@ -27,9 +27,32 @@ async def bla():
     # user = await UserVPN.objects.with_related_user().afirst()
     # await APIVPNClient(server).get_key(user)
 
+def test():
+    server = Server.objects.get()
+    from py3xui import Api, Client
+
+    # Initialize the API client (assuming environment variables are set for host, username, password)
+    api = Api(server.vpn_url, server.vpn_username, server.vpn_password)
+    api.login()
+
+    inbounds = api.inbound.get_list()
+
+    for inbound in inbounds:
+        for client in inbound.settings.clients:
+            if client.id == '793ac921-06ca-426b-a4f9-58e13b682369':
+                continue
+
+            if UserVPN.objects.filter(vpn_uuid=client.id).exists():
+                print('EXISTS', client.id)
+            else:
+                api.client.delete(inbound.id, client.id)
+                print('NOT EXISTS', client.id)
+
+
 class Command(BaseCommand):
     def handle(self, *args, **options):
         # update_user_vpn()
+        #test()
         #asyncio.run(bla())
         register_handlers()
         telegram_bot_app.run_polling()
