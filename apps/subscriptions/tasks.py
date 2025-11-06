@@ -47,7 +47,11 @@ def update_user_vpn():
             except Exception as exc:
                 pass
         elif user_vpn.user.balance - tariff.price * 2 < tariff.price:
+            try:
                 asyncio.run(bot.send_message(
                     chat_id=user_vpn.user.telegram_id,
                     text='Пополните баланс, денег осталось на 1 день',
                 ))
+            except Exception as exc:
+                pass
+
