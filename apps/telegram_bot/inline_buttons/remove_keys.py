@@ -1,5 +1,3 @@
-
-
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from apps.users.models import TelegramUser

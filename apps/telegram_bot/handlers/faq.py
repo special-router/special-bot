@@ -1,11 +1,13 @@
 from typing import Final
 
 from django.conf import settings
-from telegram import Update, InputMediaPhoto
+from telegram import InputMediaPhoto, Update
 from telegram.ext import ContextTypes
 
 
-FAQ_TEXT: Final[str] = """
+FAQ_TEXT: Final[
+    str
+] = """
 ⬆️ ИНСТРУКЦИЯ ПО ПОДКЛЮЧЕНИЮ НА КАРТИНКАХ⬆️
 
 Для работы V*N необходимо установить приложение v2raytun на телефон и Hiddify на компьютер
@@ -17,14 +19,15 @@ Android Ссылка -  https://play.google.com/store/apps/details?id=com.v2rayt
 Windows ПК и Ноутбуки - https://apps.microsoft.com/detail/9PDFNL3QV2S5?hl=neutral&gl=US&ocid=pdpshare
 """
 
+
 async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     media = [
-        InputMediaPhoto(open(f"{settings.BASE_DIR}/apps/telegram_bot/images/1.jpg", "rb")),
-        InputMediaPhoto(open(f"{settings.BASE_DIR}/apps/telegram_bot/images/2.jpg", "rb")),
-        InputMediaPhoto(open(f"{settings.BASE_DIR}/apps/telegram_bot/images/3.jpg", "rb")),
-        InputMediaPhoto(open(f"{settings.BASE_DIR}/apps/telegram_bot/images/4.jpg", "rb")),
-        InputMediaPhoto(open(f"{settings.BASE_DIR}/apps/telegram_bot/images/5.jpg", "rb")),
-        InputMediaPhoto(open(f"{settings.BASE_DIR}/apps/telegram_bot/images/6.jpg", "rb")),
+        InputMediaPhoto(open(f"{settings.BASE_DIR}/apps/telegram_bot/images/1.jpg", 'rb')),
+        InputMediaPhoto(open(f"{settings.BASE_DIR}/apps/telegram_bot/images/2.jpg", 'rb')),
+        InputMediaPhoto(open(f"{settings.BASE_DIR}/apps/telegram_bot/images/3.jpg", 'rb')),
+        InputMediaPhoto(open(f"{settings.BASE_DIR}/apps/telegram_bot/images/4.jpg", 'rb')),
+        InputMediaPhoto(open(f"{settings.BASE_DIR}/apps/telegram_bot/images/5.jpg", 'rb')),
+        InputMediaPhoto(open(f"{settings.BASE_DIR}/apps/telegram_bot/images/6.jpg", 'rb')),
     ]
 
     await context.bot.send_media_group(

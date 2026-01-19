@@ -1,15 +1,14 @@
 import asyncio
-import logging
+import contextlib
+import time
 
 from celery import shared_task
 from django.conf import settings
 from telegram import Bot
-from telegram.error import NetworkError
 
 from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
 from apps.payments.models import Transaction
 from apps.servers.models import TariffServer
-from apps.servers.vpn_client import APIVPNClient
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 from apps.vpn.services.remove_vpn_user_from_server import remove_vpn_user_from_server
@@ -39,19 +38,24 @@ def update_user_vpn():
         if user_vpn.user.balance - tariff.price < tariff.price:
             asyncio.run(remove_vpn_user_from_server(user_vpn))
 
-            try:
-                asyncio.run(bot.send_message(
-                    chat_id=user_vpn.user.telegram_id,
-                    text='Закончились деньги на балансе. Доступ к услугам остановлен',
-                ))
-            except Exception as exc:
-                pass
+            # todo: добавить вывод логов
+            with contextlib.suppress(Exception):
+                asyncio.run(
+                    bot.send_message(
+                        chat_id=user_vpn.user.telegram_id,
+                        text='Закончились деньги на балансе. Доступ к услугам остановлен',
+                    )
+                )
+                # это чтобы слишком часто сообщения в телегу не отправлять
+                time.sleep(1)
         elif user_vpn.user.balance - tariff.price * 2 < tariff.price:
-            try:
-                asyncio.run(bot.send_message(
-                    chat_id=user_vpn.user.telegram_id,
-                    text='Пополните баланс, денег осталось на 1 день',
-                ))
-            except Exception as exc:
-                pass
-
+            # todo: добавить вывод логов
+            with contextlib.suppress(Exception):
+                asyncio.run(
+                    bot.send_message(
+                        chat_id=user_vpn.user.telegram_id,
+                        text='Пополните баланс, денег осталось на 1 день',
+                    )
+                )
+                # это чтобы слишком часто сообщения в телегу не отправлять
+                time.sleep(1)

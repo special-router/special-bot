@@ -3,7 +3,7 @@ from django.conf import settings
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from apps.payments.choices import TransactionStatusChoices, TransactionSourceChoices
+from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
 from apps.payments.models import Transaction
 from apps.servers.models import Server, TariffServer
 from apps.telegram_bot.handlers.balance import show_balance
@@ -32,7 +32,7 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # отправить пользователю сообщение о том, что у него нет баланса (просто инфу о балансе вывести)
     if user.balance < server.tariff.price:
         await update.callback_query.answer(
-            text=f"Недостаточно средств. Пополните баланс.",
+            text='Недостаточно средств. Пополните баланс.',
         )
         return await show_balance(update, context)
 

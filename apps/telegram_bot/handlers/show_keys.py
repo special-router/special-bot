@@ -1,6 +1,5 @@
 from typing import Final
 
-from asgiref.sync import sync_to_async
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -10,9 +9,11 @@ from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 
 
-VPN_KEY_INFO_TEMPLATE: Final[str] = """
+VPN_KEY_INFO_TEMPLATE: Final[
+    str
+] = """
 🔸 **{server_name}**
-   Ключ (на 2 устройства, цена 7 руб/сутки) ( нажмите на ссылку и она скопируется ): 
+   Ключ (на 2 устройства, цена 7 руб/сутки) ( нажмите на ссылку и она скопируется ):
    `{vpn_key}`
    Дата создания: {created_date}
 """
@@ -21,7 +22,7 @@ VPN_KEY_INFO_TEMPLATE: Final[str] = """
 async def show_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user: TelegramUser = await get_user(update)
 
-    vpn_keys_info: str = ""
+    vpn_keys_info: str = ''
 
     # Получаем VPN ключи пользователя
     async for vpn_connection in UserVPN.objects.with_related_server().filter(user=user):

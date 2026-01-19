@@ -1,6 +1,4 @@
-from apps.servers.models import Server
 from apps.servers.vpn_client import APIVPNClient
-from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 
 

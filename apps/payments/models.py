@@ -53,6 +53,14 @@ class Transaction(models.Model):
         null=True,
     )
 
+    from_referral_user = models.ForeignKey(
+        'users.TelegramUser',
+        on_delete=models.PROTECT,
+        related_name='referral_transactions',
+        blank=True,
+        null=True,
+    )
+
     # todo: добавить тип, комментарий, источник, ссылка на сервер
 
     class Meta:

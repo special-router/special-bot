@@ -1,11 +1,6 @@
-import asyncio
-
 from django.core.management import BaseCommand
 
-from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
-from apps.payments.models import Transaction
 from apps.servers.models import Server
-from apps.servers.vpn_client import APIVPNClient
 from apps.telegram_bot.bot_app import telegram_bot_app
 from apps.telegram_bot.register_handlers import register_handlers
 from apps.users.models import TelegramUser
@@ -13,13 +8,14 @@ from apps.vpn.models import UserVPN
 from apps.vpn.services.remove_vpn_user_from_server import remove_vpn_user_from_server
 
 
+# todo: для тестов
 async def bla():
     async for user_vpn in (
-            UserVPN.objects.with_related_user(
-                TelegramUser.objects.all().annotate_balance(),
-            )
-            .with_related_server()
-            .filter_by_enabled(True)
+        UserVPN.objects.with_related_user(
+            TelegramUser.objects.all().annotate_balance(),
+        )
+        .with_related_server()
+        .filter_by_enabled(True)
     ):
         print(user_vpn.id, user_vpn)
         await remove_vpn_user_from_server(user_vpn)
@@ -27,7 +23,17 @@ async def bla():
     # user = await UserVPN.objects.with_related_user().afirst()
     # await APIVPNClient(server).get_key(user)
 
+
+# и это для тестов
 def test():
+    user_v = UserVPN.objects.all()
+
+    for u in user_v:
+        u.vpn_key = u.vpn_key.replace('google.com', 'core-renderer-tiles.maps.yandex.net')
+        u.save()
+
+    return
+
     server = Server.objects.get()
     from py3xui import Api, Client
 
@@ -52,7 +58,7 @@ def test():
 class Command(BaseCommand):
     def handle(self, *args, **options):
         # update_user_vpn()
-        #test()
-        #asyncio.run(bla())
+        # test()
+        # asyncio.run(bla())
         register_handlers()
         telegram_bot_app.run_polling()

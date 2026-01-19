@@ -14,13 +14,12 @@ class TelegramUser(models.Model):
     username = models.TextField(
         'Telegram Username',
         blank=True,
-        null=True,
     )
 
     referral_user = models.ForeignKey(
         'TelegramUser',
         on_delete=models.PROTECT,
-        related_name='servers',
+        related_name='referral_users',
         null=True,
         blank=True,
     )

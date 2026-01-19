@@ -19,17 +19,9 @@ class AsyncApi(AsyncApi):
     ):  # pylint: disable=R0913, R0917
         self.logger = logger or logging.getLogger(__name__)
 
-        self.client = AsyncClientApi(
-            host, username, password, use_tls_verify, custom_certificate_path, logger
-        )
-        self.inbound = AsyncInboundApi(
-            host, username, password, use_tls_verify, custom_certificate_path, logger
-        )
-        self.database = AsyncDatabaseApi(
-            host, username, password, use_tls_verify, custom_certificate_path, logger
-        )
-        self.server = AsyncServerApi(
-            host, username, password, use_tls_verify, custom_certificate_path, logger
-        )
+        self.client = AsyncClientApi(host, username, password, use_tls_verify, custom_certificate_path, logger)
+        self.inbound = AsyncInboundApi(host, username, password, use_tls_verify, custom_certificate_path, logger)
+        self.database = AsyncDatabaseApi(host, username, password, use_tls_verify, custom_certificate_path, logger)
+        self.server = AsyncServerApi(host, username, password, use_tls_verify, custom_certificate_path, logger)
         self._session: str | None = None
         self._cookie_name: str | None = None

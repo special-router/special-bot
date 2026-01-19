@@ -6,6 +6,9 @@ from django.db.models.functions import Coalesce
 
 
 class TelegramUserQuerySet(models.QuerySet):
+    def with_related_referral_user(self) -> Self:
+        return self.select_related('referral_user')
+
     def annotate_balance(self) -> Self:
         return self.annotate(
             balance=Coalesce(

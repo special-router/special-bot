@@ -111,4 +111,13 @@ async def successful_payment_callback(update: Update, context):
         status=TransactionStatusChoices.SUCCESS,
     )
 
+    if user.referral_user:
+        await Transaction.objects.acreate(
+            user=user.referral_user,
+            source=TransactionSourceChoices.REFERRAL,
+            amount=int(amount / 100 * settings.REFERRAL_PERCENT),
+            status=TransactionStatusChoices.SUCCESS,
+            from_referral_user=user,
+        )
+
     await show_balance(update, context)

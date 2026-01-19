@@ -8,6 +8,7 @@ from apps.servers.models import Server
 from apps.vpn.models import UserVPN
 from utils.py3xui.async_api import AsyncApi
 
+
 INBOUND_ID: Final[int] = 1
 
 
@@ -74,43 +75,43 @@ class APIVPNClient:
         server_names = reality_settings.get('serverNames') or []
         short_ids = reality_settings.get('shortIds') or []
 
-        server_name = server_names[0] if server_names else ""
-        short_id = short_ids[0] if short_ids else ""
-        public_key = settings_inner.get('publicKey', "")
-        fingerprint = settings_inner.get('fingerprint', "chrome")
-        spider_x = settings_inner.get('spiderX', "/")
+        server_name = server_names[0] if server_names else ''
+        short_id = short_ids[0] if short_ids else ''
+        public_key = settings_inner.get('publicKey', '')
+        fingerprint = settings_inner.get('fingerprint', 'chrome')
+        spider_x = settings_inner.get('spiderX', '/')
 
         # Build outbound config
         outbound_config = {
-            "outbounds": [
+            'outbounds': [
                 {
-                    "tag": "proxy",
-                    "protocol": protocol,
-                    "settings": {
-                        "vnext": [
+                    'tag': 'proxy',
+                    'protocol': protocol,
+                    'settings': {
+                        'vnext': [
                             {
-                                "address": address,
-                                "port": port,
-                                "users": [
+                                'address': address,
+                                'port': port,
+                                'users': [
                                     {
-                                        "id": str(user_vpn.vpn_uuid),
-                                        "encryption": "none",
-                                        "flow": "xtls-rprx-vision",
+                                        'id': str(user_vpn.vpn_uuid),
+                                        'encryption': 'none',
+                                        'flow': 'xtls-rprx-vision',
                                     }
                                 ],
                             }
                         ]
                     },
-                    "streamSettings": {
-                        "sockopt": {"mark": 255},
-                        "network": "tcp",
-                        "security": "reality",
-                        "realitySettings": {
-                            "serverName": server_name,
-                            "fingerprint": fingerprint,
-                            "publicKey": public_key,
-                            "shortId": short_id,
-                            "spiderX": spider_x,
+                    'streamSettings': {
+                        'sockopt': {'mark': 255},
+                        'network': 'tcp',
+                        'security': 'reality',
+                        'realitySettings': {
+                            'serverName': server_name,
+                            'fingerprint': fingerprint,
+                            'publicKey': public_key,
+                            'shortId': short_id,
+                            'spiderX': spider_x,
                         },
                     },
                 }

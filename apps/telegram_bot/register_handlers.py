@@ -6,7 +6,8 @@ from apps.telegram_bot.handlers.balance import show_balance
 from apps.telegram_bot.handlers.faq import faq
 from apps.telegram_bot.handlers.main_menu import main_menu
 from apps.telegram_bot.handlers.profile import show_profile
-from apps.telegram_bot.handlers.remove_key import show_keys_for_remove, remove_key
+from apps.telegram_bot.handlers.referral import referral
+from apps.telegram_bot.handlers.remove_key import remove_key, show_keys_for_remove
 from apps.telegram_bot.handlers.show_keys import show_keys
 from apps.telegram_bot.handlers.start import start
 from apps.telegram_bot.handlers.top_up_balance import (
@@ -44,6 +45,8 @@ def register_handlers():
     telegram_bot_app.add_handler(CallbackQueryHandler(show_keys, pattern=r'^show_keys$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(add_key, pattern=r'^add_key:\d+$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(show_keys_for_remove, pattern=r'^show_keys_for_remove'))
+
+    telegram_bot_app.add_handler(CallbackQueryHandler(referral, pattern=r'^referral$'))
 
     telegram_bot_app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))
     telegram_bot_app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))

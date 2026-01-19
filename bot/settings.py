@@ -11,9 +11,9 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
-from celery.schedules import crontab
 
 import environ
+from celery.schedules import crontab
 
 
 env = environ.Env()
@@ -91,13 +91,6 @@ DATABASES = {
         default='postgres://vpnbot:vpnbot@:5432/vpnbot',
     )
 }
-#
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-#     }
-# }
 
 
 # Password validation
@@ -169,7 +162,7 @@ CELERY_BROKER_HEARTBEAT = 30
 CELERY_BROKER_POOL_LIMIT = None  # Unlimited; let redis-py pool manage limits
 CELERY_REDIS_MAX_CONNECTIONS = 20
 CELERY_BROKER_TRANSPORT_OPTIONS = {
-    'visibility_timeout': 3600,           # Re-queue tasks if worker dies while processing
+    'visibility_timeout': 3600,  # Re-queue tasks if worker dies while processing
     'socket_keepalive': True,
     'retry_on_timeout': True,
     'socket_connect_timeout': 5,
@@ -189,18 +182,14 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.subscriptions.tasks.update_user_vpn',
         'schedule': crontab(minute=0, hour=0),  # 00:00 UTC daily
     },
-    # 'send_scheduled_broadcasts': {
-    #     'task': 'apps.telegram_bot.tasks.send_scheduled_broadcasts',
-    #     'schedule': crontab(minute='*/5'),  # Каждые 5 минут
-    # },
-    # 'cleanup_old_broadcasts': {
-    #     'task': 'apps.telegram_bot.tasks.cleanup_old_broadcasts',
-    #     'schedule': crontab(minute=0, hour=2),  # 02:00 UTC daily
-    # },
 }
+
+REFERRAL_PERCENT = env.int('REFERRAL_PERCENT', 30)
 
 # Максимальное количество ключей для одного юзера
 MAX_KEYS = env.int('MAX_KEYS', 3)
 
 # Количество IP для одного клиента
 LIMIT_IP = env.int('LIMIT_IP', 2)
+
+BOT_LINK = env.str('BOT_LINK', 'https://t.me/SpecialVPNbot')

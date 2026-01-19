@@ -1,14 +1,11 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from apps.servers.models import Server
-from apps.telegram_bot.handlers.balance import show_balance
 from apps.telegram_bot.handlers.show_keys import show_keys
 from apps.telegram_bot.inline_buttons.remove_keys import get_reply_markup_remove_keys
 from apps.telegram_bot.utils import get_user
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
-from apps.vpn.services.add_vpn_to_user import add_vpn_to_user
 from apps.vpn.services.remove_vpn_user_from_server import remove_vpn_user_from_server
 
 
@@ -28,7 +25,13 @@ async def remove_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     user_vpn_id: int = int(update.callback_query.data.split(':')[1])
 
-    user_vpn: UserVPN | None = await UserVPN.objects.with_related_server().with_related_user().filter_by_user(user_id=user.id).filter_by_id(user_vpn_id).afirst()
+    user_vpn: UserVPN | None = (
+        await UserVPN.objects.with_related_server()
+        .with_related_user()
+        .filter_by_user(user_id=user.id)
+        .filter_by_id(user_vpn_id)
+        .afirst()
+    )
 
     if not user_vpn:
         return
@@ -36,7 +39,7 @@ async def remove_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await remove_vpn_user_from_server(user_vpn)
 
     await update.callback_query.answer(
-        text=f"Ключ успешно удален",
+        text='Ключ успешно удален',
     )
 
     await show_keys(update, context)

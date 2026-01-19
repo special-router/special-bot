@@ -13,3 +13,4 @@ class TransactionSourceChoices(models.TextChoices):
     EVERYDAY_SYSTEM = 'EVERYDAY_SYSTEM', 'Ежедневное списание'
     BUY = 'BUY', 'Покупка'
     MANUAL = 'MANUAL', 'Руками проставили'
+    REFERRAL = 'REFERRAL', 'Реферальная система'

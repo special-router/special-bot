@@ -8,10 +8,10 @@ from py3xui.async_api import AsyncInboundApi as BaseAsyncInboundApi
 class AsyncInboundApi(BaseAsyncInboundApi):
     async def get_raw_config_by_id(self, inbound_id: int) -> Inbound:
         endpoint = f"panel/api/inbounds/get/{inbound_id}"
-        headers = {"Accept": "application/json"}
+        headers = {'Accept': 'application/json'}
 
         url = self._url(endpoint)
-        self.logger.info("Getting inbound by ID: %s", inbound_id)
+        self.logger.info('Getting inbound by ID: %s', inbound_id)
 
         response = await self._get(url, headers)
 

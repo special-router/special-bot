@@ -1,10 +1,11 @@
 import asyncio
+
+from rest_framework.generics import GenericAPIView
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework.generics import GenericAPIView
 
-from apps.vpn.models import UserVPN
 from apps.servers.vpn_client import APIVPNClient
+from apps.vpn.models import UserVPN
 
 
 class VPNBoxConfigView(GenericAPIView):
@@ -20,5 +21,3 @@ class VPNBoxConfigView(GenericAPIView):
         config = asyncio.run(client.get_raw_inbound_config(user_vpn))
 
         return Response(config)
-
-
