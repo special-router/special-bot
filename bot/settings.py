@@ -193,3 +193,5 @@ MAX_KEYS = env.int('MAX_KEYS', 3)
 LIMIT_IP = env.int('LIMIT_IP', 2)
 
 BOT_LINK = env.str('BOT_LINK', 'https://t.me/SpecialVPNbot')
+
+SUBSCRIPTION_BASE_URL = env.str('SUBSCRIPTION_BASE_URL', 'http://127.0.0.1:8000')

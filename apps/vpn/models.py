@@ -25,6 +25,12 @@ class UserVPN(models.Model):
         blank=True,
     )
 
+    vless_links = models.JSONField(
+        'VLESS links',
+        default=list,
+        blank=True,
+    )
+
     vpn_uuid = models.UUIDField(
         'Client UUID',
         default=uuid.uuid4,

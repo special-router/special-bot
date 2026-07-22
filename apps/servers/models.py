@@ -100,9 +100,54 @@ class Server(models.Model):
         default=1,
     )
 
+    inbound_id_grpc = models.IntegerField(
+        'Inbound ID (gRPC)',
+        default=1,
+    )
+
+    inbound_id_http = models.IntegerField(
+        'Inbound ID (HTTP)',
+        default=1,
+    )
+
+    inbound_id_udp = models.IntegerField(
+        'Inbound ID (UDP)',
+        default=1,
+    )
+
+    subs_inbound_id_grpc = models.IntegerField(
+        'Inbound ID подписки (gRPC)',
+        default=0,
+        blank=True,
+    )
+
+    subs_inbound_id_http = models.IntegerField(
+        'Inbound ID подписки (HTTP)',
+        default=0,
+        blank=True,
+    )
+
+    subs_inbound_id_udp = models.IntegerField(
+        'Inbound ID подписки (UDP)',
+        default=0,
+        blank=True,
+    )
+
+    is_subscription_server = models.BooleanField(
+        'Сервер для подписок',
+        default=False,
+    )
+
     class Meta:
         verbose_name = 'Информация о сервере'
         verbose_name_plural = 'Информация о серверах'
 
     def __str__(self):
         return self.name
+
+    def get_vpn_inbound_ids(self) -> list[tuple[str, int]]:
+        return [
+            ('gRPC', self.inbound_id_grpc),
+            ('HTTP', self.inbound_id_http),
+            ('UDP', self.inbound_id_udp),
+        ]

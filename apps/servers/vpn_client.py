@@ -17,19 +17,30 @@ class APIVPNClient:
         self._server = server
         self._api: AsyncApi = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password)
 
-    async def add_user(self, user_vpn: UserVPN):
-        await self._api.login()
-        new_client = Client(
+    def _build_client(self, user_vpn: UserVPN) -> Client:
+        return Client(
             id=str(user_vpn.vpn_uuid),
             email=f'{str(user_vpn.user.telegram_id)} - {now().isoformat()}',
             enable=True,
             limit_ip=settings.LIMIT_IP,
         )
-        await self._api.client.add(self._server.inbound_id, [new_client])
+
+    async def add_user_to_inbounds(self, user_vpn: UserVPN):
+        await self._api.login()
+        new_client = self._build_client(user_vpn)
+        for _, inbound_id in self._server.get_vpn_inbound_ids():
+            await self._api.client.add(inbound_id, [new_client])
+
+    async def add_user(self, user_vpn: UserVPN):
+        await self.add_user_to_inbounds(user_vpn)
+
+    async def remove_user_from_inbounds(self, user_vpn: UserVPN):
+        await self._api.login()
+        for _, inbound_id in self._server.get_vpn_inbound_ids():
+            await self._api.client.delete(inbound_id, user_vpn.vpn_uuid)
 
     async def remove_user(self, user_vpn: UserVPN):
-        await self._api.login()
-        await self._api.client.delete(self._server.inbound_id, user_vpn.vpn_uuid)
+        await self.remove_user_from_inbounds(user_vpn)
 
     async def enable_user(self, user_vpn: UserVPN, enabled: bool = True):
         await self._api.login()
@@ -42,28 +53,51 @@ class APIVPNClient:
         user_vpn.enabled = enabled
         await user_vpn.asave()
 
-    async def get_key(self, user_vpn: UserVPN):
+    async def build_vless_link(self, user_vpn: UserVPN, inbound_id: int, remark: str) -> dict:
         await self._api.login()
 
-        inbound: Inbound = await self._api.inbound.get_by_id(self._server.inbound_id)
+        inbound: Inbound = await self._api.inbound.get_by_id(inbound_id)
+        inbound_json = await self._api.inbound.get_raw_config_by_id(inbound_id)
 
         public_key = inbound.stream_settings.reality_settings.get('settings').get('publicKey')
         website_name = inbound.stream_settings.reality_settings.get('serverNames')[0]
         short_id = inbound.stream_settings.reality_settings.get('shortIds')[0]
+        port = inbound_json.get('port')
+        host = self._server.client_vpn_host.split(':')[0]
 
         connection_string = (
-            f"vless://{user_vpn.vpn_uuid}@{user_vpn.server.client_vpn_host}"
-            f"?type=tcp&security=reality&pbk={public_key}&fp=chrome&sni={website_name}"
-            f"&sid={short_id}&spx=%2F#{user_vpn.user.telegram_id}"
+            f'vless://{user_vpn.vpn_uuid}@{host}:{port}'
+            f'?type=tcp&security=reality&pbk={public_key}&fp=chrome&sni={website_name}'
+            f'&sid={short_id}&spx=%2F#{user_vpn.user.telegram_id}'
         )
 
-        return connection_string
+        return {
+            'name': remark,
+            'link': connection_string,
+            'server': host,
+            'port': port,
+            'uuid': str(user_vpn.vpn_uuid),
+            'network': 'tcp',
+            'sni': website_name,
+            'pbk': public_key,
+            'sid': short_id,
+            'fp': 'chrome',
+        }
+
+    async def build_vless_links(self, user_vpn: UserVPN) -> list[dict]:
+        links = []
+        for remark, inbound_id in self._server.get_vpn_inbound_ids():
+            links.append(await self.build_vless_link(user_vpn, inbound_id, remark))
+        return links
+
+    async def get_key(self, user_vpn: UserVPN):
+        links = await self.build_vless_links(user_vpn)
+        return links[0]['link']
 
     async def get_raw_inbound_config(self, user_vpn: UserVPN) -> dict:
         await self._api.login()
 
         inbound_json = await self._api.inbound.get_raw_config_by_id(self._server.inbound_id)
-        # Prepare values
         protocol = inbound_json.get('protocol')
         port = inbound_json.get('port')
         address = self._server.client_vpn_host.split(':')[0]
@@ -81,7 +115,6 @@ class APIVPNClient:
         fingerprint = settings_inner.get('fingerprint', 'chrome')
         spider_x = settings_inner.get('spiderX', '/')
 
-        # Build outbound config
         outbound_config = {
             'outbounds': [
                 {
