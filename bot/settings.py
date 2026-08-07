@@ -193,3 +193,8 @@ MAX_KEYS = env.int('MAX_KEYS', 3)
 LIMIT_IP = env.int('LIMIT_IP', 2)
 
 BOT_LINK = env.str('BOT_LINK', 'https://t.me/SpecialVPNbot')
+
+# Built-in 3x-ui subscriptions are staged only.  Legacy VLESS issuance remains
+# the production path until DNS/TLS and an explicit migration rollout complete.
+SUBSCRIPTION_CONNECTOR_ENABLED = env.bool('SUBSCRIPTION_CONNECTOR_ENABLED', False)
+SUBSCRIPTION_BASE_URL = env.str('SUBSCRIPTION_BASE_URL', '')
