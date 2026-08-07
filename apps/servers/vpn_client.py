@@ -33,14 +33,20 @@ class APIVPNClient:
 
     async def enable_user(self, user_vpn: UserVPN, enabled: bool = True):
         await self._api.login()
+        inbound = await self._api.inbound.get_by_id(self._server.inbound_id)
+        client = next(
+            (item for item in inbound.settings.clients if str(item.id) == str(user_vpn.vpn_uuid)),
+            None,
+        )
 
-        client = await self._api.client.get_by_email(str(user_vpn.user.telegram_id))
+        if client is None:
+            if not enabled:
+                return
+            await self.add_user(user_vpn)
+            return
+
         client.enable = enabled
-        client.id = str(user_vpn.vpn_uuid)
-        await self._api.client.update(client.id, client)
-
-        user_vpn.enabled = enabled
-        await user_vpn.asave()
+        await self._api.client.update(str(user_vpn.vpn_uuid), client)
 
     async def get_key(self, user_vpn: UserVPN):
         await self._api.login()

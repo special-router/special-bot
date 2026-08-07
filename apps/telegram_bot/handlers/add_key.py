@@ -36,7 +36,8 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return await show_balance(update, context)
 
-    if await UserVPN.objects.filter_by_user(user_id=user.id).acount() >= settings.MAX_KEYS:
+    active_keys = await UserVPN.objects.filter_by_user(user_id=user.id).filter_by_enabled(True).acount()
+    if active_keys >= settings.MAX_KEYS:
         await update.callback_query.answer(
             text=f"Зарегистрировано максимальное количество ключей на аккаунт ({settings.MAX_KEYS}).",
         )
