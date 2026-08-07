@@ -14,10 +14,11 @@ async def get_referral_user(update: Update) -> TelegramUser | None:
 async def get_user(update: Update, referral_user: TelegramUser | None = None) -> TelegramUser:
     from_user = update.callback_query.from_user if update.callback_query else update.message.from_user
 
+    username = from_user.username or f'user_{from_user.id}'
     user, _ = await TelegramUser.objects.aget_or_create(
         telegram_id=from_user.id,
         defaults={
-            'username': from_user.username,
+            'username': username,
             'referral_user': referral_user,
         },
     )
