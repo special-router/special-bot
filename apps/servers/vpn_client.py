@@ -12,6 +12,13 @@ from utils.py3xui.async_api import AsyncApi
 INBOUND_ID: Final[int] = 1
 
 
+def _client_endpoint(client_vpn_host: str, inbound_port: int) -> tuple[str, int]:
+    host, separator, configured_port = client_vpn_host.rpartition(':')
+    if separator and configured_port.isdigit():
+        return host, int(configured_port)
+    return client_vpn_host, inbound_port
+
+
 class APIVPNClient:
     def __init__(self, server: Server):
         self._server = server
@@ -56,11 +63,12 @@ class APIVPNClient:
         public_key = inbound.stream_settings.reality_settings.get('settings').get('publicKey')
         website_name = inbound.stream_settings.reality_settings.get('serverNames')[0]
         short_id = inbound.stream_settings.reality_settings.get('shortIds')[0]
+        client_host, port = _client_endpoint(user_vpn.server.client_vpn_host, inbound.port)
 
         connection_string = (
-            f"vless://{user_vpn.vpn_uuid}@{user_vpn.server.client_vpn_host}"
+            f"vless://{user_vpn.vpn_uuid}@{client_host}:{port}"
             f"?type=tcp&security=reality&pbk={public_key}&fp=chrome&sni={website_name}"
-            f"&sid={short_id}&spx=%2F#{user_vpn.user.telegram_id}"
+            f"&sid={short_id}&spx=%2F&flow=xtls-rprx-vision#{user_vpn.user.telegram_id}"
         )
 
         return connection_string
