@@ -99,7 +99,7 @@ class AddVpnToUserTests(IsolatedAsyncioTestCase):
         related = objects.with_related_user.return_value.with_related_server.return_value
         by_user = related.filter_by_user.return_value
         by_server = by_user.filter_by_server.return_value
-        query = by_server.filter_by_enabled.return_value
+        query = by_server.order_by.return_value
         query.afirst = AsyncMock(return_value=disabled)
         client_class.return_value.enable_user = AsyncMock()
         client_class.return_value.get_key = AsyncMock()
@@ -127,7 +127,7 @@ class AddVpnToUserTests(IsolatedAsyncioTestCase):
         related = objects.with_related_user.return_value.with_related_server.return_value
         by_user = related.filter_by_user.return_value
         by_server = by_user.filter_by_server.return_value
-        lookup = by_server.filter_by_enabled.return_value
+        lookup = by_server.order_by.return_value
         lookup.afirst = AsyncMock(return_value=None)
         objects.acreate = AsyncMock(return_value=SimpleNamespace(id=30))
         objects.with_related_user.return_value.with_related_server.return_value.aget = AsyncMock(return_value=pending)

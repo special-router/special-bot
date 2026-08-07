@@ -10,7 +10,7 @@ async def add_vpn_to_user(user: TelegramUser, server: Server) -> UserVPN:
         .with_related_server()
         .filter_by_user(user_id=user.id)
         .filter_by_server(server.id)
-        .filter_by_enabled(False)
+        .order_by('created_at')
         .afirst()
     )
 
