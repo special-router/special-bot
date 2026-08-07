@@ -68,7 +68,7 @@ class APIVPNClient:
         connection_string = (
             f"vless://{user_vpn.vpn_uuid}@{client_host}:{port}"
             f"?type=tcp&security=reality&pbk={public_key}&fp=chrome&sni={website_name}"
-            f"&sid={short_id}&spx=%2F&flow=xtls-rprx-vision#{user_vpn.user.telegram_id}"
+            f"&sid={short_id}&spx=%2F#{user_vpn.user.telegram_id}"
         )
 
         return connection_string
