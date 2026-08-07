@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-vpnbot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vpnbot}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     command: >
@@ -22,7 +22,7 @@ services:
       - .environment
     command: ["redis-server", "/usr/local/etc/redis/redis.conf", "--requirepass", "MyRedis2025"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
 
