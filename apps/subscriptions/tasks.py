@@ -11,7 +11,7 @@ from apps.payments.models import Transaction
 from apps.servers.models import TariffServer
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
-from apps.vpn.services.remove_vpn_user_from_server import remove_vpn_user_from_server
+from apps.vpn.services.remove_vpn_user_from_server import disable_vpn_user_from_server
 
 
 @shared_task
@@ -26,7 +26,7 @@ def update_user_vpn():
         .with_related_server()
         .filter_by_enabled(True)
     ):
-        tariff: TariffServer = TariffServer.objects.get()
+        tariff: TariffServer = user_vpn.server.tariff
 
         Transaction.objects.create(
             user=user_vpn.user,
@@ -36,7 +36,7 @@ def update_user_vpn():
         )
 
         if user_vpn.user.balance - tariff.price < tariff.price:
-            asyncio.run(remove_vpn_user_from_server(user_vpn))
+            asyncio.run(disable_vpn_user_from_server(user_vpn))
 
             # todo: добавить вывод логов
             with contextlib.suppress(Exception):
