@@ -18,8 +18,8 @@
 ## Explicitly not complete
 
 - `SUBSCRIPTION_DELIVERY_ENABLED=false`; customer-facing bot delivery is off.
-- Production monitoring is **NOT deployed**. Monitoring implementation commit
-  `12c8d00` exists only in local `fix/legacy-stabilization-clean`.
+- Production monitoring is **NOT deployed**. Local `main` contains monitoring
+  implementation commit `12c8d00`, but local `main` has not been pushed or deployed.
 - The required 48-hour monitored canary soak is not complete.
 - No mass migration or bulk `subId` assignment has occurred or is approved.
 - Billing-to-`expiryTime` synchronization is not started; do not infer access

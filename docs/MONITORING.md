@@ -1,9 +1,9 @@
 # Monitoring
 
-> **Code-ready/local-only, not production deployed.** The implementation is at
-> commit `12c8d00` in local `fix/legacy-stabilization-clean`; it is not a
-> production deployment. All schedules and feature flags remain disabled until
-> a reviewed rollout.
+> **Code-ready/local-only, not production deployed.** Local `main` contains the
+> implementation from commit `12c8d00`, but local `main` has not been pushed or
+> deployed. All schedules and feature flags remain disabled until a reviewed
+> rollout.
 
 Monitoring is observational: it must not restart VPN, nginx, Xray, Docker or
 relay services. State is sanitized: no UUIDs, bearer subscription URLs, VLESS
