@@ -49,9 +49,9 @@ docker exec vpn_bot-django_web-1 python manage.py audit_xui_subscription
 # Read-only candidate count; no 3x-ui update.
 docker exec vpn_bot-django_web-1 python manage.py prepare_xui_subscriptions --server-id 1
 
-# Future canary only, after explicit activation approval.
+# Future internal canary only, after explicit activation approval.
 docker exec vpn_bot-django_web-1 python manage.py prepare_xui_subscriptions \
-  --server-id 1 --limit 1 --apply
+  --server-id 1 --user-vpn-id <internal-canary-record> --apply
 ```
 
 The last command is intentionally not run in this change.
