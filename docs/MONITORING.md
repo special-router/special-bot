@@ -60,8 +60,9 @@ ordinary workers. Xray being present on the other containers is inert: nothing
 there ever invokes it.
 
 ```bash
-docker pull python:3.13-slim          # once; warms the layer cache
-docker build --pull=never -t vpnbot:latest .
+docker pull python@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6
+docker pull ghcr.io/xtls/xray-core:26.6.1@sha256:16786b44020e8f4c1ff3731c73cb46fe4e1e4e07af87a0daec920e24213bfbfc
+docker build -t vpnbot:latest .
 docker run --rm --entrypoint /usr/local/bin/xray vpnbot:latest version
 ```
 

@@ -3,13 +3,19 @@
 # Xray is included for the monitoring worker; queue routing enforces that
 # ordinary workers never execute L2 probes.
 #
-# Build: docker build --pull=never -t vpnbot:latest .
-# (python:3.13-slim must be present in the local layer cache first;
-#  pull it once with: docker pull python:3.13-slim)
+# Both bases are pinned by digest. That is deliberate: a floating tag makes
+# BuildKit issue an unauthenticated HEAD manifest request to Docker Hub, which
+# Docker Hub answers with 429 regardless of the remaining pull quota. A pinned
+# digest resolves from the local layer cache instead.
+#
+# Build: docker build -t vpnbot:latest .
+# First time on a host, cache the bases:
+#   docker pull python@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6
+#   docker pull ghcr.io/xtls/xray-core:26.6.1@sha256:16786b44020e8f4c1ff3731c73cb46fe4e1e4e07af87a0daec920e24213bfbfc
 
 FROM ghcr.io/xtls/xray-core:26.6.1@sha256:16786b44020e8f4c1ff3731c73cb46fe4e1e4e07af87a0daec920e24213bfbfc AS xray
 
-FROM python:3.13-slim
+FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
