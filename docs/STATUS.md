@@ -14,9 +14,11 @@
   TLS/SNI/nginx routing, and 3x-ui subscription service `:2096` at `/sub`.
 - One internal canary passed two protected subscription fetch/decode/import E2E
   runs and a direct-VLESS rollback check.
-- **Production monitoring is deployed** on `72.56.23.226` via isolated Celery
-  queues and beat schedules. L0 control-plane, L1 regional TCP and L2 VLESS/subscription
-  E2E probes run every five minutes. Current state: `last_ok=true`, no alerts.
+- **Production monitoring is deployed** on the bot host via Celery beat plus an
+  isolated `monitoring` queue. Cadence: L0 control-plane every 5 minutes, L1
+  regional TCP every minute, L2 subscription/direct-VLESS E2E every 5 minutes on
+  the dedicated worker only. Current state: all three layers `last_ok=true`, no
+  open alerts. L2 is never executed by the ordinary worker.
 
 ## Explicitly not complete
 
