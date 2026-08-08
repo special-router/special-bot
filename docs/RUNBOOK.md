@@ -59,3 +59,37 @@ If any gate fails, stop further mutation. Restore the approved protected backup
 using the established operations procedure, verify the legacy listener and
 protected direct E2E, then investigate before retrying. Do not perform broad
 cleanup, client deletion, server reboot, or automatic restart loops.
+
+## Credential rotation gate
+
+Credential rotation is a coordinated disruptive operation, not a read-only
+check. Before starting, obtain explicit owner approval and keep an already-open
+verified SSH key session on every affected host. Generate values on the target
+host or in an approved secret store; never print them or put them in Git.
+
+### 3x-ui
+
+1. Capture a mode-0600 database backup and aggregate pre-state only.
+2. Generate a new admin username, password and web base path without echoing
+   values. Update the single `users` row and `webBasePath` atomically.
+3. Restart `x-ui.service` once, then verify key-only SSH, panel login through
+   the new path, configured inbound inventory and legacy direct-VLESS E2E. Do
+   not alter client UUIDs, Reality parameters, ports or inbounds.
+4. Keep the protected backup until all post-change checks pass.
+
+### Redis and bot services
+
+1. Capture the mode-0600 bot environment backup and aggregate service state.
+   PostgreSQL must not be restarted.
+2. Generate a new Redis password without printing it. Update `REDIS_PASSWORD`
+   and explicit `REDIS_URL`; update Redis runtime through the owning `vpn_bot`
+   Compose project.
+3. Stop only bot app/Celery services, restart Redis once, verify authenticated
+   connectivity, then start web/Celery/beat and the isolated monitoring worker.
+   Never declare duplicate `postgres` or `redis` service aliases in another
+   Compose project.
+4. Verify Telegram health, `audit_legacy_vpn`, L0/L1/L2, queue isolation and
+   `66/87/21`; use protected backups for rollback if any gate fails.
+
+Never combine credential rotation with subscription pilot, bulk `subId`,
+expiryTime, billing, inbound deletion or transport changes.
