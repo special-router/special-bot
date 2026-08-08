@@ -18,9 +18,15 @@
 ## Explicitly not complete
 
 - `SUBSCRIPTION_DELIVERY_ENABLED=false`; customer-facing bot delivery is off.
-- Production monitoring is **NOT deployed**. Local `main` contains monitoring
-  implementation commit `12c8d00`, but local `main` has not been pushed or deployed.
-- The required 48-hour monitored canary soak is not complete.
+- Production monitoring is **NOT deployed**. `main` now carries the monitoring
+  implementation and is published, but nothing has been deployed or migrated on
+  the production bot host.
+- Deployment is **blocked on access**: the approved key-based path is rejected
+  by the production bot host and by NL MAIN. Password or `sshpass` fallback is
+  not permitted, so deployment, migration, canary and pilot cannot proceed.
+- The 48-hour monitored canary soak is **waived by owner decision for schedule
+  reasons**. It is recorded as skipped, never as passed; the residual risk of
+  promoting without sustained observation stays with the owner.
 - No mass migration or bulk `subId` assignment has occurred or is approved.
 - Billing-to-`expiryTime` synchronization is not started; do not infer access
   from `enabled` alone.

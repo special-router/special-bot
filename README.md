@@ -6,8 +6,8 @@
 
 **Current status (2026-08-08):** legacy route and domain subscription transport
 are live; one internal canary passed twice, but customer delivery is disabled,
-production monitoring is not deployed, the 48-hour soak is incomplete, and
-there is no mass migration.
+production monitoring is not deployed, the 48-hour soak is waived rather than
+passed, and there is no mass migration.
 
 - [Current status](docs/STATUS.md)
 - [Architecture](docs/ARCHITECTURE.md)

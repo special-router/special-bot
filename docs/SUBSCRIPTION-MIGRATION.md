@@ -1,7 +1,9 @@
 # Subscription migration
 
-> Canonical plan. Current state: Phase 0 and one internal canary are complete;
-> customer migration is paused pending production monitoring and a 48-hour soak.
+> Canonical plan. Current state: Phase 0 and one internal canary are complete.
+> The 48-hour soak is **waived by owner decision for schedule reasons**; it was
+> never executed and must not be recorded as passed. Migration still requires
+> deployed monitoring and repeated protected L2 evidence.
 
 ## Current state and invariants
 
@@ -31,18 +33,27 @@ objects is expected projection, not membership drift.
 - Two protected L2 subscription fetch/decode/import E2E runs passed, as did the
   canary's unchanged direct-VLESS E2E rollback.
 
-## Phase 1 — monitored canary soak (blocked; not started)
+## Phase 1 — monitored canary soak (waived; not executed)
 
-Keep only the internal canary under durable L0/L1/L2 observation for 48 hours.
-Abort and preserve the direct path on any entitled-missing count, payload leak,
-TLS failure, direct-key regression, or control-plane drift. The soak is not
-complete and production monitoring is not deployed, so this phase cannot be
-promoted.
+The original gate kept the internal canary under durable L0/L1/L2 observation
+for 48 hours. The owner waived that duration for delivery speed. The soak was
+never run, so it provides no evidence.
+
+The reduced substitute gate is: monitoring deployed with sanitized output, plus
+two protected L2 runs at least five minutes apart. Abort and preserve the direct
+path on any entitled-missing count, payload leak, TLS failure, direct-key
+regression, or control-plane drift.
+
+Accepted residual risk of the waiver: slow or intermittent faults (certificate
+renewal, relay flap, control-plane drift, gradual entitlement divergence) cannot
+be observed in a five-minute window. Direct `vless://` remains mandatory
+rollback.
 
 ## Phase 2 — voluntary pilot (not started)
 
-Preconditions: completed 48-hour soak, repeated protected L2 E2E evidence,
-verified control-plane membership, and explicit approval.
+Preconditions: deployed monitoring, repeated protected L2 E2E evidence,
+verified control-plane membership, and explicit approval. The 48-hour soak
+precondition is waived, not satisfied.
 
 1. Invite **3–5** consenting users only.
 2. Assign each `subId` individually; do not backfill a population.
