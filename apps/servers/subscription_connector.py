@@ -93,6 +93,7 @@ class XUISubscriptionConnector:
         sub_id = client.sub_id or token_hex(16)
         if not client.sub_id:
             client.sub_id = sub_id
+            client.inbound_id = self._server.inbound_id
             await self._api.client.update(str(user_vpn.vpn_uuid), client)
 
         return self._reference(sub_id)

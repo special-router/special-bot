@@ -77,6 +77,7 @@ class SubscriptionConnectorTests(TestCase):
         self.assertEqual(reference.sub_id, 'generated-sub-id')
         self.assertEqual(reference.url, 'https://sub.example.test/sub/generated-sub-id')
         self.assertEqual(client.sub_id, 'generated-sub-id')
+        self.assertEqual(client.inbound_id, 5)
         self.assertTrue(client.enable)
         self.assertEqual(client.expiry_time, 0)
         connector._api.client.update.assert_awaited_once_with('vpn-uuid', client)
