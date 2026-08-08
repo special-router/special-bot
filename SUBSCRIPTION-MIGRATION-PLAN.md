@@ -1,6 +1,8 @@
 # Migration plan: direct VLESS keys to subscriptions
 
-**Status:** proposed; no migration is authorized by this document.
+**Status:** Phase 0 and one internal Phase 1 canary completed. The 3x-ui DB →
+Xray projection is verified; customer migration remains paused until the
+48-hour monitored canary soak completes and a pilot is explicitly approved.
 
 ## Invariants
 
@@ -28,23 +30,39 @@
 5. Define a support script/message that can resend a user's existing direct
    VLESS key without changing their UUID.
 
-**Exit condition:** all backups, baseline audits and direct-key E2E pass.
+**Completed:** protected bot/3x-ui database backups, read-only baselines and
+direct VLESS E2E through the RU relay passed before canary assignment. The
+3x-ui DB → Xray projection was then verified read-only: `subId` is a
+subscription-service field and is intentionally absent from generated Xray
+client objects; client membership is identical `87/87`.
 
-## Phase 1 — isolated canary
+**Remaining exit condition:** complete the 48-hour canary soak under durable
+L0/L1/L2 scheduling.
 
-1. Use one newly created internal test account, not a paying customer.
-2. Assign its `subId` through the explicit connector; do not bulk backfill.
-3. Fetch the subscription over public TLS; verify it contains only the canary's
-   authorised client configuration.
-4. Import it into Happ/V2RayN/Streisand as applicable and perform HTTPS E2E
-   through `RELAY:443 → MAIN:443`.
-5. Disable/delete only the canary `subId` if needed. Its direct VLESS key must
-   continue working.
+## Phase 1 — isolated canary: completed, soak pending
+
+1. ✅ One explicit internal `UserVPN` record only was assigned a `subId`.
+2. ✅ Public TLS subscription fetch returned one strict-base64 VLESS entry.
+3. ✅ Imported entry passed HTTPS E2E with expected NL egress.
+4. ✅ The canary's unchanged direct VLESS key passed E2E after subscription test.
+5. ⏳ Keep this canary under monitoring for 48 hours.
+
+**Blocker removed:** 3x-ui API/control-plane inventory exposed `subId` values,
+while the inspected active Xray runtime config did not. This is expected: the
+field belongs to the subscription service, not the Xray client schema. The DB
+and runtime client membership sets match `87/87`.
+
+**Promotion gate:** keep the internal canary under 48-hour monitoring before
+assigning a second user, enabling bot delivery or conducting a customer pilot.
 
 **Abort:** any authentication leak, wrong client contents, unavailable legacy
-path, TLS/certificate error, or billing/control-plane mismatch.
+path, TLS/certificate error, billing/control-plane mismatch, or
+`entitled_missing > 0`.
 
-## Phase 2 — voluntary pilot
+## Phase 2 — voluntary pilot: not started
+
+Preconditions: 48-hour canary soak, two repeated L2 E2E probes, verified
+3x-ui DB → Xray projection, and explicit approval.
 
 1. Invite a small, explicitly consenting group (maximum 3–5 users).
 2. Preserve direct VLESS delivery and offer a subscription URL as an additional

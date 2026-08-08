@@ -11,13 +11,15 @@ The documented domain plane is ready for a later canary:
 - 3x-ui subscription listener: `:2096` with `/sub/`.
 
 The existing customer path remains separate: RU relay `:443` → NL nginx `:443` →
-Xray legacy inbound. No existing client or UUID is changed by this staging work.
+Xray legacy inbound. No existing customer UUID or direct VLESS key changed during
+this work. One internal canary was assigned a `subId` and passed subscription
+fetch/decode/import E2E plus direct-key rollback.
 
 ## Scope of this change
 
-This stage prepares the bot-side connector and migration tooling. It does **not**
-activate bot subscription delivery, assign production `subId` values, alter
-billing, alter legacy `vless://` keys, or change an existing 3x-ui client.
+This stage prepares the bot-side connector and migration tooling. Bot
+subscription delivery remains disabled and billing, legacy `vless://` keys, and
+existing customer clients are unchanged.
 
 The connector remains disabled unless the deployment environment explicitly sets:
 
@@ -37,8 +39,8 @@ but the explicit connector flag remains false until a canary is approved.
   when the connector flag is enabled.
 - Neither helper is imported by legacy Telegram handlers or billing.
 - `prepare_xui_subscriptions` is dry-run by default. Mutation requires both
-  `--apply` and `SUBSCRIPTION_CONNECTOR_ENABLED=true`, and `--limit=1..5` is
-  mandatory to keep the first operation a bounded canary.
+  `--apply` and `SUBSCRIPTION_CONNECTOR_ENABLED=true`, plus a specific
+  `--server-id` and `--user-vpn-id`; it cannot bulk backfill clients.
 
 Commands:
 
@@ -54,21 +56,18 @@ docker exec vpn_bot-django_web-1 python manage.py prepare_xui_subscriptions \
   --server-id 1 --user-vpn-id <internal-canary-record> --apply
 ```
 
-The last command is intentionally not run in this change.
+The first internal canary already passed. Do not use the command for another
+record until the 48-hour canary soak completes and pilot approval is explicit.
 
-## Activation and E2E gates
+## Remaining promotion gates
 
-Before enabling the connector flag:
+Before enabling bot delivery or preparing a second user:
 
-1. Verify DNS, certificate expiry/renewal and nginx/x-ui listeners.
-2. Back up 3x-ui DB/config and bot DB.
-3. Run `audit_legacy_vpn` and record a direct VLESS E2E baseline.
-4. Prepare one internal canary only.
-5. Fetch `https://sub.special-wifi.ru/sub/<subId>` externally; verify HTTP 200,
-   valid base64 and exactly the canary's authorised configuration.
-6. Import it into the target client and test HTTPS through the RU relay.
-7. Confirm the original direct VLESS key still works.
-8. Roll back by disabling only the canary subscription reference if any gate fails.
-
-No billing/`expiryTime` synchronization, user-facing bot button, bulk backfill,
-external provider aggregation, or legacy-key retirement is part of this stage.
+1. The 3x-ui DB → Xray projection is documented and membership is verified
+   identical (`87/87`); no x-ui restart is required for `subId`.
+2. Repeat protected canary E2E twice, at least five minutes apart, while the
+   direct VLESS rollback path remains healthy.
+3. Complete the 48-hour canary soak with `audit_legacy_vpn`,
+   `audit_xui_inbounds` and regional probes.
+4. Obtain explicit approval before any pilot assignment or bot handler
+   enablement.
