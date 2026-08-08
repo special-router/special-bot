@@ -69,7 +69,7 @@ services:
   celery:
     image: vpnbot:latest
     build: .
-    command: ["sh", "-c", "./entrypoint.sh celery -A bot.celery_app worker --loglevel=INFO"]
+    command: ["sh", "-c", "./entrypoint.sh celery -A bot.celery_app worker --loglevel=INFO --queues=celery"]
     env_file:
       - .environment
     environment:
@@ -103,6 +103,39 @@ services:
     depends_on:
       - postgres
       - redis
+
+  monitoring:
+    profiles:
+      - monitoring
+    image: vpnbot-monitoring:latest
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile.monitoring
+    command: ["sh", "-c", "./entrypoint.sh celery -A bot.celery_app worker --loglevel=INFO --queues=monitoring --concurrency=1"]
+    env_file:
+      - .environment
+    environment:
+      DJANGO_SETTINGS_MODULE: bot.settings
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-vpnbot}
+      POSTGRES_USER: ${POSTGRES_USER:-vpnbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vpnbot}
+      DATABASE_URL: postgres://${POSTGRES_USER:-vpnbot}:${POSTGRES_PASSWORD:-vpnbot}@postgres:5432/${POSTGRES_DB:-vpnbot}
+      REDIS_URL: redis://:MyRedis2025@redis:6379/0
+      SPECIAL_MONITOR_XRAY_PATH: /usr/local/bin/xray
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
 volumes:
   pgdata:

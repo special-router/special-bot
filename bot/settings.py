@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'apps.payments.apps.PaymentsConfig',
+    'apps.monitoring.apps.MonitoringConfig',
     'apps.servers',
     'apps.subscriptions',
     'apps.telegram_bot',
@@ -177,12 +178,37 @@ CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
     'health_check_interval': 30,
 }
 
+CELERY_TASK_ROUTES = {
+    'apps.monitoring.tasks.run_protocol_monitor': {'queue': 'monitoring'},
+}
+
 CELERY_BEAT_SCHEDULE = {
     'update_user_vpn_daily': {
         'task': 'apps.subscriptions.tasks.update_user_vpn',
         'schedule': crontab(minute=0, hour=0),  # 00:00 UTC daily
     },
 }
+
+SPECIAL_MONITOR_ENABLED = env.bool('SPECIAL_MONITOR_ENABLED', False)
+SPECIAL_MONITOR_L2_ENABLED = env.bool('SPECIAL_MONITOR_L2_ENABLED', False)
+if SPECIAL_MONITOR_ENABLED:
+    CELERY_BEAT_SCHEDULE.update(
+        {
+            'special_monitor_l0': {
+                'task': 'apps.monitoring.tasks.run_control_plane_monitor',
+                'schedule': crontab(minute='*/5'),
+            },
+            'special_monitor_l1': {
+                'task': 'apps.monitoring.tasks.run_regional_monitor',
+                'schedule': crontab(minute='*'),
+            },
+        }
+    )
+if SPECIAL_MONITOR_ENABLED and SPECIAL_MONITOR_L2_ENABLED:
+    CELERY_BEAT_SCHEDULE['special_monitor_l2'] = {
+        'task': 'apps.monitoring.tasks.run_protocol_monitor',
+        'schedule': crontab(minute='2-59/5'),
+    }
 
 REFERRAL_PERCENT = env.int('REFERRAL_PERCENT', 30)
 
@@ -199,3 +225,20 @@ BOT_LINK = env.str('BOT_LINK', 'https://t.me/SpecialVPNbot')
 SUBSCRIPTION_CONNECTOR_ENABLED = env.bool('SUBSCRIPTION_CONNECTOR_ENABLED', False)
 SUBSCRIPTION_DELIVERY_ENABLED = env.bool('SUBSCRIPTION_DELIVERY_ENABLED', False)
 SUBSCRIPTION_BASE_URL = env.str('SUBSCRIPTION_BASE_URL', env.str('SUB_URL', ''))
+
+# Monitoring runs inside the persistent bot Celery worker/beat deployment.
+# It never restarts application or VPN services and emits aggregate metadata only.
+SPECIAL_MONITOR_FAILURE_THRESHOLD = env.int('SPECIAL_MONITOR_FAILURE_THRESHOLD', 2)
+SPECIAL_MONITOR_PROBE_REGION = env.str('SPECIAL_MONITOR_PROBE_REGION', 'ru-bot')
+SPECIAL_MONITOR_ENDPOINTS = env.json(
+    'SPECIAL_MONITOR_ENDPOINTS',
+    default=[],
+)
+SPECIAL_MONITOR_EXPECTED_INBOUNDS = env.json(
+    'SPECIAL_MONITOR_EXPECTED_INBOUNDS',
+    default=[],
+)
+SPECIAL_MONITOR_CANARY_USER_VPN_ID = env.int('SPECIAL_MONITOR_CANARY_USER_VPN_ID', 0)
+SPECIAL_MONITOR_XRAY_PATH = env.str('SPECIAL_MONITOR_XRAY_PATH', '/usr/local/bin/xray')
+SPECIAL_MONITOR_EXPECTED_EGRESS = env.str('SPECIAL_MONITOR_EXPECTED_EGRESS', '')
+SPECIAL_MONITOR_HEALTH_URL = env.str('SPECIAL_MONITOR_HEALTH_URL', 'https://api.ipify.org')

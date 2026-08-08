@@ -1,0 +1,37 @@
+[
+  {
+    "target_region": "ru-relay",
+    "host": "201.34.132.118",
+    "port": 443,
+    "transport": "vless-reality-tcp-via-relay",
+    "name": "legacy-vless-relay"
+  },
+  {
+    "target_region": "ru-relay",
+    "host": "201.34.132.118",
+    "port": 80,
+    "transport": "vless-reality-grpc-via-relay",
+    "name": "legacy-grpc-relay"
+  },
+  {
+    "target_region": "nl-main",
+    "host": "sub.special-wifi.ru",
+    "port": 443,
+    "transport": "https-subscription-sni",
+    "name": "subscription-sni"
+  },
+  {
+    "target_region": "nl-main",
+    "host": "195.66.213.74",
+    "port": 8443,
+    "transport": "vless-reality-tcp-direct",
+    "name": "legacy-vless-direct"
+  },
+  {
+    "target_region": "nl-main",
+    "host": "195.66.213.74",
+    "port": 8080,
+    "transport": "vless-reality-grpc-direct",
+    "name": "legacy-grpc-direct"
+  }
+]

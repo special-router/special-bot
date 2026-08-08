@@ -1,0 +1,15 @@
+.environment
+.env
+.env.*
+.git
+.pi-subagents
+.pytest_cache
+.mypy_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.log
+media
+staticfiles
+redis.conf
