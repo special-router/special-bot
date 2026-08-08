@@ -44,10 +44,26 @@ class SubscriptionConnectorTests(TestCase):
         connector._api.login.assert_not_called()
         api_class.assert_called_once()
 
+    @patch('apps.servers.subscription_connector.AsyncApi')
+    @override_settings(SUBSCRIPTION_CONNECTOR_ENABLED=True, SUBSCRIPTION_BASE_URL='https://sub.example.test/sub')
+    def test_reads_existing_sub_id_without_mutation(self, _api_class):
+        connector = XUISubscriptionConnector(self.server)
+        client = SimpleNamespace(id='vpn-uuid', sub_id='existing-sub-id', enable=True)
+        connector._api.login = AsyncMock()
+        connector._api.inbound.get_by_id = AsyncMock(
+            return_value=SimpleNamespace(settings=SimpleNamespace(clients=[client]))
+        )
+        connector._api.client.update = AsyncMock()
+
+        reference = self.async_run(connector.get_existing_subscription_reference(self.user_vpn))
+
+        self.assertEqual(reference.url, 'https://sub.example.test/sub/existing-sub-id')
+        connector._api.client.update.assert_not_called()
+
     @patch('apps.servers.subscription_connector.token_hex', return_value='generated-sub-id')
     @patch('apps.servers.subscription_connector.AsyncApi')
     @override_settings(SUBSCRIPTION_CONNECTOR_ENABLED=True, SUBSCRIPTION_BASE_URL='https://sub.example.test/sub')
-    def test_enabled_connector_assigns_sub_id_without_changing_enable(self, api_class, _token_hex):
+    def test_enabled_connector_assigns_sub_id_without_changing_enable(self, _api_class, _token_hex):
         connector = XUISubscriptionConnector(self.server)
         client = SimpleNamespace(id='vpn-uuid', sub_id='', enable=True, expiry_time=0)
         connector._api.login = AsyncMock()
