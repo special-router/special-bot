@@ -11,18 +11,46 @@ from utils.py3xui.async_api import AsyncApi
 
 
 async def fetch_control_plane_client_ids(server: Server) -> tuple[set[str], set[str]]:
-    """Return all and enabled client UUIDs without changing 3x-ui."""
-    api = AsyncApi(
-        server.vpn_url,
-        server.vpn_username,
-        server.vpn_password,
-        use_tls_verify=False,
+    """Return all and enabled client UUIDs without changing 3x-ui.
+
+    Retries up to 4 times with re-authentication, requiring two consecutive
+    identical reads to confirm consistency. Raises CommandError on persistent
+    inconsistency or failure.
+    """
+    max_attempts = 4
+    backoff_ms = 200
+    prev_result = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            api = AsyncApi(
+                server.vpn_url,
+                server.vpn_username,
+                server.vpn_password,
+                use_tls_verify=False,
+            )
+            await api.login()
+            inbound = await api.inbound.get_by_id(server.inbound_id)
+            all_ids = {str(client.id) for client in inbound.settings.clients}
+            enabled_ids = {str(client.id) for client in inbound.settings.clients if client.enable}
+            current_result = (all_ids, enabled_ids)
+
+            if prev_result is not None and current_result == prev_result:
+                return current_result
+
+            prev_result = current_result
+            if attempt < max_attempts:
+                await asyncio.sleep(backoff_ms / 1000.0)
+        except Exception:
+            if attempt == max_attempts:
+                raise
+            await asyncio.sleep(backoff_ms / 1000.0)
+
+    raise RuntimeError(
+        f'Control plane consistency could not be established for server_id={server.id} '
+        f'after {max_attempts} attempts. Last read: {len(prev_result[0]) if prev_result else 0} total, '
+        f'{len(prev_result[1]) if prev_result else 0} enabled.'
     )
-    await api.login()
-    inbound = await api.inbound.get_by_id(server.inbound_id)
-    all_ids = {str(client.id) for client in inbound.settings.clients}
-    enabled_ids = {str(client.id) for client in inbound.settings.clients if client.enable}
-    return all_ids, enabled_ids
 
 
 def get_server_entitlement(server: Server) -> tuple[int, set[str]]:

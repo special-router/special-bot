@@ -1,9 +1,10 @@
 # Monitoring
 
-> **Code-ready/local-only, not production deployed.** Local `main` contains the
-> implementation from commit `12c8d00`, and `main` is published, but it has not been deployed or
-> deployed. All schedules and feature flags remain disabled until a reviewed
-> rollout.
+> **Deployed and live on the production bot host (2026-08-08).** L0, L1 and L2
+> run on schedule; L2 is confined to an isolated `monitoring` queue and worker.
+> `SPECIAL_MONITOR_ENABLED` and `SPECIAL_MONITOR_L2_ENABLED` are therefore true
+> in production. `SUBSCRIPTION_DELIVERY_ENABLED` stays false: monitoring being
+> live does not enable customer subscription delivery.
 
 Monitoring is observational: it must not restart VPN, nginx, Xray, Docker or
 relay services. State is sanitized: no UUIDs, bearer subscription URLs, VLESS
@@ -74,10 +75,20 @@ base images.
    five minutes apart.
 6. Maintain the canary for 48 hours before a voluntary 3–5 user pilot.
 
-The 48-hour soak in gate 6 is currently **waived by owner decision for delivery
-speed**. It is recorded as skipped, never as passed: the observation evidence it
-would have produced does not exist, so any regression it would have caught is an
-accepted risk carried into the pilot. Gates 1–5 are not waived.
+Gates 1–5 are **complete**: the implementation is deployed, the migration was
+applied, L0/L1 report healthy cycles, the isolated monitoring worker runs with
+queue isolation verified, and two L2 runs passed five minutes apart.
 
-Until every gate is complete, monitoring remains local-only and the subscription
-migration may not advance.
+The 48-hour soak in gate 6 is **waived by owner decision for delivery speed**.
+It is recorded as skipped, never as passed: the observation evidence it would
+have produced does not exist, so any regression it would have caught is an
+accepted risk carried into the pilot.
+
+## Operational notes
+
+- HTTP client logging is pinned to `WARNING` for `httpx`/`httpcore`. Those
+  loggers emit full request URLs at `INFO`, which exposes the secret 3x-ui panel
+  base path. Do not lower that level.
+- Control-plane reads require two consecutive identical client-ID snapshots. A
+  single incomplete panel response therefore surfaces as `control_plane`, not as
+  a false `entitled_missing` alert.

@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+from urllib.parse import quote
 
 import environ
 from celery.schedules import crontab
@@ -145,8 +146,18 @@ TELEGRAM_BOT_TOKEN = env.str('TELEGRAM_BOT_TOKEN', '')
 YOUMONEY_TOKEN = env.str('YOUMONEY_TOKEN', '')
 
 # Redis / Celery
-# Default includes password for local/docker parity; override via env in production if needed
-REDIS_URL = env.str('REDIS_URL', 'redis://:MyRedis2025@localhost:6379/0')
+# No credential is hardcoded. Provide REDIS_URL, or REDIS_PASSWORD plus optional
+# REDIS_HOST/REDIS_PORT/REDIS_DB. An empty password yields a passwordless local
+# URL, which is only appropriate for tests and local development.
+REDIS_HOST = env.str('REDIS_HOST', 'localhost')
+REDIS_PORT = env.int('REDIS_PORT', 6379)
+REDIS_DB = env.int('REDIS_DB', 0)
+REDIS_PASSWORD = env.str('REDIS_PASSWORD', '')
+_redis_credential = f':{quote(REDIS_PASSWORD, safe="")}@' if REDIS_PASSWORD else ''
+REDIS_URL = env.str(
+    'REDIS_URL',
+    f'redis://{_redis_credential}{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}',
+)
 
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
@@ -242,3 +253,39 @@ SPECIAL_MONITOR_CANARY_USER_VPN_ID = env.int('SPECIAL_MONITOR_CANARY_USER_VPN_ID
 SPECIAL_MONITOR_XRAY_PATH = env.str('SPECIAL_MONITOR_XRAY_PATH', '/usr/local/bin/xray')
 SPECIAL_MONITOR_EXPECTED_EGRESS = env.str('SPECIAL_MONITOR_EXPECTED_EGRESS', '')
 SPECIAL_MONITOR_HEALTH_URL = env.str('SPECIAL_MONITOR_HEALTH_URL', 'https://api.ipify.org')
+
+# The 3x-ui control plane can return a briefly incomplete client list. Read it
+# until two consecutive reads agree, so a transient short read is never
+# reported as missing entitlement.
+XUI_CONTROL_PLANE_READ_ATTEMPTS = env.int('XUI_CONTROL_PLANE_READ_ATTEMPTS', 4)
+XUI_CONTROL_PLANE_READ_BACKOFF = env.float('XUI_CONTROL_PLANE_READ_BACKOFF', 1.5)
+
+# Logging: httpx logs every request URL at INFO. The 3x-ui base path is a secret
+# equivalent to an access token, so those loggers are raised to WARNING. Never
+# lower them in production.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {
+            'format': '%(asctime)s %(levelname)s %(name)s %(message)s',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'standard',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': env.str('DJANGO_LOG_LEVEL', 'INFO'),
+    },
+    'loggers': {
+        # Suppress full request URLs containing the secret 3x-ui panel path.
+        'httpx': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
+        'httpcore': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
+        'httpx._client': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
+        'utils.py3xui': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
+    },
+}

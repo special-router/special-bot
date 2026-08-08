@@ -1,0 +1,43 @@
+# Deploy-only compose: app services join the existing vpn_bot_default network.
+# Postgres and Redis are intentionally NOT declared here; they are owned by the
+# vpn_bot project. Declaring them would hijack their network aliases.
+services:
+  web:
+    image: vpnbot:latest
+    command: ["sh", "-c", "./entrypoint.sh python manage.py start_bot"]
+    env_file: [.environment]
+    environment:
+      DJANGO_SETTINGS_MODULE: bot.settings
+    restart: unless-stopped
+
+  celery:
+    image: vpnbot:latest
+    command: ["sh", "-c", "./entrypoint.sh celery -A bot.celery_app worker --loglevel=INFO --queues=celery"]
+    env_file: [.environment]
+    environment:
+      DJANGO_SETTINGS_MODULE: bot.settings
+    restart: unless-stopped
+
+  celery_beat:
+    image: vpnbot:latest
+    command: ["sh", "-c", "./entrypoint.sh celery -A bot.celery_app beat --loglevel=INFO"]
+    env_file: [.environment]
+    environment:
+      DJANGO_SETTINGS_MODULE: bot.settings
+    restart: unless-stopped
+
+  monitoring:
+    image: vpnbot-monitoring:latest
+    command: ["sh", "-c", "./entrypoint.sh celery -A bot.celery_app worker --loglevel=INFO --queues=monitoring --concurrency=1"]
+    env_file: [.environment]
+    environment:
+      DJANGO_SETTINGS_MODULE: bot.settings
+      SPECIAL_MONITOR_XRAY_PATH: /usr/local/bin/xray
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  default:
+    external: true
+    name: vpn_bot_default
