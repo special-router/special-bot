@@ -49,15 +49,29 @@ reuse the existing sanitized transition records, send only endpoint label,
 region, layer, state and coarse error class to the operator channel, and remain
 notification-only: no automated restart, failover or client mutation.
 
-## Reproducible monitoring image
+## Single reproducible image
 
-The monitoring image builds from pinned bases and carries a verified Xray
-binary, so it no longer depends on a disposable container overlay:
+There is one image for every service. `Dockerfile` builds the application and
+copies a verified Xray binary from a digest-pinned `ghcr.io/xtls/xray-core`
+stage, so no container overlay or `docker commit` is involved. `web`, `celery`,
+`celery_beat` and `monitoring` all run `vpnbot:latest`; only the monitoring
+worker consumes the `monitoring` queue, and Celery routing is what keeps L2 off
+ordinary workers. Xray being present on the other containers is inert: nothing
+there ever invokes it.
 
 ```bash
-docker build -f Dockerfile.monitoring -t vpnbot-monitoring:local-verify .
-docker run --rm --entrypoint /usr/local/bin/xray vpnbot-monitoring:local-verify version
+docker pull python:3.13-slim          # once; warms the layer cache
+docker build --pull=never -t vpnbot:latest .
+docker run --rm --entrypoint /usr/local/bin/xray vpnbot:latest version
 ```
+
+`--pull=never` is required, not cosmetic. BuildKit issues an unauthenticated
+`HEAD` against the floating `python:3.13-slim` manifest on every build, and
+Docker Hub answers that request with `429 Too Many Requests` even when the pull
+rate-limit budget is nearly untouched. The authenticated pull path is
+unaffected, so pulling the base image explicitly and then building with
+`--pull=never` avoids the failure entirely. Do not respond to a `429` by
+unpinning bases or by committing a running container to an image.
 
 If the build cannot reach the distribution mirror from the default container
 bridge, that is a host network/firewall condition on the build machine, not a

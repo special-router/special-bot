@@ -27,7 +27,7 @@ services:
     restart: unless-stopped
 
   monitoring:
-    image: vpnbot-monitoring:latest
+    image: vpnbot:latest
     command: ["sh", "-c", "./entrypoint.sh celery -A bot.celery_app worker --loglevel=INFO --queues=monitoring --concurrency=1"]
     env_file: [.environment]
     environment:

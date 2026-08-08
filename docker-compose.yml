@@ -109,11 +109,11 @@ services:
   monitoring:
     profiles:
       - monitoring
-    image: vpnbot-monitoring:latest
+    image: vpnbot:latest
     platform: linux/amd64
     build:
       context: .
-      dockerfile: Dockerfile.monitoring
+      dockerfile: Dockerfile
     command: ["sh", "-c", "./entrypoint.sh celery -A bot.celery_app worker --loglevel=INFO --queues=monitoring --concurrency=1"]
     env_file:
       - .environment
