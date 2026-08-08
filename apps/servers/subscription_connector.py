@@ -58,6 +58,26 @@ class XUISubscriptionConnector:
             url=build_subscription_url(settings.SUBSCRIPTION_BASE_URL, sub_id),
         )
 
+    async def _get_client(self, user_vpn: UserVPN):
+        await self._api.login()
+        inbound = await self._api.inbound.get_by_id(self._server.inbound_id)
+        client = next(
+            (item for item in inbound.settings.clients if str(item.id) == str(user_vpn.vpn_uuid)),
+            None,
+        )
+        if client is None:
+            raise SubscriptionClientMissing('The VPN client is absent from the configured 3x-ui inbound.')
+        return client
+
+    async def get_existing_subscription_reference(self, user_vpn: UserVPN) -> SubscriptionReference:
+        """Read an existing subId; never mutate 3x-ui."""
+        if not self.is_enabled():
+            raise SubscriptionConnectorDisabled('3x-ui subscription connector is disabled.')
+        client = await self._get_client(user_vpn)
+        if not client.sub_id:
+            raise SubscriptionClientMissing('The 3x-ui client has no subscription ID.')
+        return self._reference(client.sub_id)
+
     async def ensure_subscription_reference(self, user_vpn: UserVPN) -> SubscriptionReference:
         """Assign a subId to an existing 3x-ui client, only after explicit activation.
 
@@ -68,14 +88,7 @@ class XUISubscriptionConnector:
         if not self.is_enabled():
             raise SubscriptionConnectorDisabled('3x-ui subscription connector is disabled.')
 
-        await self._api.login()
-        inbound = await self._api.inbound.get_by_id(self._server.inbound_id)
-        client = next(
-            (item for item in inbound.settings.clients if str(item.id) == str(user_vpn.vpn_uuid)),
-            None,
-        )
-        if client is None:
-            raise SubscriptionClientMissing('The VPN client is absent from the configured 3x-ui inbound.')
+        client = await self._get_client(user_vpn)
 
         sub_id = client.sub_id or token_hex(16)
         if not client.sub_id:

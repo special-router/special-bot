@@ -1,75 +1,74 @@
 # Staged 3x-ui subscriptions
 
+## Current domain-backed infrastructure
+
+The documented domain plane is ready for a later canary:
+
+- hostname: `sub.special-wifi.ru`;
+- DNS-only A record: NL MAIN;
+- public Let's Encrypt certificate on NL;
+- nginx SNI stream on `:443`: subscription SNI → 3x-ui `:2096`, other SNI → Xray legacy inbound on `:8443`;
+- 3x-ui subscription listener: `:2096` with `/sub/`.
+
+The existing customer path remains separate: RU relay `:443` → NL nginx `:443` →
+Xray legacy inbound. No existing client or UUID is changed by this staging work.
+
 ## Scope of this change
 
-This stage only prepares the bot-side connector. It does **not** activate the
-3x-ui subscription listener, assign a `subId`, issue a subscription URL, alter
+This stage prepares the bot-side connector and migration tooling. It does **not**
+activate bot subscription delivery, assign production `subId` values, alter
 billing, alter legacy `vless://` keys, or change an existing 3x-ui client.
 
-The connector remains disabled unless the deployment environment explicitly
-sets:
+The connector remains disabled unless the deployment environment explicitly sets:
 
 ```dotenv
 SUBSCRIPTION_CONNECTOR_ENABLED=false
-SUBSCRIPTION_BASE_URL=
+SUBSCRIPTION_BASE_URL=https://sub.special-wifi.ru/sub
 ```
 
-The default is `false`. `SUBSCRIPTION_BASE_URL` must be a public HTTPS origin
-or path with no query string or fragment, for example:
+`SUBSCRIPTION_BASE_URL` also accepts the existing `SUB_URL` setting as a default,
+but the explicit connector flag remains false until a canary is approved.
 
-```dotenv
-SUBSCRIPTION_BASE_URL=https://sub.example.org/sub
-```
+## Bot migration layer
 
-Do not add a production domain or enable the connector until DNS and TLS are
-complete.
+- `get_subscription_url(user_vpn)` is read-only and requires an existing 3x-ui
+  `subId`.
+- `prepare_subscription_url(user_vpn)` can assign a missing `subId`, but only
+  when the connector flag is enabled.
+- Neither helper is imported by legacy Telegram handlers or billing.
+- `prepare_xui_subscriptions` is dry-run by default. Mutation requires both
+  `--apply` and `SUBSCRIPTION_CONNECTOR_ENABLED=true`, and `--limit=1..5` is
+  mandatory to keep the first operation a bounded canary.
 
-## What the connector does after a future explicit activation
-
-`XUISubscriptionConnector.ensure_subscription_reference()`:
-
-1. logs in to the configured 3x-ui server;
-2. finds the existing UUID in its configured inbound;
-3. assigns a random `subId` only if one is missing;
-4. returns `SUBSCRIPTION_BASE_URL/<subId>`.
-
-It does not create/delete clients, toggle `enable`, set `expiryTime`, or change
-legacy key delivery. Any billing integration requires a separate reviewed
-change.
-
-## Current read-only readiness check
+Commands:
 
 ```bash
+# Read-only; safe while connector is disabled.
 docker exec vpn_bot-django_web-1 python manage.py audit_xui_subscription
+
+# Read-only candidate count; no 3x-ui update.
+docker exec vpn_bot-django_web-1 python manage.py prepare_xui_subscriptions --server-id 1
+
+# Future canary only, after explicit activation approval.
+docker exec vpn_bot-django_web-1 python manage.py prepare_xui_subscriptions \
+  --server-id 1 --limit 1 --apply
 ```
 
-Expected while this stage is inactive:
+The last command is intentionally not run in this change.
 
-```text
-connector_enabled=False
-base_url_configured=False
-server_id=<id> clients=<n> enabled=<n> with_sub_id=<n> missing_sub_id=<n>
-Subscription readiness audit completed (read-only).
-```
+## Activation and E2E gates
 
-The command must not be used as a migration command.
+Before enabling the connector flag:
 
-## Activation gates (not part of this change)
+1. Verify DNS, certificate expiry/renewal and nginx/x-ui listeners.
+2. Back up 3x-ui DB/config and bot DB.
+3. Run `audit_legacy_vpn` and record a direct VLESS E2E baseline.
+4. Prepare one internal canary only.
+5. Fetch `https://sub.special-wifi.ru/sub/<subId>` externally; verify HTTP 200,
+   valid base64 and exactly the canary's authorised configuration.
+6. Import it into the target client and test HTTPS through the RU relay.
+7. Confirm the original direct VLESS key still works.
+8. Roll back by disabling only the canary subscription reference if any gate fails.
 
-All must be satisfied before enabling 3x-ui subscriptions:
-
-1. A dedicated subscription hostname has an authoritative A/AAAA record for
-   the intended server.
-2. A valid certificate covers that hostname and its renewal path is tested.
-3. The chosen TCP port and firewall path are documented; it does not displace
-   the existing legacy VLESS listener on TCP/443.
-4. An allowlisted external probe confirms TLS and an unauthorized request does
-   not disclose another user's subscription.
-5. A single disposable canary client has a `subId`; fetch, decode and client
-   import E2E pass.
-6. Backup and rollback commands are recorded before any x-ui restart.
-7. Existing direct `vless://` clients remain untouched.
-
-Only after those gates may an approved operation configure 3x-ui `subEnable`,
-subscription listener/certificate fields, the production base URL, and the
-connector flag. The first rollout is one canary, not a bulk `subId` backfill.
+No billing/`expiryTime` synchronization, user-facing bot button, bulk backfill,
+external provider aggregation, or legacy-key retirement is part of this stage.
