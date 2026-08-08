@@ -1,3 +1,4 @@
+from django.conf import settings
 from telegram.ext import CallbackQueryHandler, CommandHandler, filters, MessageHandler, PreCheckoutQueryHandler
 
 from apps.telegram_bot.bot_app import telegram_bot_app
@@ -10,6 +11,7 @@ from apps.telegram_bot.handlers.referral import referral
 from apps.telegram_bot.handlers.remove_key import remove_key, show_keys_for_remove
 from apps.telegram_bot.handlers.show_keys import show_keys
 from apps.telegram_bot.handlers.start import start
+from apps.telegram_bot.handlers.subscription import show_subscription
 from apps.telegram_bot.handlers.top_up_balance import (
     pre_checkout_callback,
     successful_payment_callback,
@@ -45,6 +47,9 @@ def register_handlers():
     telegram_bot_app.add_handler(CallbackQueryHandler(show_keys, pattern=r'^show_keys$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(add_key, pattern=r'^add_key:\d+$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(show_keys_for_remove, pattern=r'^show_keys_for_remove'))
+    if settings.SUBSCRIPTION_DELIVERY_ENABLED:
+        telegram_bot_app.add_handler(CommandHandler('subscription', show_subscription))
+        telegram_bot_app.add_handler(CallbackQueryHandler(show_subscription, pattern=r'^show_subscription$'))
 
     telegram_bot_app.add_handler(CallbackQueryHandler(referral, pattern=r'^referral$'))
 
