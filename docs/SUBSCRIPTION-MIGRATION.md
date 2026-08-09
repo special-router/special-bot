@@ -1,9 +1,10 @@
 # Subscription migration
 
-> Canonical plan. Current state: Phase 0 and one internal canary are complete.
-> The 48-hour soak is **waived by owner decision for schedule reasons**; it was
-> never executed and must not be recorded as passed. Migration still requires
-> deployed monitoring and repeated protected L2 evidence.
+> Canonical plan. Current state: infrastructure, monitoring and one internal
+> canary are complete. The owner approved subscription-first bot delivery and a
+> controlled entitled-user migration. Production delivery remains off until the
+> new image, aggregate coverage audit and guarded credential rotation pass.
+> The 48-hour soak was waived and must never be recorded as passed.
 
 ## Current state and invariants
 
@@ -13,14 +14,17 @@ must never be placed in documentation, logs, dashboards, or tickets.
 
 - Existing direct `vless://` links remain live and are the rollback path.
 - Keep the legacy RU relay path unchanged during this migration.
-- Balance-based entitlement remains the source of truth. `enable` and
-  `expiryTime` synchronization is a separately reviewed later change.
+- Balance-based entitlement remains the source of truth. Current billing may
+  enable/disable the existing client but must preserve `UserVPN`, UUID and
+  `subId`. `expiryTime` synchronization remains a separately reviewed change.
 - Subscription URLs are bearer secrets and may be delivered only privately to
   an entitled user after the relevant gate.
-- No bulk `subId` assignment, client deletion, UUID rotation, `enable` change,
-  or expiry change is allowed.
-- `SUBSCRIPTION_DELIVERY_ENABLED=false`; legacy direct-key delivery remains the
-  customer default.
+- `subId` preparation is allowed only for an explicit entitled `UserVPN`, one
+  record per command. Dry-run and aggregate audit precede every apply batch.
+- Client deletion, UUID rotation, inbound/Reality change and expiry mutation are
+  not authorized. Compatibility-only clients must never be assigned ownership.
+- Production currently has `SUBSCRIPTION_DELIVERY_ENABLED=false`; approved code
+  changes make subscription URL the bot default only after the guarded deploy.
 
 3x-ui owns `subId` in its control plane. Its absence from generated Xray client
 objects is expected projection, not membership drift.
@@ -49,32 +53,36 @@ renewal, relay flap, control-plane drift, gradual entitlement divergence) cannot
 be observed in a five-minute window. Direct `vless://` remains mandatory
 rollback.
 
-## Phase 2 — voluntary pilot (not started)
+## Phase 2 — guarded production enablement (approved; pending)
 
-Preconditions: deployed monitoring, repeated protected L2 E2E evidence,
-verified control-plane membership, and explicit approval. The 48-hour soak
-precondition is waived, not satisfied.
+1. Restore verified key-only access to the bot host and run aggregate preflight.
+2. Deploy the read-only coverage command and subscription-first bot code.
+3. Rotate 3x-ui admin credentials and panel path with mode-0600 backups and an
+   atomic bot control-plane credential update.
+4. Enable `SUBSCRIPTION_DELIVERY_ENABLED` and validate the internal canary UI
+   without copying its bearer URL into logs or chat.
+5. Re-run legacy entitlement, coverage and L0/L1/L2 checks. Abort and restore
+   the previous image/environment/database backup on any failure.
 
-1. Invite **3–5** consenting users only.
-2. Assign each `subId` individually; do not backfill a population.
-3. Offer the subscription as an additional private option while preserving the
-   direct VLESS key.
-4. Observe 48–72 hours for payload/import/E2E health, entitlement invariant,
-   support feedback and direct-link continuity.
-5. Roll back per user by withholding/revoking only that subscription reference
-   and resending the unchanged direct key.
+## Phase 3 — explicit entitled-user migration
 
-## Phase 3 — opt-in delivery
+1. Obtain the eligible records from the balance-based Django entitlement query.
+2. For each explicit active `UserVPN`, run dry-run, then one-record apply of
+   `prepare_xui_subscriptions`; never use an unbounded apply command.
+3. After each small batch, run aggregate coverage, `66/87/21`, L0/L1/L2 and
+   protected subscription/direct-VLESS E2E checks.
+4. The bot privately shows the stable subscription URL. Existing users must
+   import it once; their installed direct profile cannot be remotely converted.
+5. Insufficient balance disables the same control-plane client. Reactivation
+   through the existing add-key flow reuses the same `UserVPN`, UUID and URL.
 
-Enable the delivery flag only after the pilot promotion gate. The bot must check
-entitlement before private delivery, must not store or log the URL, and must
-keep direct VLESS as the default. Do not couple this stage to aggregation,
-additional transports, or billing rewrites.
+## Legacy rollback and later stages
 
-## Later stages
+Keep the current VLESS/Reality inbound, direct keys and all compatibility
+clients operational through the entire migration. Direct keys are not displayed
+when subscription delivery succeeds, but remain stored for fallback and
+rollback. Their retirement requires evidence that every customer migrated plus
+a separate owner approval.
 
-After at least two stable billing cycles, separately design and test
-`enable`/`expiryTime` synchronization on non-production records. Only then
-consider a bounded, user-by-user new-user default. Legacy retirement, own Django
-aggregation, external providers and multi-inbound subscriptions are independent
-projects requiring separate approval.
+`expiryTime`, additional transports, inbound removal, Django aggregation,
+external providers and compatibility-client ownership are separate projects.

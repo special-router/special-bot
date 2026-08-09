@@ -1,6 +1,6 @@
 # Current status
 
-> Snapshot date: **2026-08-08**. This is the current operational snapshot.
+> Snapshot date: **2026-08-09**. This is the current operational snapshot.
 > `HISTORY.md` is a short non-authoritative chronology, not a status source.
 
 ## Live and verified
@@ -22,13 +22,21 @@
 
 ## Explicitly not complete
 
-- `SUBSCRIPTION_DELIVERY_ENABLED=false`; customer-facing bot delivery is off.
+- `SUBSCRIPTION_DELIVERY_ENABLED=false`; customer-facing bot delivery is still
+  off in production. Subscription-first UI code is pushed at `037b796`, tested
+  with `56 passed`, and awaits guarded deployment.
 - The 48-hour monitored canary soak is **waived by owner decision for schedule
   reasons**. It is recorded as skipped, never as passed; the residual risk of
   promoting without sustained observation stays with the owner.
-- No mass migration or bulk `subId` assignment has occurred or is approved.
-- Billing-to-`expiryTime` synchronization is not started; do not infer access
-  from `enabled` alone.
+- The owner approved controlled migration of entitled users. No population
+  backfill has occurred yet: preparation remains one explicit active `UserVPN`
+  per apply command, with aggregate checks between batches. Compatibility-only
+  clients remain excluded.
+- BOT host SSH currently accepts TCP but does not send a protocol banner from
+  local or NL. Timeweb Cloud console recovery is required before deployment,
+  coverage audit and atomic 3x-ui credential rotation can proceed.
+- Billing-to-`expiryTime` synchronization is not started. Existing billing
+  enable/disable behavior preserves the user record and client identity.
 
 See [subscription migration](SUBSCRIPTION-MIGRATION.md) and
 [monitoring](MONITORING.md) for promotion gates.
