@@ -5,6 +5,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from apps.servers.models import Server
 from apps.servers.subscription_connector import XUISubscriptionConnector
+from apps.vpn.management.commands.audit_legacy_vpn import get_server_entitlement
 from apps.vpn.models import UserVPN
 
 
@@ -35,11 +36,17 @@ class Command(BaseCommand):
 
         for server in servers:
             records = UserVPN.objects.filter(server=server).order_by('created_at')
+            if options['user_vpn_id']:
+                records = records.filter(id=options['user_vpn_id'])
             if options['apply']:
-                records = records.filter(id=options['user_vpn_id'], enabled=True)
+                records = records.filter(enabled=True)
             records = list(records.select_related('user', 'server'))
             if options['apply'] and len(records) != 1:
-                raise CommandError('Refusing --apply: explicit active canary record was not found on this server.')
+                raise CommandError('Refusing --apply: explicit active record was not found on this server.')
+            if options['apply']:
+                _, entitled_ids = get_server_entitlement(server)
+                if str(records[0].vpn_uuid) not in entitled_ids:
+                    raise CommandError('Refusing --apply: explicit record is not balance-entitled.')
             if not options['apply']:
                 self.stdout.write(f'server_id={server.id} candidates={len(records)} mode=dry-run changes=0')
                 continue
