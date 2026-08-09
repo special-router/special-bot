@@ -41,8 +41,9 @@ class Command(BaseCommand):
             if options['apply']:
                 records = records.filter(enabled=True)
             records = list(records.select_related('user', 'server'))
-            if options['apply'] and len(records) != 1:
-                raise CommandError('Refusing --apply: explicit active record was not found on this server.')
+            if options['user_vpn_id'] and len(records) != 1:
+                mode = '--apply' if options['apply'] else 'dry-run'
+                raise CommandError(f'Refusing {mode}: explicit record was not found on this server.')
             if options['apply']:
                 _, entitled_ids = get_server_entitlement(server)
                 if str(records[0].vpn_uuid) not in entitled_ids:

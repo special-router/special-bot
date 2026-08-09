@@ -47,6 +47,18 @@ class PrepareXuiSubscriptionsTests(TestCase):
         connector_class.assert_not_called()
 
     @patch('apps.servers.management.commands.prepare_xui_subscriptions.XUISubscriptionConnector')
+    def test_explicit_dry_run_refuses_unknown_record(self, connector_class):
+        with self.assertRaisesMessage(CommandError, 'dry-run: explicit record was not found'):
+            call_command(
+                'prepare_xui_subscriptions',
+                server_id=self.server.id,
+                user_vpn_id=999999,
+                stdout=StringIO(),
+            )
+
+        connector_class.assert_not_called()
+
+    @patch('apps.servers.management.commands.prepare_xui_subscriptions.XUISubscriptionConnector')
     def test_apply_refuses_record_without_balance_entitlement(self, connector_class):
         with self.assertRaisesMessage(CommandError, 'explicit record is not balance-entitled'):
             call_command(
