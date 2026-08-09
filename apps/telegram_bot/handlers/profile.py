@@ -8,6 +8,7 @@ from apps.telegram_bot.inline_buttons.profile import get_reply_markup_profile
 from apps.telegram_bot.utils import get_user
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
+from apps.vpn.services.subscription_delivery import get_user_access_url
 
 
 PROFILE_TEXT_TEMPLATE: Final[
@@ -29,8 +30,8 @@ VPN_KEY_INFO_TEMPLATE: Final[
     str
 ] = """
 🔸 **{server_name}**
-   Ключ (на 2 устройства, цена 7 руб/сутки) ( нажмите на ссылку и она скопируется ):
-   `{vpn_key}`
+   Ссылка подключения (на 2 устройства, цена 7 руб/сутки):
+   `{access_url}`
    Статус: {status}
 """
 
@@ -50,9 +51,9 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if vpn_connections:
         for vpn in vpn_connections:
             status = '✅ Активен' if vpn.enabled else '❌ Неактивен'
-            vpn_key_display = vpn.vpn_key
+            access_url = await get_user_access_url(vpn)
             vpn_keys_info += VPN_KEY_INFO_TEMPLATE.format(
-                server_name=vpn.server.name, vpn_key=vpn_key_display, status=status
+                server_name=vpn.server.name, access_url=access_url, status=status
             )
     else:
         vpn_keys_info = '❌ Нет активных VPN ключей'
