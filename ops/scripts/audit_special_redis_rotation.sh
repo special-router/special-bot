@@ -13,7 +13,12 @@ owner_compose=$1
 if grep -Eq -- '--requirepass[[:space:]]+[^"$]|--requirepass"?[[:space:]]*,[[:space:]]*"[^$]' "$owner_compose"; then
   echo 'redis_owner_compose=hardcoded_requirepass blocker=true'
 else
-  echo 'redis_owner_compose=environment_driven blocker=false'
+  working_dir=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' vpn_bot-redis-1)
+  if [[ $working_dir == /root/special-bot ]]; then
+    echo 'redis_owner_compose=environment_driven adopted=true blocker=false'
+  else
+    echo 'redis_owner_compose=environment_driven adopted=false blocker=true'
+  fi
 fi
 printf 'postgres_running='; docker inspect -f '{{.State.Running}}' vpn_bot-postgres-1
 printf 'redis_running='; docker inspect -f '{{.State.Running}}' vpn_bot-redis-1

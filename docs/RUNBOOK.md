@@ -118,6 +118,10 @@ stated above.
 - `ops/scripts/preflight_special_infrastructure_adoption.sh` — read-only checks
   that the tracked infrastructure definition references the exact live external
   network/data volumes without recreating PostgreSQL or Redis.
+- `ops/scripts/adopt_special_infrastructure_ownership.sh` — explicit-window
+  adoption of Redis into the clean tracked owner, preserving its data volume and
+  proving PostgreSQL was not recreated. PostgreSQL ownership adoption remains a
+  separate backup/restore window.
 - `ops/scripts/rotate_special_redis_credentials.sh` — disruptive clean-owner
   Redis rotation; separate window required, PostgreSQL is excluded.
 - `ops/scripts/harden_special_ssh.sh` — staged SSH hardening; refuses without an
