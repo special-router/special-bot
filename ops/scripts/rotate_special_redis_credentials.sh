@@ -82,9 +82,17 @@ for line in lines:
     if line and not line.lstrip().startswith('#') and '=' in line:
         key, value = line.split('=', 1)
         values[key] = value
-host = values.get('REDIS_HOST', 'redis') or 'redis'
-port = values.get('REDIS_PORT', '6379') or '6379'
-db = values.get('REDIS_DB', '0') or '0'
+current_url = values.get('REDIS_URL', '')
+if current_url:
+    from urllib.parse import urlsplit
+    parsed = urlsplit(current_url)
+    host = parsed.hostname or values.get('REDIS_HOST', 'redis') or 'redis'
+    port = parsed.port or int(values.get('REDIS_PORT', '6379') or '6379')
+    db = parsed.path.lstrip('/') or values.get('REDIS_DB', '0') or '0'
+else:
+    host = values.get('REDIS_HOST', 'redis') or 'redis'
+    port = values.get('REDIS_PORT', '6379') or '6379'
+    db = values.get('REDIS_DB', '0') or '0'
 replacement = {
     'REDIS_PASSWORD': secret,
     'REDIS_URL': f'redis://:{quote(secret, safe="")}@{host}:{port}/{db}',
