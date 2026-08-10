@@ -7,6 +7,7 @@ EXPECTED_COMMIT=${SPECIAL_REDIS_COMMIT:-$(git -C "$(dirname "${BASH_SOURCE[0]}")
 REMOTE_PATH=${SPECIAL_BOT_REMOTE_PATH:-/root/special-bot}
 APP_COMPOSE=${SPECIAL_BOT_COMPOSE_FILE:-docker-compose.deploy.yml}
 OWNER_COMPOSE=${SPECIAL_REDIS_OWNER_COMPOSE_FILE:-/root/vpn_bot/docker-compose.yml}
+OWNER_ENV=${SPECIAL_REDIS_OWNER_ENV_FILE:-/root/vpn_bot/.environment}
 
 SSH=(
   ssh -i "$SSH_KEY"
@@ -22,12 +23,13 @@ SSH=(
 [[ -z "${SPECIAL_BOT_SSH_JUMP:-}" ]] || SSH+=(-J "$SPECIAL_BOT_SSH_JUMP")
 SSH+=("root@$BOT_HOST")
 
-"${SSH[@]}" bash -s -- "$REMOTE_PATH" "$APP_COMPOSE" "$OWNER_COMPOSE" "$EXPECTED_COMMIT" <<'REMOTE'
+"${SSH[@]}" bash -s -- "$REMOTE_PATH" "$APP_COMPOSE" "$OWNER_COMPOSE" "$OWNER_ENV" "$EXPECTED_COMMIT" <<'REMOTE'
 set -euo pipefail
 remote_path=$1
 app_compose=$2
 owner_compose=$3
-expected_commit=$4
+owner_env=$4
+expected_commit=$5
 cd "$remote_path"
 
 unexpected=$(git status --porcelain | awk '$2 != ".environment" && $2 !~ /^\.environment\.bak\.[0-9A-Za-zT_-]+$/ {print}')
@@ -35,6 +37,7 @@ unexpected=$(git status --porcelain | awk '$2 != ".environment" && $2 !~ /^\.env
 [[ $(git rev-parse --short HEAD) == "$expected_commit" ]] || { echo 'BLOCK: unexpected production commit'; exit 21; }
 [[ -f .environment && $(stat -c '%a' .environment) == 600 ]] || { echo 'BLOCK: .environment mode'; exit 22; }
 [[ -f "$owner_compose" ]] || { echo 'BLOCK: owning Redis Compose file missing'; exit 23; }
+[[ -f "$owner_env" && $(stat -c '%a' "$owner_env") == 600 ]] || { echo 'BLOCK: owning Redis environment mode'; exit 30; }
 [[ $(docker inspect -f '{{.State.Running}}' vpn_bot-postgres-1) == true ]] || { echo 'BLOCK: PostgreSQL not running'; exit 24; }
 [[ $(docker inspect -f '{{.State.Running}}' vpn_bot-redis-1) == true ]] || { echo 'BLOCK: Redis not running'; exit 25; }
 postgres_started=$(docker inspect -f '{{.State.StartedAt}}' vpn_bot-postgres-1)
@@ -52,18 +55,21 @@ timeout 15 docker info --format '{{.ServerVersion}}' >/dev/null || { echo 'BLOCK
 
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 backup=".environment.bak.$stamp"
+owner_backup="$owner_env.bak.$stamp"
 new_secret=$(openssl rand -hex 32)
 cp --preserve=mode .environment "$backup"
-chmod 600 "$backup"
+cp --preserve=mode "$owner_env" "$owner_backup"
+chmod 600 "$backup" "$owner_backup"
 
 rollback() {
   rc=$?
   trap - EXIT
   if [[ $rc -ne 0 ]]; then
     cp --preserve=mode "$backup" .environment 2>/dev/null || true
-    set -a; source .environment; set +a
+    cp --preserve=mode "$owner_backup" "$owner_env" 2>/dev/null || true
+    set -a; source "$owner_env"; set +a
     export REDIS_PASSWORD
-    docker compose -f "$owner_compose" up -d --no-deps --force-recreate redis >/dev/null 2>&1 || true
+    docker compose --env-file "$owner_env" -f "$owner_compose" up -d --no-deps --force-recreate redis >/dev/null 2>&1 || true
     docker compose -f "$app_compose" up -d --no-deps web celery celery_beat monitoring >/dev/null 2>&1 || true
     echo "ROLLBACK_ATTEMPTED rc=$rc" >&2
   fi
@@ -113,14 +119,32 @@ fd = os.open(path, os.O_WRONLY | os.O_TRUNC, 0o600)
 with os.fdopen(fd, 'w') as handle:
     handle.write('\n'.join(out) + '\n')
 PY
-chmod 600 .environment
+python3 - "$owner_env" "$new_secret" <<'PY'
+import os, sys
+path, secret = sys.argv[1:]
+lines = open(path, encoding='utf-8').read().splitlines()
+seen = False
+out = []
+for line in lines:
+    if line.split('=', 1)[0] == 'REDIS_PASSWORD':
+        out.append(f'REDIS_PASSWORD={secret}')
+        seen = True
+    else:
+        out.append(line)
+if not seen:
+    out.append(f'REDIS_PASSWORD={secret}')
+fd = os.open(path, os.O_WRONLY | os.O_TRUNC, 0o600)
+with os.fdopen(fd, 'w') as handle:
+    handle.write('\n'.join(out) + '\n')
+PY
+chmod 600 .environment "$owner_env"
 unset new_secret
 
 # Stop only application processes. PostgreSQL remains untouched throughout.
 docker compose -f "$app_compose" stop web celery celery_beat monitoring >/dev/null
-set -a; source .environment; set +a
+set -a; source "$owner_env"; set +a
 export REDIS_PASSWORD
-docker compose -f "$owner_compose" up -d --no-deps --force-recreate redis >/dev/null
+docker compose --env-file "$owner_env" -f "$owner_compose" up -d --no-deps --force-recreate redis >/dev/null
 for _ in $(seq 1 30); do
   if docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" vpn_bot-redis-1 redis-cli ping 2>/dev/null | grep -qx PONG; then
     break
@@ -128,6 +152,9 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" vpn_bot-redis-1 redis-cli ping 2>/dev/null | grep -qx PONG
+container_secret_hash=$(docker inspect vpn_bot-redis-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | python3 -c 'import hashlib,sys; values=dict(line.rstrip().split("=",1) for line in sys.stdin if "=" in line); print(hashlib.sha256(values.get("REDIS_PASSWORD","").encode()).hexdigest())')
+expected_secret_hash=$(python3 -c 'import hashlib,os; print(hashlib.sha256(os.environ["REDIS_PASSWORD"].encode()).hexdigest())')
+[[ "$container_secret_hash" == "$expected_secret_hash" ]] || { echo 'FAIL: Redis container secret mismatch'; exit 31; }
 docker compose -f "$app_compose" up -d --no-deps web celery celery_beat monitoring >/dev/null
 for _ in $(seq 1 30); do
   if docker exec special-bot-web-1 python manage.py audit_legacy_vpn >/tmp/special-redis-audit.out 2>&1; then break; fi
@@ -141,5 +168,5 @@ docker exec special-bot-web-1 python manage.py audit_special_monitoring >/dev/nu
 [[ $(docker inspect -f '{{.Image}}' vpn_bot-redis-1) == "$redis_image_before" ]]
 trap - EXIT
 unset REDIS_PASSWORD REDIS_URL
-printf 'redis_rotation=passed backup=%s\n' "$backup"
+printf 'redis_rotation=passed app_backup=%s owner_backup=%s\n' "$backup" "$owner_backup"
 REMOTE
