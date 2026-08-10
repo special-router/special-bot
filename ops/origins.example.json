@@ -1,0 +1,28 @@
+[
+  {
+    "id": "primary",
+    "provider": "provider-a",
+    "asn": 64500,
+    "region": "region-a",
+    "public_host": "origin-a.example.invalid",
+    "health_url": "https://origin-a.example.invalid/health",
+    "transport": "vless-reality-tcp",
+    "priority": 10,
+    "rollout_state": "production",
+    "role": "primary",
+    "enabled": true
+  },
+  {
+    "id": "secondary",
+    "provider": "provider-b",
+    "asn": 64501,
+    "region": "region-b",
+    "public_host": "origin-b.example.invalid",
+    "health_url": "https://origin-b.example.invalid/health",
+    "transport": "vless-reality-tcp",
+    "priority": 20,
+    "rollout_state": "disabled",
+    "role": "secondary",
+    "enabled": false
+  }
+]

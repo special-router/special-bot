@@ -109,6 +109,10 @@ venv.bak/
 # mkdocs documentation
 /site
 
+# Local agent orchestration state (never project source)
+.pi-subagents/
+.ralph/
+
 # mypy
 .mypy_cache/
 

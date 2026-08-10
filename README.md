@@ -14,8 +14,13 @@
 - [Safe operations runbook](docs/RUNBOOK.md)
 - [Timeweb BOT SSH recovery](docs/TIMEWEB-BOT-SSH-RECOVERY.md)
 - [Subscription migration](docs/SUBSCRIPTION-MIGRATION.md)
+- [Compatibility-client migration](docs/COMPATIBILITY-MIGRATION.md)
+- [Scale-ready architecture](docs/SCALE-ARCHITECTURE.md)
+- [Client subscription guide](docs/CLIENT-GUIDE.md)
 - [Monitoring](docs/MONITORING.md)
 - [Security and credential policy](docs/SECURITY-CREDENTIALS.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Historical notes](docs/HISTORY.md)
 - Guarded operator scripts: [`ops/scripts/`](ops/scripts/)
+- Local scale-readiness implementation/CI verifier: `ops/scripts/verify_scale_closeout.sh`
+  (it does not claim production origin/paging/migration readiness)

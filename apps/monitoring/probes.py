@@ -59,6 +59,61 @@ def probe_tcp(host: str, port: int, timeout: float) -> tuple[bool, float | None,
         return False, None, type(error).__name__
 
 
+def _read_meminfo() -> dict[str, int]:
+    values: dict[str, int] = {}
+    with open('/proc/meminfo', encoding='utf-8') as handle:
+        for line in handle:
+            key, raw = line.split(':', 1)
+            values[key] = int(raw.strip().split()[0])
+    return values
+
+
+def _read_oom_kill_count() -> int:
+    with open('/proc/vmstat', encoding='utf-8') as handle:
+        for line in handle:
+            key, raw = line.split()
+            if key == 'oom_kill':
+                return int(raw)
+    return 0
+
+
+def run_host_capacity_probe() -> LayerResult:
+    try:
+        meminfo = _read_meminfo()
+        available_mb = meminfo['MemAvailable'] // 1024
+        swap_total_mb = meminfo.get('SwapTotal', 0) // 1024
+        swap_free_mb = meminfo.get('SwapFree', 0) // 1024
+        swap_used_mb = max(0, swap_total_mb - swap_free_mb)
+        load1 = os.getloadavg()[0]
+        cpus = os.cpu_count() or 1
+        oom_kills = _read_oom_kill_count()
+    except (OSError, KeyError, ValueError):
+        return LayerResult(layer='host', ok=False, error_class='host_metrics')
+
+    reasons = []
+    if available_mb < settings.SPECIAL_MONITOR_MIN_AVAILABLE_MB:
+        reasons.append('memory_low')
+    if swap_total_mb < settings.SPECIAL_MONITOR_MIN_SWAP_MB:
+        reasons.append('swap_missing')
+    if load1 > cpus * settings.SPECIAL_MONITOR_MAX_LOAD_PER_CPU:
+        reasons.append('load_high')
+    if oom_kills > settings.SPECIAL_MONITOR_MAX_OOM_KILLS:
+        reasons.append('oom_kill')
+    return LayerResult(
+        layer='host',
+        ok=not reasons,
+        error_class=reasons[0] if reasons else None,
+        immediate='oom_kill' in reasons or 'swap_missing' in reasons,
+        details={
+            'mem_available_mb': available_mb,
+            'swap_total_mb': swap_total_mb,
+            'swap_used_mb': swap_used_mb,
+            'load1_per_cpu': round(load1 / cpus, 2),
+            'oom_kills': oom_kills,
+        },
+    )
+
+
 def run_regional_probe() -> LayerResult:
     results = []
     for endpoint in settings.SPECIAL_MONITOR_ENDPOINTS:

@@ -9,14 +9,16 @@ from django.core import management
 from django.test import TestCase, override_settings
 
 from apps.monitoring.models import MonitorState, MonitorTransition
+from apps.monitoring.notifications import build_transition_payload, send_transition_notification
 from apps.monitoring.probes import (
     LayerResult,
     build_xray_config,
     run_control_plane_probe,
+    run_host_capacity_probe,
     run_protocol_canary,
     run_regional_probe,
 )
-from apps.monitoring.tasks import _run
+from apps.monitoring.tasks import _run, _notify_transition
 
 
 class RegionalProbeTests(TestCase):
@@ -102,7 +104,16 @@ class BeatScheduleTests(TestCase):
         without_l2 = self._schedule_keys(monitor_enabled=True, l2_enabled=False)
         with_l2 = self._schedule_keys(monitor_enabled=True, l2_enabled=True)
 
-        self.assertEqual(without_l2, {'special_monitor_l0', 'special_monitor_l1', 'update_user_vpn_daily', 'sync_expiry_times_daily'})
+        self.assertEqual(
+            without_l2,
+            {
+                'special_monitor_host',
+                'special_monitor_l0',
+                'special_monitor_l1',
+                'update_user_vpn_daily',
+                'sync_expiry_times_daily',
+            },
+        )
         self.assertEqual(with_l2, without_l2 | {'special_monitor_l2'})
 
 
@@ -142,6 +153,49 @@ class ControlPlaneProbeTests(TestCase):
         self.assertFalse(result.ok)
         self.assertTrue(result.immediate)
         self.assertEqual(result.error_class, 'inbound_inventory_drift')
+
+
+class HostCapacityProbeTests(TestCase):
+    @override_settings(
+        SPECIAL_MONITOR_MIN_AVAILABLE_MB=128,
+        SPECIAL_MONITOR_MIN_SWAP_MB=512,
+        SPECIAL_MONITOR_MAX_LOAD_PER_CPU=4.0,
+        SPECIAL_MONITOR_MAX_OOM_KILLS=0,
+    )
+    @patch('apps.monitoring.probes._read_oom_kill_count', return_value=0)
+    @patch('apps.monitoring.probes.os.cpu_count', return_value=1)
+    @patch('apps.monitoring.probes.os.getloadavg', return_value=(0.5, 0.5, 0.5))
+    @patch(
+        'apps.monitoring.probes._read_meminfo',
+        return_value={'MemAvailable': 256 * 1024, 'SwapTotal': 1024 * 1024, 'SwapFree': 900 * 1024},
+    )
+    def test_healthy_host_emits_aggregate_metrics(self, *_mocks):
+        result = run_host_capacity_probe()
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.details['mem_available_mb'], 256)
+        self.assertEqual(result.details['swap_total_mb'], 1024)
+        self.assertNotIn('processes', result.details)
+
+    @override_settings(
+        SPECIAL_MONITOR_MIN_AVAILABLE_MB=128,
+        SPECIAL_MONITOR_MIN_SWAP_MB=512,
+        SPECIAL_MONITOR_MAX_LOAD_PER_CPU=4.0,
+        SPECIAL_MONITOR_MAX_OOM_KILLS=0,
+    )
+    @patch('apps.monitoring.probes._read_oom_kill_count', return_value=1)
+    @patch('apps.monitoring.probes.os.cpu_count', return_value=1)
+    @patch('apps.monitoring.probes.os.getloadavg', return_value=(0.5, 0.5, 0.5))
+    @patch(
+        'apps.monitoring.probes._read_meminfo',
+        return_value={'MemAvailable': 256 * 1024, 'SwapTotal': 1024 * 1024, 'SwapFree': 900 * 1024},
+    )
+    def test_oom_is_immediate_failure(self, *_mocks):
+        result = run_host_capacity_probe()
+
+        self.assertFalse(result.ok)
+        self.assertTrue(result.immediate)
+        self.assertEqual(result.error_class, 'oom_kill')
 
 
 class XrayConfigTests(TestCase):
@@ -264,6 +318,53 @@ class MonitoringStateTests(TestCase):
         state = MonitorState.objects.get(layer='l2')
         self.assertEqual(state.error_class, 'runner_failure')
         self.assertEqual(state.details, {})
+
+    @override_settings(SPECIAL_MONITOR_PAGING_ENABLED=False, SPECIAL_MONITOR_PAGING_OWNER='')
+    def test_disabled_notification_records_only_error_class(self):
+        transition = MonitorTransition.objects.create(
+            layer='l1',
+            event='opened',
+            error_class='regional_reachability',
+            consecutive_failures=2,
+        )
+
+        _notify_transition(transition.pk)
+
+        transition.refresh_from_db()
+        self.assertIsNotNone(transition.notification_attempted_at)
+        self.assertFalse(transition.notification_delivered)
+        self.assertEqual(transition.notification_error_class, 'disabled')
+
+    def test_notification_payload_is_aggregate_only(self):
+        transition = MonitorTransition.objects.create(
+            layer='l0',
+            event='opened',
+            error_class='entitled_missing',
+            consecutive_failures=1,
+        )
+        payload = build_transition_payload(
+            layer=transition.layer,
+            event=transition.event,
+            error_class=transition.error_class,
+            failures=transition.consecutive_failures,
+            created_at=transition.created_at,
+        )
+        rendered = repr(payload)
+
+        self.assertNotIn('uuid', rendered.lower())
+        self.assertNotIn('/sub/', rendered)
+        self.assertEqual(payload['service'], 'special-bot')
+
+    @override_settings(
+        SPECIAL_MONITOR_PAGING_ENABLED=True,
+        SPECIAL_MONITOR_PAGING_WEBHOOK_URL='http://paging.invalid/hook',
+        SPECIAL_MONITOR_PAGING_OWNER='primary-on-call',
+    )
+    def test_paging_rejects_non_https_webhook(self):
+        result = send_transition_notification({'service': 'special-bot'})
+
+        self.assertFalse(result.delivered)
+        self.assertEqual(result.error_class, 'not_configured')
 
     def test_status_command_is_read_only_and_excludes_details(self):
         MonitorState.objects.create(

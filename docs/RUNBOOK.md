@@ -110,10 +110,18 @@ stated above.
   file, dry-run by default, bounded apply batches.
 - `ops/scripts/rotate_special_xui_credentials.sh` — disruptive atomic NL/BOT
   credential/path rotation; separate approval required.
+- `ops/scripts/rotate_special_redis_credentials.sh` — disruptive owning-project
+  Redis rotation; separate window required, PostgreSQL is excluded.
+- `ops/scripts/harden_special_ssh.sh` — staged SSH hardening; refuses without an
+  explicit approval flag and still requires a retained human rollback session.
+- `ops/scripts/retire_special_legacy_app_assets.sh` — exact allowlisted stopped
+  app cleanup; refuses by default and never targets PostgreSQL/Redis.
 - `ops/scripts/verify_special_hardening.sh` — firewall, swap, legacy and
   monitoring verification.
 - `ops/scripts/verify_special_full_backlog.sh` — full local plus production
   validation; set `SPECIAL_VERIFY_PYTHON` when the repository venv is elsewhere.
+- `ops/scripts/verify_scale_closeout.sh` — local CI-equivalent docs, origin,
+  migration and full-test validation for scale-readiness changes.
 
 For provider-console SSH recovery, follow
 [TIMEWEB-BOT-SSH-RECOVERY.md](TIMEWEB-BOT-SSH-RECOVERY.md).

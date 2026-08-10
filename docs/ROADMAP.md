@@ -37,21 +37,26 @@ relay/subscription plans are outside this repository.
 
 ## Reliability and operations — P1
 
-- Add an approved external paging destination and accountable on-call owner.
-- Provision a second independent origin/ASN before claiming origin redundancy.
-- Add scheduled documentation/link validation to CI.
-- Continue aggregate drift audits and protected L2 evidence; do not add
+- Enable the implemented provider-neutral paging adapter after an approved
+  external destination and accountable on-call owner are supplied.
+- Provision a second independent origin/ASN and validate it against the tracked
+  origin contract before claiming redundancy.
+- Keep repository CI validation green: docs links/stale paths/secret patterns,
+  shell syntax, migrations and tests.
+- Continue aggregate drift, host-capacity and protected L2 evidence; do not add
   automatic service restarts to monitoring.
 
 ## Product and client work — P1/P2
 
-- Publish user-facing subscription import guidance and support flows.
-- Measure client/ISP behavior before adding new transports or automatic
-  selection claims.
-- Evaluate Happ Provider, OpenWrt/PassWall2 and router integrations only when
-  their repositories, target devices and owners are available.
-- Keep compatibility-only clients untouched until ownership and migration are
-  explicitly established.
+- Maintain the tracked user-facing subscription guide and support-safe evidence
+  flow.
+- Measure client/ISP behavior before enabling new transports or automatic
+  selection claims; use the scale architecture's canary states.
+- Implement Happ Provider/OpenWrt/PassWall2 adapters only when their API/repo,
+  target devices and owners are available; standard subscriptions remain the
+  provider-neutral interface.
+- Use the explicit compatibility ownership/migration workflow; keep unowned
+  clients untouched.
 
 ## Decision principles
 

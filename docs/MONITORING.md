@@ -3,8 +3,8 @@
 > **Deployed and live on the production bot host (2026-08-08).** L0, L1 and L2
 > run on schedule; L2 is confined to an isolated `monitoring` queue and worker.
 > `SPECIAL_MONITOR_ENABLED` and `SPECIAL_MONITOR_L2_ENABLED` are therefore true
-> in production. `SUBSCRIPTION_DELIVERY_ENABLED` stays false: monitoring being
-> live does not enable customer subscription delivery.
+> in production. Subscription delivery is also enabled, but remains an
+> independent rollout/control surface.
 
 Monitoring is observational: it must not restart VPN, nginx, Xray, Docker or
 relay services. State is sanitized: no UUIDs, bearer subscription URLs, VLESS
@@ -17,9 +17,10 @@ URLs, Reality parameters, credentials, or raw client payloads.
 | L0 | 5 min | Read 3x-ui inbound inventory and check balance-based entitlement against expected inbound properties. |
 | L1 | 1 min | TCP/TLS/SNI reachability from the permanent bot-host region; record only endpoint label, regions, port, transport, latency and coarse error class. |
 | L2 | 5 min | Protected subscription/direct-key import and HTTPS-egress E2E for the internal canary. |
+| Host | every 5 minutes | Container-visible `MemAvailable`, swap, load-per-CPU and kernel OOM counter; aggregate values only. |
 | L3 | on alert | Manual correlation of nginx, Xray, relay and control-plane state; no automated remediation. |
 
-L0/L1/L2 transition state is intended for sanitized durable storage. L2 must run
+L0/L1/L2/Host transition state is intended for sanitized durable storage. L2 and Host must run
 on a dedicated `monitoring` queue/container, with concurrency one and isolated
 runtime privileges; the ordinary worker must not consume that queue.
 
@@ -41,13 +42,15 @@ runtime privileges; the ordinary worker must not consume that queue.
 
 The intended policy records a first ordinary failure without alerting, opens on
 the second consecutive failure, opens immediately for `entitled_missing > 0`,
-and records recovery on the first healthy result after an open alert. External
-paging is not included in the current local implementation.
+and records recovery on the first healthy result after an open alert. A
+provider-neutral HTTPS webhook adapter is available for opened/recovered
+transitions. It remains default-off until an approved destination and on-call
+owner exist; payloads contain only layer, transition, coarse error class,
+failure count and timestamp.
 
-Paging is deliberately deferred, not designed away. When it is added it must
-reuse the existing sanitized transition records, send only endpoint label,
-region, layer, state and coarse error class to the operator channel, and remain
-notification-only: no automated restart, failover or client mutation.
+Production paging enablement is deliberately deferred, not the adapter itself.
+The adapter reuses sanitized transition records and remains notification-only:
+no automated restart, failover or client mutation.
 
 ## Single reproducible image
 

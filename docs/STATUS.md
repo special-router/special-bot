@@ -37,12 +37,11 @@
   1. `📊 Подписка-осталось N дней` (non-working status entry, first)
   2. `🇳🇱 NL Direct` (`sub.special-wifi.ru:8443`)
   3. `🇳🇱 NL Relay` (`201.34.132.118:443`)
-- Production monitoring is deployed via Celery beat plus an isolated
-  `monitoring` queue. Cadence: L0 control-plane every 5 minutes, L1 regional
-  TCP every minute, L2 subscription/direct-VLESS E2E every 5 minutes on the
-  dedicated worker only. L0/L1/L2 are healthy. L2 selects a non-loopback VLESS
-  entry carrying the canary UUID and retries bounded Reality E2E attempts to
-  absorb transient low-latency handshake failures.
+- Production currently runs L0 control-plane, L1 regional TCP and protected L2
+  subscription/direct-VLESS monitoring on an isolated queue. The next app
+  deployment also includes a Host capacity layer (memory, swap, load and OOM
+  counter) plus a default-off provider-neutral paging adapter. Do not describe
+  Host/paging as live until that deployment and a paging destination exist.
 
 ## Billing and subscription lifecycle
 

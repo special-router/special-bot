@@ -26,13 +26,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-h+gcq#-1tm#01(qh5_dldokr&236ueo9g-#loi(y$=u&s@&xc3'
-
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '109.172.30.146', 'sub.special-wifi.ru']
+# Production values come only from the ignored runtime environment.
+SECRET_KEY = env.str('SECRET_KEY', 'django-insecure-local-development-only')
+DEBUG = env.bool('DEBUG', False)
+ALLOWED_HOSTS = env.list(
+    'ALLOWED_HOSTS',
+    default=['localhost', '127.0.0.1', '0.0.0.0', 'sub.special-wifi.ru'],
+)
 
 
 # Application definition
@@ -191,6 +191,7 @@ CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
 
 CELERY_TASK_ROUTES = {
     'apps.monitoring.tasks.run_protocol_monitor': {'queue': 'monitoring'},
+    'apps.monitoring.tasks.run_host_capacity_monitor': {'queue': 'monitoring'},
 }
 
 CELERY_BEAT_SCHEDULE = {
@@ -216,6 +217,10 @@ if SPECIAL_MONITOR_ENABLED:
             'special_monitor_l1': {
                 'task': 'apps.monitoring.tasks.run_regional_monitor',
                 'schedule': crontab(minute='*'),
+            },
+            'special_monitor_host': {
+                'task': 'apps.monitoring.tasks.run_host_capacity_monitor',
+                'schedule': crontab(minute='*/5'),
             },
         }
     )
@@ -251,6 +256,14 @@ MIRROR_INBOUND_IDS = env.json('MIRROR_INBOUND_IDS', default=[])
 # It never restarts application or VPN services and emits aggregate metadata only.
 SPECIAL_MONITOR_FAILURE_THRESHOLD = env.int('SPECIAL_MONITOR_FAILURE_THRESHOLD', 2)
 SPECIAL_MONITOR_PROBE_REGION = env.str('SPECIAL_MONITOR_PROBE_REGION', 'ru-bot')
+SPECIAL_MONITOR_PAGING_ENABLED = env.bool('SPECIAL_MONITOR_PAGING_ENABLED', False)
+SPECIAL_MONITOR_PAGING_WEBHOOK_URL = env.str('SPECIAL_MONITOR_PAGING_WEBHOOK_URL', '')
+SPECIAL_MONITOR_PAGING_OWNER = env.str('SPECIAL_MONITOR_PAGING_OWNER', '')
+SPECIAL_MONITOR_PAGING_TIMEOUT = env.int('SPECIAL_MONITOR_PAGING_TIMEOUT', 10)
+SPECIAL_MONITOR_MIN_AVAILABLE_MB = env.int('SPECIAL_MONITOR_MIN_AVAILABLE_MB', 128)
+SPECIAL_MONITOR_MIN_SWAP_MB = env.int('SPECIAL_MONITOR_MIN_SWAP_MB', 512)
+SPECIAL_MONITOR_MAX_LOAD_PER_CPU = env.float('SPECIAL_MONITOR_MAX_LOAD_PER_CPU', 4.0)
+SPECIAL_MONITOR_MAX_OOM_KILLS = env.int('SPECIAL_MONITOR_MAX_OOM_KILLS', 0)
 SPECIAL_MONITOR_ENDPOINTS = env.json(
     'SPECIAL_MONITOR_ENDPOINTS',
     default=[],
