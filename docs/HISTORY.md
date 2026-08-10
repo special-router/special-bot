@@ -22,6 +22,13 @@ production state belongs in [STATUS.md](STATUS.md).
   were moved into this repository under `ops/scripts/`. The separate
   `vpn-ops` workspace remains a different VPN service and is not a SPECIAL Bot
   operational source.
+- **2026-08-10:** The ED25519 public key was installed and verified for key-only
+  SSH access on BOT and NL MAIN from a client configured with
+  `PasswordAuthentication=no`. Server-side password authentication/root login
+  were not disabled; that remains a separately gated hardening window. The
+  guarded production verifier passed at revision `d13a978` with entitlement
+  missing zero, healthy Host/L0/L1/L2 state, external BOT subscription-origin
+  access blocked, and redundancy/legacy-retirement gates still false.
 
 Detailed incident transcripts, bearer URLs, client UUIDs, credentials, raw
 environment values and temporary research artifacts are intentionally excluded

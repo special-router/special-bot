@@ -1,5 +1,7 @@
 # Roadmap
 
+> Updated **2026-08-10** after the guarded production closeout.
+
 This file tracks only future work for the **SPECIAL Bot** service. Current
 production facts belong in [STATUS.md](STATUS.md). Other VPN projects and their
 relay/subscription plans are outside this repository.
@@ -29,8 +31,9 @@ relay/subscription plans are outside this repository.
    Reality parameters or subscription identities.
 2. Keep the completed tracked Redis ownership/credential rotation healthy;
    PostgreSQL remained untouched and old Redis credentials are rejected.
-3. Disable SSH password/root login only after a retained rollback session and
-   independent key-only verification.
+3. **Next hardening window:** after retaining rollback sessions on BOT and NL,
+   disable SSH password authentication and root login, then verify key-only
+   access, application health, monitoring and rollback readiness.
 4. Stopped legacy application containers/images are retired. Shared
    PostgreSQL/Redis and compatibility identities remain active and excluded from
    cleanup.
@@ -40,11 +43,15 @@ relay/subscription plans are outside this repository.
 - Enable the implemented provider-neutral paging adapter after an approved
   external destination and accountable on-call owner are supplied.
 - Provision a second independent origin/ASN and validate it against the tracked
-  origin contract before claiming redundancy.
+  origin contract before claiming redundancy; current bounded scale-readiness
+  explicitly reports redundancy as not ready.
 - Keep repository CI validation green: docs links/stale paths/secret patterns,
   shell syntax, migrations and tests.
 - Continue aggregate drift, host-capacity and protected L2 evidence; do not add
   automatic service restarts to monitoring.
+- Keep the dated entitlement snapshot under observation: transient incomplete
+  3x-ui reads are a known failure mode; two consecutive identical client-ID
+  snapshots are required before raising drift.
 
 ## Product and client work — P1/P2
 

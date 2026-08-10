@@ -1,10 +1,18 @@
 # Current status
 
-> Snapshot date: **2026-08-10**. This is the current operational snapshot.
-> `HISTORY.md` is a short non-authoritative chronology, not a status source.
+> Snapshot date: **2026-08-10**; last guarded verification: **2026-08-10 19:53 UTC**.
+> This is the current operational snapshot. `HISTORY.md` is a short
+> non-authoritative chronology, not a status source.
 
 ## Live and verified
 
+- Latest read-only hardening verification passed against production revision
+  `d13a978`: legacy audit `records=65 entitled=64 control_plane=86
+  control_plane_enabled=85 entitled_missing=0 extras=22`; Host/L0/L1/L2
+  monitoring states were healthy; bounded scale-readiness passed while
+  redundancy and legacy-retirement gates remained false. External BOT `:8001`
+  access was blocked and NL-to-BOT subscription routing returned the expected
+  404 for a non-existent path.
 - Legacy route is live: client → RU relay `:443` → NL nginx `:443` → Xray
   inbound **5**, VLESS/TCP/Reality on NL `:8443`.
 - Inbound **5** is the sole active Xray listener on NL `:8443`. The previous
@@ -96,8 +104,11 @@
   `docker-compose.infrastructure.yml`, then the credential was rotated across
   Redis and all app workers. The old credential is rejected; PostgreSQL was not
   restarted and the existing Redis data volume was preserved.
-- SSH password/root hardening remains deferred until a retained rollback
-  session and an independently verified key-only path are available.
+- The ED25519 public key is installed on BOT and NL MAIN; key-only SSH access
+  was independently verified from a client configured with
+  `PasswordAuthentication=no`. Server-side password authentication and root
+  login remain enabled pending a separate hardening window with a retained
+  rollback session.
 - Stopped legacy application containers and their unreferenced rollback images
   were retired after tracked infrastructure ownership was established. Shared
   PostgreSQL/Redis, their data volumes and compatibility clients remain live and
