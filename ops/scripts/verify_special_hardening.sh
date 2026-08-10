@@ -11,7 +11,7 @@ SSH_OPTS=(
   -o ConnectTimeout=15
 )
 REMOTE_TIMEOUT=${SPECIAL_HARDENING_REMOTE_TIMEOUT:-120}
-EXPECTED_COMMIT=${SPECIAL_HARDENING_COMMIT:-2fb0601}
+EXPECTED_COMMIT=${SPECIAL_HARDENING_COMMIT:-$(git -C "$(dirname "${BASH_SOURCE[0]}")/../.." rev-parse --short HEAD)}
 
 remote() {
   local host=$1
