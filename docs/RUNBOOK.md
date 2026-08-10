@@ -115,7 +115,10 @@ stated above.
   file, dry-run by default, bounded apply batches.
 - `ops/scripts/rotate_special_xui_credentials.sh` — disruptive atomic NL/BOT
   credential/path rotation; separate approval required.
-- `ops/scripts/rotate_special_redis_credentials.sh` — disruptive owning-project
+- `ops/scripts/preflight_special_infrastructure_adoption.sh` — read-only checks
+  that the tracked infrastructure definition references the exact live external
+  network/data volumes without recreating PostgreSQL or Redis.
+- `ops/scripts/rotate_special_redis_credentials.sh` — disruptive clean-owner
   Redis rotation; separate window required, PostgreSQL is excluded.
 - `ops/scripts/harden_special_ssh.sh` — staged SSH hardening; refuses without an
   explicit approval flag and still requires a retained human rollback session.
