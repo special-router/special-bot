@@ -8,6 +8,8 @@ services:
     env_file: [.environment]
     environment:
       DJANGO_SETTINGS_MODULE: bot.settings
+    ports:
+      - "8001:8001"
     restart: unless-stopped
 
   celery:
