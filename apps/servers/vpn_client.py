@@ -24,6 +24,10 @@ class APIVPNClient:
         self._server = server
         self._api: AsyncApi = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password)
 
+    def _mirror_inbound_ids(self) -> list[int]:
+        ids = getattr(settings, 'MIRROR_INBOUND_IDS', []) or []
+        return [int(i) for i in ids if int(i) != self._server.inbound_id]
+
     async def add_user(self, user_vpn: UserVPN):
         await self._api.login()
         new_client = Client(
@@ -33,25 +37,48 @@ class APIVPNClient:
             limit_ip=settings.LIMIT_IP,
         )
         await self._api.client.add(self._server.inbound_id, [new_client])
+        for inbound_id in self._mirror_inbound_ids():
+            try:
+                await self._api.client.add(inbound_id, [new_client])
+            except Exception:
+                # Mirror add is best-effort; the primary inbound is authoritative.
+                pass
 
     async def remove_user(self, user_vpn: UserVPN):
         await self._api.login()
         await self._api.client.delete(self._server.inbound_id, user_vpn.vpn_uuid)
+        for inbound_id in self._mirror_inbound_ids():
+            try:
+                await self._api.client.delete(inbound_id, user_vpn.vpn_uuid)
+            except Exception:
+                pass
 
     async def enable_user(self, user_vpn: UserVPN, enabled: bool = True):
         await self._api.login()
-        inbound = await self._api.inbound.get_by_id(self._server.inbound_id)
+        await self._sync_enable(self._server.inbound_id, user_vpn, enabled, add_if_missing=True)
+        for inbound_id in self._mirror_inbound_ids():
+            try:
+                await self._sync_enable(inbound_id, user_vpn, enabled, add_if_missing=False)
+            except Exception:
+                pass
+
+    async def _sync_enable(self, inbound_id: int, user_vpn: UserVPN, enabled: bool, *, add_if_missing: bool):
+        inbound = await self._api.inbound.get_by_id(inbound_id)
         client = next(
             (item for item in inbound.settings.clients if str(item.id) == str(user_vpn.vpn_uuid)),
             None,
         )
-
         if client is None:
-            if not enabled:
+            if not enabled or not add_if_missing:
                 return
-            await self.add_user(user_vpn)
+            new_client = Client(
+                id=str(user_vpn.vpn_uuid),
+                email=f'{str(user_vpn.user.telegram_id)} - {now().isoformat()}',
+                enable=True,
+                limit_ip=settings.LIMIT_IP,
+            )
+            await self._api.client.add(inbound_id, [new_client])
             return
-
         client.enable = enabled
         await self._api.client.update(str(user_vpn.vpn_uuid), client)
 

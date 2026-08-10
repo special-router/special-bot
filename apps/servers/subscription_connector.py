@@ -95,5 +95,25 @@ class XUISubscriptionConnector:
             client.sub_id = sub_id
             client.inbound_id = self._server.inbound_id
             await self._api.client.update(str(user_vpn.vpn_uuid), client)
+            await self._mirror_sub_id(user_vpn, sub_id)
 
         return self._reference(sub_id)
+
+    async def _mirror_sub_id(self, user_vpn: UserVPN, sub_id: str) -> None:
+        """Propagate an assigned subId to mirror inbounds so every endpoint in the
+        subscription carries it. Best-effort; the primary inbound is authoritative."""
+        mirror_ids = [int(i) for i in (getattr(settings, 'MIRROR_INBOUND_IDS', []) or []) if int(i) != self._server.inbound_id]
+        for inbound_id in mirror_ids:
+            try:
+                inbound = await self._api.inbound.get_by_id(inbound_id)
+                mirror_client = next(
+                    (item for item in inbound.settings.clients if str(item.id) == str(user_vpn.vpn_uuid)),
+                    None,
+                )
+                if mirror_client is None or mirror_client.sub_id:
+                    continue
+                mirror_client.sub_id = sub_id
+                mirror_client.inbound_id = inbound_id
+                await self._api.client.update(str(user_vpn.vpn_uuid), mirror_client)
+            except Exception:
+                pass
