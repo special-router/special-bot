@@ -95,9 +95,12 @@ def subscription_proxy(request, sub_id: str):
     status_label = f'осталось {days} дней' if days > 0 else 'подписка окончена'
 
     # Client endpoint hosts.
-    direct_host, direct_port = _endpoint(server.client_vpn_host, params['port'])
-    relay_host = getattr(settings_relays(), 'relay_host', '')
-    relay_port = int(getattr(settings_relays(), 'relay_port', 443))
+    # Direct = public NL sub domain on the inbound port.
+    # Relay  = the client_vpn_host stored on the server (e.g. the RU relay front).
+    relay_host, relay_port = _endpoint(server.client_vpn_host, params['port'])
+    sub_domain = settings_relays().SUBSCRIPTION_BASE_URL.split('/')[2].split(':')[0]  # hostname only
+    direct_host = sub_domain
+    direct_port = params['port']
 
     uuid_str = str(user_vpn.vpn_uuid)
     flow = 'xtls-rprx-vision'
