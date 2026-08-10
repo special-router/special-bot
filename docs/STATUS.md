@@ -82,8 +82,10 @@
   BOT with protected rollback. A second rotation immediately invalidated the
   first generated username after the library exposed it in an INFO log; the
   `py3xui` logger is now suppressed at WARNING and no password/path was logged.
-- Redis credential rotation requires a separate coordinated app/Celery stop,
-  Redis restart, and rollback window. PostgreSQL must not be restarted.
+- Redis ownership was moved from the dirty historical app checkout to tracked
+  `docker-compose.infrastructure.yml`, then the credential was rotated across
+  Redis and all app workers. The old credential is rejected; PostgreSQL was not
+  restarted and the existing Redis data volume was preserved.
 - SSH password/root hardening remains deferred until a retained rollback
   session and an independently verified key-only path are available.
 - Stopped legacy app containers and their rollback images remain intentionally

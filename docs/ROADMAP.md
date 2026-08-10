@@ -27,8 +27,8 @@ relay/subscription plans are outside this repository.
 1. Keep 3x-ui rotation evidence and log suppression healthy; the atomic
    credential/path rotation is complete. Do not alter inbounds, client UUIDs,
    Reality parameters or subscription identities.
-2. Rotate Redis credentials in a dedicated app/Celery stop → Redis restart →
-   app/Celery start window. PostgreSQL must not be restarted.
+2. Keep the completed tracked Redis ownership/credential rotation healthy;
+   PostgreSQL remained untouched and old Redis credentials are rejected.
 3. Disable SSH password/root login only after a retained rollback session and
    independent key-only verification.
 4. Decide whether to retire stopped legacy application containers/images.
