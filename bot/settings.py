@@ -318,5 +318,6 @@ LOGGING = {
         'httpcore': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
         'httpx._client': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
         'utils.py3xui': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
+        'py3xui': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
     },
 }
