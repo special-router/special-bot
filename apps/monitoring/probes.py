@@ -194,12 +194,22 @@ def fetch_subscription_entry(url: str, expected_uuid: str) -> str:
         payload = response.read(1024 * 1024)
     decoded = base64.b64decode(b''.join(payload.split()), validate=True).decode('utf-8')
     links = [line.strip() for line in decoded.splitlines() if line.strip()]
-    if len(links) != 1 or not links[0].startswith('vless://'):
+    if not links:
         raise RuntimeError('subscription_payload')
-    parsed = urllib.parse.urlsplit(links[0])
-    if urllib.parse.unquote(parsed.username or '') != expected_uuid:
-        raise RuntimeError('subscription_client')
-    return links[0]
+    # A subscription may expose several endpoints (status, direct, relay); pick
+    # the first working VLESS entry whose client UUID matches the canary and
+    # whose host is not a loopback info-only endpoint.
+    for link in links:
+        if not link.startswith('vless://'):
+            continue
+        parsed = urllib.parse.urlsplit(link)
+        if urllib.parse.unquote(parsed.username or '') != expected_uuid:
+            continue
+        host = (parsed.hostname or '').lower()
+        if host in {'127.0.0.1', 'localhost', '::1'}:
+            continue
+        return link
+    raise RuntimeError('subscription_client')
 
 
 def query_value(query: dict[str, list[str]], key: str, default: str = '') -> str:
