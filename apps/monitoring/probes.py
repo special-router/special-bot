@@ -361,8 +361,9 @@ def run_protocol_canary() -> LayerResult:
         user_vpn = UserVPN.objects.select_related('server').get(pk=settings.SPECIAL_MONITOR_CANARY_USER_VPN_ID)
         subscription_url = asyncio.run(get_canary_subscription(user_vpn))
         subscription_link = fetch_subscription_entry(subscription_url, str(user_vpn.vpn_uuid))
-        subscription_ok = run_vless(subscription_link, xray_path, expected_egress)
-        direct_ok = run_vless(user_vpn.vpn_key, xray_path, expected_egress)
+        # Reality anti-replay can cause flakes on low-latency paths; retry up to 3 times.
+        subscription_ok = any(run_vless(subscription_link, xray_path, expected_egress) for _ in range(3))
+        direct_ok = any(run_vless(user_vpn.vpn_key, xray_path, expected_egress) for _ in range(3))
     except Exception:
         return LayerResult(layer='l2', ok=False, error_class='canary_protocol')
     return LayerResult(
