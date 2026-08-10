@@ -20,23 +20,29 @@
   `SUBSCRIPTION_CONNECTOR_ENABLED=true`). A subscription URL is the primary
   access path issued by the bot UI; the direct `vless://` key remains stored as
   fallback and rollback.
-- Entitlement/control-plane snapshot: **66 entitled**, **87 control-plane**,
-  **21 compatibility** clients; `entitled_missing=0`. Balance-based
-  entitlement remains authoritative.
-- Subscription `subId` coverage: **69** of 87 clients have a `subId`
-  (all 65 entitled + canary + 3 extras). The 18 without `subId` are intentional
-  compatibility-only clients that are never mutated.
-- Domain subscription transport is live at `sub.special-wifi.ru`: DNS-only,
-  TLS/SNI/nginx routing, and 3x-ui subscription service `:2096` at `/sub`.
-  A subscription now returns three endpoints, in order:
+- Entitlement/control-plane snapshot: **66 Django records**, **65 currently
+  entitled**, **87 primary-inbound clients**, and **21 compatibility-only**
+  clients; `entitled_missing=0`. Balance-based entitlement remains authoritative.
+- Django stores `sub_id` for **65 of 66** `UserVPN` records: every currently
+  balance-entitled record has one. The remaining record is unpaid and disabled
+  in the primary 3x-ui inbound. The primary inbound has 87 unique clients:
+  65 entitled, one unpaid Django-owned record, and 21 compatibility-only
+  clients. Compatibility-only clients are never assigned ownership or mutated.
+- Domain subscription transport is live at `sub.special-wifi.ru`. NL nginx
+  terminates TLS for `/sub/<subId>` and proxies only from NL to the custom
+  Django subscription endpoint on BOT `:8001`. This avoids 3x-ui plain
+  subscription behavior that otherwise emits the first inbound client's UUID
+  for every subscriber. A subscription now returns three per-user endpoints,
+  in order:
   1. `📊 Подписка-осталось N дней` (non-working status entry, first)
   2. `🇳🇱 NL Direct` (`sub.special-wifi.ru:8443`)
   3. `🇳🇱 NL Relay` (`201.34.132.118:443`)
 - Production monitoring is deployed via Celery beat plus an isolated
   `monitoring` queue. Cadence: L0 control-plane every 5 minutes, L1 regional
   TCP every minute, L2 subscription/direct-VLESS E2E every 5 minutes on the
-  dedicated worker only. L0/L1 are healthy; L2 is in alert pending a canary
-  recheck after the Reality/remark reconfiguration.
+  dedicated worker only. L0/L1/L2 are healthy. L2 selects a non-loopback VLESS
+  entry carrying the canary UUID and retries bounded Reality E2E attempts to
+  absorb transient low-latency handshake failures.
 
 ## Billing and subscription lifecycle
 
@@ -54,8 +60,15 @@
 
 ## Production source and deployment
 
-- Production checkout: `/root/special-bot` at `30e0455` (local and `origin/main`
-  match). Image `vpnbot:latest` serves web, celery, celery_beat, monitoring.
+- Production checkout: `/root/special-bot` at `1ff5b54` before this documentation
+  closeout. Image `vpnbot:latest` serves web, celery, celery_beat, monitoring.
+- Gunicorn serves the subscription endpoint with one worker/four threads; both
+  Celery workers use `--pool=solo`. This removed the prefork child processes
+  that caused the prior OOM pressure.
+- BOT has a persistent 1 GiB `/swapfile`. Host UFW is active, and a persistent
+  `DOCKER-USER` policy permits published `:8001` traffic only from the NL nginx
+  origin; direct external access is denied. The Compose port bind is pinned to
+  the BOT public IPv4 instead of all IPv4/IPv6 interfaces.
 - PostgreSQL and Redis are shared host containers and are not restarted by
   application deployments.
 
@@ -64,15 +77,15 @@
 - The 48-hour monitored canary soak is **waived by owner decision for schedule
   reasons**. It is recorded as skipped, never as passed; the residual risk of
   promoting without sustained observation stays with the owner.
-- 3x-ui admin credential/path rotation is staged but not executed; it is an
-  independent hardening step that can run without disrupting subscription
-  delivery.
-- L2 monitoring canary is in alert after Reality/remark reconfiguration; it
-  needs a recheck rather than a service change.
-- OOM mitigation on the BOT host is not yet implemented: journald confirmed
-  174 `celery` OOM kills on the 961 MiB / 0-swap host in the previous boot.
-  Adding swap or lowering per-container memory is recommended before the next
-  billing cycle to avoid a repeat.
+- 3x-ui admin credential/path rotation remains staged but not executed. It
+  requires a separate authorized atomic NL/BOT rotation window.
+- Redis credential rotation requires a separate coordinated app/Celery stop,
+  Redis restart, and rollback window. PostgreSQL must not be restarted.
+- SSH password/root hardening remains deferred until a retained rollback
+  session and an independently verified key-only path are available.
+- Stopped legacy app containers and their rollback images remain intentionally
+  preserved pending explicit owner approval. Shared PostgreSQL and Redis are
+  live dependencies and are not legacy-cleanup targets.
 
 See [subscription migration](SUBSCRIPTION-MIGRATION.md) and
 [monitoring](MONITORING.md) for promotion gates.

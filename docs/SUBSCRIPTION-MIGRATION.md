@@ -10,9 +10,18 @@
 
 The transport is live at `sub.special-wifi.ru`; the URL shape is
 `https://sub.special-wifi.ru/sub/<subId>`. `<subId>` is a placeholder only and
-must never be placed in documentation, logs, dashboards, or tickets.
+must never be placed in documentation, logs, dashboards, or tickets. NL nginx
+terminates TLS and proxies `/sub/` from NL to the custom Django subscription
+view on BOT. The BOT port is restricted to NL by a persistent `DOCKER-USER`
+policy.
 
-A subscription now returns three endpoints, ordered by inbound id:
+This Django endpoint is authoritative for customer delivery. 3x-ui's plain
+subscription endpoint cannot be used because it emits the first client UUID of
+each inbound instead of the UUID belonging to the requested `subId`; its JSON
+variant is not compatible with happ. Django therefore builds the base64 VLESS
+payload from the requested `UserVPN` UUID and cached Reality parameters.
+
+A subscription now returns three endpoints:
 1. `📊 Подписка-осталось N дней` (or `подписка окончена`) — non-working status
    entry, inbound id 1, `externalProxy` → `127.0.0.1:1`.
 2. `🇳🇱 NL Direct` — `sub.special-wifi.ru:8443`, inbound id 5.
@@ -33,31 +42,44 @@ A subscription now returns three endpoints, ordered by inbound id:
   `SUBSCRIPTION_CONNECTOR_ENABLED=true`, `MIRROR_INBOUND_IDS=[14]`,
   `STATUS_INBOUND_ID=1`.
 
-3x-ui owns `subId` in its control plane. Its absence from generated Xray client
-objects is expected projection, not membership drift.
+3x-ui remains the source used to create/recover `subId`; Django persists the
+result in `UserVPN.sub_id` so the public proxy can resolve a bearer path to the
+correct per-user UUID. Its absence from generated Xray client objects is
+expected projection, not membership drift.
 
 ## Completed
 
-- DNS-only hostname, TLS, nginx SNI routing, and 3x-ui subscription listener
-  `:2096` with `/sub` are live.
+- DNS-only hostname, TLS, nginx SNI routing, and the custom Django `/sub/`
+  delivery endpoint are live. Public `:443` URL shape is unchanged.
 - Subscription-first bot UI delivered (`get_user_access_url`), deployed, and
   validated by an independent reviewer. Disabled profiles are read-only;
   reactivation reuses identity; direct VLESS stays as fallback.
-- All 65 entitled users plus the canary have a `subId`. One enabled non-entitled
-  record was correctly fail-closed and skipped during backfill.
+- `UserVPN.sub_id` is populated for all 65 currently entitled records. The one
+  unpaid Django record remains disabled and intentionally has no `sub_id`.
+  The 21 compatibility-only inbound clients remain ownership-free and are not
+  mutated.
 - `MIRROR_INBOUND_IDS=[14]` keeps the RU relay inbound synchronized with the
   primary inbound for add/remove/enable and `subId` assignment.
 - `STATUS_INBOUND_ID=1` carries the per-client balance label so happ shows the
   remaining days as a dedicated, non-working entry ordered first.
 - `sync_expiry_times` runs daily after billing and mirrors `expiryTime`,
   enable state, and the status label to every relevant inbound.
-- Two protected L2 subscription fetch/decode/import E2E runs passed, as did the
-  canary's unchanged direct-VLESS E2E rollback.
+- L2 decodes all subscription entries, selects a non-loopback entry with the
+  canary UUID, and verifies both subscription and unchanged direct-VLESS paths.
+  L0/L1/L2 are healthy; bounded retry absorbs transient Reality handshakes.
+- Celery and monitoring workers use `--pool=solo`, eliminating the prefork
+  children responsible for prior OOM pressure. A persistent 1 GiB swapfile is
+  active on BOT.
+- Gunicorn serves Django with one worker/four threads. NL→BOT `:8001` is allowed;
+  direct public access is denied by persistent host and `DOCKER-USER` policy.
 
-## Remaining
+## Remaining / separately authorized
 
-- 3x-ui admin credential/path rotation is staged but not executed; it is an
-  independent hardening step.
-- L2 monitoring canary needs a recheck after Reality/remark reconfiguration.
-- OOM mitigation on the BOT host (swap or per-container memory limits) is
-  recommended before the next billing cycle.
+- 3x-ui admin credential/path rotation is staged but not executed; it requires
+  an atomic NL/BOT credential window and rollback.
+- Redis credential rotation requires its own coordinated application/Celery
+  stop and Redis restart window. PostgreSQL must not be restarted.
+- SSH password/root hardening requires a retained rollback session and verified
+  key-only access.
+- Stopped legacy application containers and rollback images remain preserved
+  until explicit owner approval; shared PostgreSQL and Redis remain live.
