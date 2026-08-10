@@ -13,6 +13,7 @@ dependencies = [
     'psycopg[binary]',
     'djangorestframework==3.15.2',
     'Pillow==11.0.0',
+    'gunicorn',
 ]
 [tool.isort]
 profile = 'black'

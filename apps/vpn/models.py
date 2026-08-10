@@ -30,6 +30,14 @@ class UserVPN(models.Model):
         default=uuid.uuid4,
     )
 
+    sub_id = models.CharField(
+        '3x-ui subscription id',
+        max_length=64,
+        blank=True,
+        default='',
+        db_index=True,
+    )
+
     enabled = models.BooleanField(
         'Enabled',
         default=True,

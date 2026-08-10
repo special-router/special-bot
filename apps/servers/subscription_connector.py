@@ -97,6 +97,14 @@ class XUISubscriptionConnector:
             await self._api.client.update(str(user_vpn.vpn_uuid), client)
             await self._mirror_sub_id(user_vpn, sub_id)
 
+        # Persist the subId on the Django record so the subscription proxy can
+        # build a per-user payload without an extra 3x-ui API round-trip.
+        if getattr(user_vpn, 'sub_id', '') != sub_id:
+            user_vpn.sub_id = sub_id
+            asave = getattr(user_vpn, 'asave', None)
+            if asave is not None:
+                await asave(update_fields=['sub_id', 'updated_at'])
+
         return self._reference(sub_id)
 
     async def _mirror_sub_id(self, user_vpn: UserVPN, sub_id: str) -> None:
