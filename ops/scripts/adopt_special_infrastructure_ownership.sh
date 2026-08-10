@@ -28,14 +28,15 @@ redis_volume=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data"}
 [[ $redis_volume == 30e0d25e3770503c6f3fb6242f9dfdd5f542a3ffd5b2fe1c950f455540033d92 ]] || { echo 'BLOCK: unexpected Redis volume'; exit 25; }
 
 docker exec special-bot-web-1 python manage.py audit_legacy_vpn >/dev/null
-docker compose --env-file .environment -f docker-compose.infrastructure.yml config >/dev/null
+docker compose -p vpn_bot --env-file .environment -f docker-compose.infrastructure.yml config >/dev/null
 
-# Compose project/name remain vpn_bot, so adoption is performed one service at a
-# time. PostgreSQL is deliberately not recreated. First adopt only Redis using
-# its current credential; subsequent credential rotation uses the clean owner.
+# Preserve the historical project/container identity (`vpn_bot-redis-1`) while
+# switching its working-directory/config labels to the clean tracked owner.
+# PostgreSQL is deliberately not recreated.
 set -a; source .environment; set +a
 export REDIS_PASSWORD
-docker compose --env-file .environment -f docker-compose.infrastructure.yml up -d --no-deps --force-recreate redis >/dev/null
+docker rm -f special-bot-redis-1 >/dev/null 2>&1 || true
+docker compose -p vpn_bot --env-file .environment -f docker-compose.infrastructure.yml up -d --no-deps --force-recreate redis >/dev/null
 for _ in $(seq 1 30); do
   if docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" vpn_bot-redis-1 redis-cli ping 2>/dev/null | grep -qx PONG; then break; fi
   sleep 1
