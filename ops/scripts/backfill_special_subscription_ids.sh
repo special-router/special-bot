@@ -64,7 +64,7 @@ apply=$5
 trap 'rm -f "$ids_file"' EXIT
 chmod 600 "$ids_file"
 cd /root/special-bot
-unexpected=$(git status --porcelain | awk '$2 != ".environment" && $2 !~ /^\.environment\.bak\.[0-9-]+$/ {print}')
+unexpected=$(git status --porcelain | awk '$2 != ".environment" && $2 !~ /^\.environment\.bak\.[0-9A-Za-zT_-]+$/ {print}')
 [[ -z "$unexpected" ]] || { echo 'BLOCK: unexpected checkout paths'; exit 20; }
 for path in .environment .environment.bak.* "$ids_file"; do
   [[ -e "$path" ]] || continue

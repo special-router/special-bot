@@ -30,7 +30,7 @@ owner_compose=$3
 expected_commit=$4
 cd "$remote_path"
 
-unexpected=$(git status --porcelain | awk '$2 != ".environment" && $2 !~ /^\.environment\.bak\.[0-9-]+$/ {print}')
+unexpected=$(git status --porcelain | awk '$2 != ".environment" && $2 !~ /^\.environment\.bak\.[0-9A-Za-zT_-]+$/ {print}')
 [[ -z "$unexpected" ]] || { echo 'BLOCK: unexpected checkout paths'; exit 20; }
 [[ $(git rev-parse --short HEAD) == "$expected_commit" ]] || { echo 'BLOCK: unexpected production commit'; exit 21; }
 [[ -f .environment && $(stat -c '%a' .environment) == 600 ]] || { echo 'BLOCK: .environment mode'; exit 22; }

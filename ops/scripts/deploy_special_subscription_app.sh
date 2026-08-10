@@ -30,7 +30,7 @@ compose_file=$2
 expected_commit=$3
 cd "$remote_path"
 
-unexpected=$(git status --porcelain | awk '$2 != ".environment" && $2 !~ /^\.environment\.bak\.[0-9-]+$/ {print}')
+unexpected=$(git status --porcelain | awk '$2 != ".environment" && $2 !~ /^\.environment\.bak\.[0-9A-Za-zT_-]+$/ {print}')
 [[ -z "$unexpected" ]] || { echo 'BLOCK: unexpected checkout paths'; exit 20; }
 for path in .environment .environment.bak.*; do
   [[ -e "$path" ]] || continue

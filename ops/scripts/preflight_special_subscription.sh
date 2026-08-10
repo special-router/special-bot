@@ -23,7 +23,7 @@ timeout "${SPECIAL_PREFLIGHT_TIMEOUT:-240}" "${SSH[@]}" bash -s <<'REMOTE'
 set -euo pipefail
 cd /root/special-bot
 printf 'revision='; git rev-parse --short HEAD
-unexpected=$(git status --porcelain | awk '$2 != ".environment" && $2 !~ /^\.environment\.bak\.[0-9-]+$/ {print}')
+unexpected=$(git status --porcelain | awk '$2 != ".environment" && $2 !~ /^\.environment\.bak\.[0-9A-Za-zT_-]+$/ {print}')
 printf 'source_clean='; [[ -z "$unexpected" ]] && echo true || echo false
 [[ -z "$unexpected" ]] || { echo 'BLOCK: unexpected checkout paths'; exit 20; }
 secret_files=0
