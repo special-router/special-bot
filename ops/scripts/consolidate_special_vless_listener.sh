@@ -151,7 +151,8 @@ set -euo pipefail
 cd /root/special-bot
 timeout 90 docker exec special-bot-web-1 python manage.py audit_legacy_vpn >/dev/null
 timeout 90 docker exec special-bot-web-1 python manage.py audit_xui_sub_id_coverage --server-id 1 >/dev/null
-timeout 90 docker exec special-bot-web-1 python -c '
+for attempt in 1 2 3; do
+  timeout 90 docker exec special-bot-web-1 python -c '
 import os, django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "bot.settings")
 django.setup()
@@ -160,12 +161,18 @@ from apps.monitoring.tasks import run_protocol_monitor
 MonitorState.objects.filter(layer="l2").delete()
 run_protocol_monitor.delay()
 '
-sleep 45
-timeout 60 docker exec special-bot-web-1 python manage.py audit_special_monitoring >/tmp/special-monitoring-post.out
-grep -q 'layer=l0 ok=true' /tmp/special-monitoring-post.out
-grep -q 'layer=l1 ok=true' /tmp/special-monitoring-post.out
-grep -q 'layer=l2 ok=true' /tmp/special-monitoring-post.out
+  sleep 40
+  timeout 60 docker exec special-bot-web-1 python manage.py audit_special_monitoring >/tmp/special-monitoring-post.out
+  grep -q 'layer=l0 ok=true' /tmp/special-monitoring-post.out
+  grep -q 'layer=l1 ok=true' /tmp/special-monitoring-post.out
+  if grep -q 'layer=l2 ok=true' /tmp/special-monitoring-post.out; then
+    rm -f /tmp/special-monitoring-post.out
+    exit 0
+  fi
+done
+cat /tmp/special-monitoring-post.out >&2
 rm -f /tmp/special-monitoring-post.out
+exit 40
 BOTVERIFY
 
 trap - EXIT
