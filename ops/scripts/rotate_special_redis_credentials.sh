@@ -37,6 +37,8 @@ unexpected=$(git status --porcelain | awk '$2 != ".environment" && $2 !~ /^\.env
 [[ -f "$owner_compose" ]] || { echo 'BLOCK: owning Redis Compose file missing'; exit 23; }
 [[ $(docker inspect -f '{{.State.Running}}' vpn_bot-postgres-1) == true ]] || { echo 'BLOCK: PostgreSQL not running'; exit 24; }
 [[ $(docker inspect -f '{{.State.Running}}' vpn_bot-redis-1) == true ]] || { echo 'BLOCK: Redis not running'; exit 25; }
+postgres_started=$(docker inspect -f '{{.State.StartedAt}}' vpn_bot-postgres-1)
+redis_image_before=$(docker inspect -f '{{.Image}}' vpn_bot-redis-1)
 
 timeout 90 docker exec special-bot-web-1 python manage.py audit_legacy_vpn >/dev/null
 load1=$(awk '{print $1}' /proc/loadavg)
@@ -60,6 +62,7 @@ rollback() {
   if [[ $rc -ne 0 ]]; then
     cp --preserve=mode "$backup" .environment 2>/dev/null || true
     set -a; source .environment; set +a
+    export REDIS_PASSWORD
     docker compose -f "$owner_compose" up -d --no-deps --force-recreate redis >/dev/null 2>&1 || true
     docker compose -f "$app_compose" up -d --no-deps web celery celery_beat monitoring >/dev/null 2>&1 || true
     echo "ROLLBACK_ATTEMPTED rc=$rc" >&2
@@ -108,6 +111,7 @@ unset new_secret
 # Stop only application processes. PostgreSQL remains untouched throughout.
 docker compose -f "$app_compose" stop web celery celery_beat monitoring >/dev/null
 set -a; source .environment; set +a
+export REDIS_PASSWORD
 docker compose -f "$owner_compose" up -d --no-deps --force-recreate redis >/dev/null
 for _ in $(seq 1 30); do
   if docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" vpn_bot-redis-1 redis-cli ping 2>/dev/null | grep -qx PONG; then
@@ -125,6 +129,8 @@ tail -1 /tmp/special-redis-audit.out | grep -qx 'Legacy VPN audit passed.'
 rm -f /tmp/special-redis-audit.out
 docker exec special-bot-web-1 python manage.py audit_special_monitoring >/dev/null
 [[ $(docker inspect -f '{{.State.Running}}' vpn_bot-postgres-1) == true ]]
+[[ $(docker inspect -f '{{.State.StartedAt}}' vpn_bot-postgres-1) == "$postgres_started" ]]
+[[ $(docker inspect -f '{{.Image}}' vpn_bot-redis-1) == "$redis_image_before" ]]
 trap - EXIT
 unset REDIS_PASSWORD REDIS_URL
 printf 'redis_rotation=passed backup=%s\n' "$backup"
