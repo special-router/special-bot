@@ -73,13 +73,17 @@ expected projection, not membership drift.
 - Gunicorn serves Django with one worker/four threads. NL→BOT `:8001` is allowed;
   direct public access is denied by persistent host and `DOCKER-USER` policy.
 
-## Remaining / separately authorized
+## Hardening closeout and remaining gates
 
-- 3x-ui admin credential/path rotation is staged but not executed; it requires
-  an atomic NL/BOT credential window and rollback.
-- Redis credential rotation requires its own coordinated application/Celery
-  stop and Redis restart window. PostgreSQL must not be restarted.
-- SSH password/root hardening requires a retained rollback session and verified
-  key-only access.
-- Stopped legacy application containers and rollback images remain preserved
-  until explicit owner approval; shared PostgreSQL and Redis remain live.
+- 3x-ui credentials/path were rotated atomically with protected rollback; a
+  second rotation invalidated a username exposed by upstream INFO logging after
+  the logger was suppressed. Client identities/transports were unchanged.
+- Redis ownership now lives in tracked infrastructure Compose; credentials were
+  rotated, the old credential is rejected, and PostgreSQL was not restarted.
+- Stopped legacy application containers/images were retired. Shared
+  PostgreSQL/Redis, data volumes, direct transport rollback and compatibility
+  identities remain live.
+- SSH password/root hardening still requires a retained rollback session and
+  verified key-only access.
+- External paging, a second independent origin/ASN, compatibility ownership and
+  eventual direct-transport retirement remain separate external/owner gates.
