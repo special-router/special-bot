@@ -88,9 +88,10 @@
   restarted and the existing Redis data volume was preserved.
 - SSH password/root hardening remains deferred until a retained rollback
   session and an independently verified key-only path are available.
-- Stopped legacy app containers and their rollback images remain intentionally
-  preserved pending explicit owner approval. Shared PostgreSQL and Redis are
-  live dependencies and are not legacy-cleanup targets.
+- Stopped legacy application containers and their unreferenced rollback images
+  were retired after tracked infrastructure ownership was established. Shared
+  PostgreSQL/Redis, their data volumes and compatibility clients remain live and
+  were explicitly excluded from cleanup.
 
 See [subscription migration](SUBSCRIPTION-MIGRATION.md) and
 [monitoring](MONITORING.md) for promotion gates.

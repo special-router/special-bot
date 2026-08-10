@@ -31,9 +31,9 @@ relay/subscription plans are outside this repository.
    PostgreSQL remained untouched and old Redis credentials are rejected.
 3. Disable SSH password/root login only after a retained rollback session and
    independent key-only verification.
-4. Decide whether to retire stopped legacy application containers/images.
-   Shared PostgreSQL and Redis are live dependencies and are excluded from
-   legacy cleanup.
+4. Stopped legacy application containers/images are retired. Shared
+   PostgreSQL/Redis and compatibility identities remain active and excluded from
+   cleanup.
 
 ## Reliability and operations — P1
 
