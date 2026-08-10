@@ -26,7 +26,14 @@ grep -Eq '^net\.core\.default_qdisc[[:space:]]*=[[:space:]]*fq$' /etc/sysctl.d/9
 grep -Eq '^net\.ipv4\.tcp_congestion_control[[:space:]]*=[[:space:]]*bbr$' /etc/sysctl.d/99-special-vless-tuning.conf
 systemctl is-active --quiet x-ui
 [[ $(ss -lntpH 'sport = :8443' | wc -l) -eq 1 ]]
-echo 'nl_tcp_tuning=verified qdisc=fq congestion_control=bbr listeners_8443=1'
+python3 - <<'PY'
+import sqlite3
+connection = sqlite3.connect('/etc/x-ui/x-ui.db')
+states = dict(connection.execute('select id, enable from inbounds where id in (1, 5, 14)'))
+if states != {1: 0, 5: 1, 14: 0}:
+    raise SystemExit('inbound listener state drift')
+PY
+echo 'nl_tcp_tuning=verified qdisc=fq congestion_control=bbr listeners_8443=1 inbound_states=preserved'
 REMOTE
     ;;
   apply)

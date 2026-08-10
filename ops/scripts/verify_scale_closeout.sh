@@ -36,6 +36,7 @@ if [[ ${SPECIAL_VERIFY_PRODUCTION:-false} == true ]]; then
     SPECIAL_HARDENING_COMMIT="$expected_commit" ./ops/scripts/verify_special_hardening.sh
   fi
   ./ops/scripts/audit_special_redis_rotation.sh
+  ./ops/scripts/tune_special_nl_tcp.sh verify
 fi
 
 echo 'SPECIAL repository scale-readiness implementation validation passed.'
