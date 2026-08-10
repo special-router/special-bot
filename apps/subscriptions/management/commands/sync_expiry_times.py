@@ -1,15 +1,20 @@
-"""Sync 3x-ui client expiryTime and status label from balance so subscription
-clients (happ) display how many days remain or that the subscription has ended.
+"""Sync 3x-ui client expiryTime and status label so subscription clients (happ)
+display how many days remain or that the subscription has ended.
 
-The 3x-ui subscription remark is built as ``<inbound.remark>-<client.email>``,
-so the per-client status is carried in the ``email`` field:
+Working inbounds (primary + ``MIRROR_INBOUND_IDS``) receive ``expiryTime`` only
+and keep an empty ``email`` so the subscription remark stays clean
+(e.g. ``🇳🇱 NL Direct``).
+
+The optional ``STATUS_INBOUND_ID`` inbound additionally carries the per-client
+status in its ``email`` field, producing a remark like
+``📊 Подписка-осталось 28 дней``. That inbound points at a non-working dest so a
+client cannot actually tunnel through it; it is an info-only entry in happ.
 
 * balance covers at least one day  -> ``осталось N дней`` and expiryTime = now + N*d
 * balance cannot cover one day        -> ``подписка окончена`` and the client is disabled
 
-This command does not create billing transactions; daily billing and the
-authoritative disable are owned by ``update_user_vpn``. This command mirrors the
-status to every inbound in ``MIRROR_INBOUND_IDS`` so all endpoints agree.
+Daily billing and the authoritative disable are owned by ``update_user_vpn``;
+this command only mirrors state to 3x-ui.
 """
 from __future__ import annotations
 
@@ -34,6 +39,7 @@ class Command(BaseCommand):
 
     async def _run(self) -> None:
         server_id = getattr(settings, 'SPECIAL_MONITOR_SERVER_ID', 1) or 1
+        status_inbound_id = int(getattr(settings, 'STATUS_INBOUND_ID', 0) or 0)
 
         @sync_to_async
         def _load():
@@ -56,7 +62,7 @@ class Command(BaseCommand):
         api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password)
         await api.login()
         mirror = [int(i) for i in (getattr(settings, 'MIRROR_INBOUND_IDS', []) or []) if int(i) != server.inbound_id]
-        inbound_ids = [server.inbound_id, *mirror]
+        working_ids = [server.inbound_id, *mirror]
 
         synced = 0
         for row in rows:
@@ -70,11 +76,19 @@ class Command(BaseCommand):
                 enabled = True
             else:
                 status_label = 'подписка окончена'
-                expiry_ms = int(time.time() * 1000) - 86_400_000  # already expired
+                expiry_ms = int(time.time() * 1000) - 86_400_000
                 enabled = False
-            for inbound_id in inbound_ids:
+
+            # Working inbounds: expiryTime + enable only, keep email empty.
+            for inbound_id in working_ids:
                 try:
-                    await self._sync_one(api, inbound_id, row['vpn_uuid'], expiry_ms, status_label, enabled)
+                    await self._sync_one(api, inbound_id, row['vpn_uuid'], expiry_ms, '', enabled)
+                except Exception:
+                    pass
+            # Status inbound: additionally write the status label into email.
+            if status_inbound_id:
+                try:
+                    await self._sync_one(api, status_inbound_id, row['vpn_uuid'], expiry_ms, status_label, enabled)
                 except Exception:
                     pass
             synced += 1

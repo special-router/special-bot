@@ -261,6 +261,10 @@ SPECIAL_MONITOR_EXPECTED_INBOUNDS = env.json(
 )
 SPECIAL_MONITOR_CANARY_USER_VPN_ID = env.int('SPECIAL_MONITOR_CANARY_USER_VPN_ID', 0)
 SPECIAL_MONITOR_SERVER_ID = env.int('SPECIAL_MONITOR_SERVER_ID', 1)
+# Inbound id that carries the per-client subscription status label in its remark
+# (via the 3x-ui email field). Working inbounds keep an empty email so their
+# subscription remark stays clean. Set to 0 to disable the status inbound.
+STATUS_INBOUND_ID = env.int('STATUS_INBOUND_ID', 0)
 SPECIAL_MONITOR_XRAY_PATH = env.str('SPECIAL_MONITOR_XRAY_PATH', '/usr/local/bin/xray')
 SPECIAL_MONITOR_EXPECTED_EGRESS = env.str('SPECIAL_MONITOR_EXPECTED_EGRESS', '')
 SPECIAL_MONITOR_HEALTH_URL = env.str('SPECIAL_MONITOR_HEALTH_URL', 'https://api.ipify.org')
