@@ -24,5 +24,11 @@ DATABASE_URL='sqlite:///:memory:' \
 CELERY_ALWAYS_EAGER=true \
   "$PYTHON" -m pytest -q
 
+if [[ ${SPECIAL_VERIFY_PRODUCTION:-false} == true ]]; then
+  expected_commit=${SPECIAL_PRODUCTION_COMMIT:-$(git rev-parse --short HEAD)}
+  SPECIAL_HARDENING_COMMIT="$expected_commit" ./ops/scripts/verify_special_hardening.sh
+  ./ops/scripts/audit_special_redis_rotation.sh
+fi
+
 echo 'SPECIAL repository scale-readiness implementation validation passed.'
 echo 'Production paging, independent-origin, compatibility-ownership and legacy-retirement gates remain external/readiness checks.'

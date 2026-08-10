@@ -121,7 +121,9 @@ stated above.
 - `ops/scripts/verify_special_full_backlog.sh` — full local plus production
   validation; set `SPECIAL_VERIFY_PYTHON` when the repository venv is elsewhere.
 - `ops/scripts/verify_scale_closeout.sh` — local CI-equivalent docs, origin,
-  migration and full-test validation for scale-readiness changes.
+  migration and full-test validation for scale-readiness changes. With
+  `SPECIAL_VERIFY_PRODUCTION=true`, it also runs aggregate production hardening,
+  scale-readiness and Redis ownership checks; external gates remain false.
 
 For provider-console SSH recovery, follow
 [TIMEWEB-BOT-SSH-RECOVERY.md](TIMEWEB-BOT-SSH-RECOVERY.md).

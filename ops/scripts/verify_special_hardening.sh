@@ -52,6 +52,17 @@ for layer in host l0 l1 l2; do
 done
 
 remote "$BOT_HOST" 'cd /root/special-bot && docker compose -f docker-compose.deploy.yml config >/dev/null'
+scale_readiness=$(remote "$BOT_HOST" 'cd /root/special-bot && docker exec special-bot-web-1 python manage.py validate_scale_readiness --json --origins-file ops/origins.example.json')
+python3 - "$scale_readiness" <<'PY'
+import json, sys
+report = json.loads(sys.argv[1])
+assert report['subscription_coverage_complete'] is True
+assert report['monitoring_complete'] is True
+assert report['duplicate_sub_ids'] == 0
+assert report['redundancy_ready'] is False
+assert report['legacy_retirement_ready'] is False
+print('scale_readiness=bounded_pass')
+PY
 
 printf 'commit=%s port=%s swap_bytes=%s nl_status=%s\n' "$commit" "$port_binding" "$swap_bytes" "$nl_status"
 printf '%s\n' "$legacy" | tail -2
