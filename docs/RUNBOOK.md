@@ -1,7 +1,9 @@
 # Safe operations runbook
 
-This runbook describes observation and recovery gates for the live legacy path.
-It is not a deployment procedure. Use approved access paths and environment
+This runbook describes observation and recovery gates for the live SPECIAL Bot
+path. Use only this repository's `ops/scripts/` and documented Django commands;
+the separate `vpn-ops` workspace belongs to another VPN service and is not an
+operational source for SPECIAL Bot. Use approved access paths and environment
 variables; never paste credentials, UUIDs, bearer subscription URLs, or client
 configuration into terminals, tickets, or logs.
 
@@ -93,3 +95,25 @@ host or in an approved secret store; never print them or put them in Git.
 
 Never combine credential rotation with subscription pilot, bulk `subId`,
 expiryTime, billing, inbound deletion or transport changes.
+
+## Guarded scripts
+
+Run from the canonical SPECIAL Bot checkout. Scripts are fail-closed and keep
+remote secrets out of output; mutating scripts still require the authorization
+stated above.
+
+- `ops/scripts/preflight_special_subscription.sh` — read-only host/deployment
+  preflight.
+- `ops/scripts/deploy_special_subscription_app.sh` — guarded reproducible app
+  deployment with image/environment rollback.
+- `ops/scripts/backfill_special_subscription_ids.sh` — explicit mode-0600 ID
+  file, dry-run by default, bounded apply batches.
+- `ops/scripts/rotate_special_xui_credentials.sh` — disruptive atomic NL/BOT
+  credential/path rotation; separate approval required.
+- `ops/scripts/verify_special_hardening.sh` — firewall, swap, legacy and
+  monitoring verification.
+- `ops/scripts/verify_special_full_backlog.sh` — full local plus production
+  validation; set `SPECIAL_VERIFY_PYTHON` when the repository venv is elsewhere.
+
+For provider-console SSH recovery, follow
+[TIMEWEB-BOT-SSH-RECOVERY.md](TIMEWEB-BOT-SSH-RECOVERY.md).

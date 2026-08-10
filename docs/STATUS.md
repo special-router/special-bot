@@ -60,8 +60,10 @@
 
 ## Production source and deployment
 
-- Production checkout: `/root/special-bot` at `1ff5b54` before this documentation
-  closeout. Image `vpnbot:latest` serves web, celery, celery_beat, monitoring.
+- Production deploy source is the clean `/root/special-bot` checkout tracking
+  `special-router/special-bot@main`. Image `vpnbot:latest` serves web, celery,
+  celery_beat and monitoring. Verify the exact deployed revision with the
+  guarded scripts instead of copying a commit snapshot into long-lived docs.
 - Gunicorn serves the subscription endpoint with one worker/four threads; both
   Celery workers use `--pool=solo`. This removed the prefork child processes
   that caused the prior OOM pressure.

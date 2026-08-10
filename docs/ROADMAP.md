@@ -1,55 +1,60 @@
 # Roadmap
 
-Statuses below are rebased to the current snapshot, not historical plans.
+This file tracks only future work for the **SPECIAL Bot** service. Current
+production facts belong in [STATUS.md](STATUS.md). Other VPN projects and their
+relay/subscription plans are outside this repository.
 
 ## Completed foundation
 
-- **Legacy stabilization:** completed for the current route; legacy delivery is
-  live with balance-based entitlement and compatibility preservation.
-- **Domain subscription canary:** completed for transport and one internal
-  protected canary; this is not customer rollout.
+- Existing customer VLESS/Reality route restored without changing installed
+  client identities or transport parameters.
+- Balance-based entitlement reconciled against the 3x-ui control plane.
+- Custom per-user Django subscription delivery deployed at the domain-backed
+  endpoint, with direct `vless://` retained as rollback.
+- Billing-to-`expiryTime`/status-label synchronization deployed.
+- L0/L1/L2 monitoring deployed with isolated L2 queue and sanitized aggregate
+  output.
+- One reproducible `vpnbot:latest` image deployed for web, Celery, beat and
+  monitoring; Celery workers use `--pool=solo`.
+- BOT OOM risk reduced with solo workers and a persistent 1 GiB swapfile.
+- BOT subscription origin restricted to the NL nginx host by persistent
+  firewall policy.
+- The 48-hour soak was explicitly waived by the owner; it was skipped, never
+  passed.
 
-## Pending gates — P0
+## Separately authorized hardening — P0
 
-1. Obtain approved key-based access to the bot production host. This is the
-   current hard blocker: monitoring cannot be deployed without it.
-2. Deploy the reviewed monitoring implementation and enable sanitized L0/L1/L2
-   by gate. The 48-hour soak is waived by owner decision for schedule reasons;
-   the pilot then relies on repeated protected L2 evidence instead.
-3. Run an explicitly approved voluntary pilot of 3–5 users, preserving direct
-   VLESS rollback.
-4. Enable opt-in bot subscription delivery only after pilot evidence.
-5. Separately design/test billing and `expiryTime` synchronization; preserve
-   balance-based entitlement until then.
+1. Rotate 3x-ui admin credentials and panel path atomically across NL and BOT,
+   with protected backups and rollback. Do not alter inbounds, client UUIDs,
+   Reality parameters or subscription identities.
+2. Rotate Redis credentials in a dedicated app/Celery stop → Redis restart →
+   app/Celery start window. PostgreSQL must not be restarted.
+3. Disable SSH password/root login only after a retained rollback session and
+   independent key-only verification.
+4. Decide whether to retire stopped legacy application containers/images.
+   Shared PostgreSQL and Redis are live dependencies and are excluded from
+   legacy cleanup.
 
-## Transport and resilience — P1/P2
+## Reliability and operations — P1
 
-- Add a second independent origin/ASN before relying on a single NL origin.
-  Deferred: requires a provisioned second origin and an approved budget/owner
-  decision, so it cannot be implemented from the current environment.
-- External paging for monitoring alerts is deferred: it needs an approved
-  notification channel and on-call owner. Until then, alert state is only
-  readable through sanitized monitoring records and the audit command.
-- Test multitransport incrementally: keep Reality/TCP primary; evaluate XHTTP
-  and Hysteria2 only on separate test paths with ISP × client evidence.
-- Build a measured subscription/transport portfolio and regional health model;
-  do not promise bypass behavior without representative field results.
-- Evaluate own aggregation and external-provider integrations only as separate,
-  reviewed work; do not mix them into the legacy migration.
+- Add an approved external paging destination and accountable on-call owner.
+- Provision a second independent origin/ASN before claiming origin redundancy.
+- Add scheduled documentation/link validation to CI.
+- Continue aggregate drift audits and protected L2 evidence; do not add
+  automatic service restarts to monitoring.
 
-## Product and router work
+## Product and client work — P1/P2
 
-- Voluntary bot delivery and user-facing installation guidance after migration
-  gates.
-- OpenWrt/PassWall2 router proof of concept: subscription import, transparent
-  routing and health-based fallback, kept separate from billing control plane.
-- Router hardware/software integration after the source repository, target
-  hardware constraints and support model are available.
-- Later: retention, analytics, multi-region selection, and evidence-driven
-  panel/control-plane evaluation after data-model stabilization.
+- Publish user-facing subscription import guidance and support flows.
+- Measure client/ISP behavior before adding new transports or automatic
+  selection claims.
+- Evaluate Happ Provider, OpenWrt/PassWall2 and router integrations only when
+  their repositories, target devices and owners are available.
+- Keep compatibility-only clients untouched until ownership and migration are
+  explicitly established.
 
 ## Decision principles
 
-No panel migration, direct-link retirement, broad transport rollout, or billing
-rewrite is automatic. Each requires measured evidence, rollback, scoped canary
-and explicit approval.
+No direct-key retirement, broad transport rollout, billing rewrite, inbound
+removal or compatibility-client mutation is automatic. Each requires measured
+evidence, scoped authorization, rollback and an accountable owner.
