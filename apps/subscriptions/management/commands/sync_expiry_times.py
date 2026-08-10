@@ -32,21 +32,20 @@ class Command(BaseCommand):
         @sync_to_async
         def _load():
             server = Server.objects.get(id=server_id)
-            rows = list(
-                UserVPN.objects.with_related_user(TelegramUser.objects.all().annotate_balance())
-                .with_related_server()
-                .select_related('server__tariff', 'user')
-                .filter_by_enabled(True)
-                .filter(server_id=server.id)
-            )
-            return server, [
-                {
+            # Annotate balance on the user relation directly so .user.balance is present
+            # without triggering a synchronous lazy reload inside the async loop.
+            users_qs = TelegramUser.objects.all().annotate_balance()
+            rows = []
+            for r in UserVPN.objects.select_related('server__tariff').filter_by_enabled(True).filter(server_id=server.id):
+                u = users_qs.filter(id=r.user_id).first()
+                if u is None:
+                    continue
+                rows.append({
                     'vpn_uuid': str(r.vpn_uuid),
-                    'balance': float(r.user.balance),
+                    'balance': float(getattr(u, 'balance', 0) or 0),
                     'price': float(r.server.tariff.price),
-                }
-                for r in rows
-            ]
+                })
+            return server, rows
 
         server, rows = await _load()
         api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password)
