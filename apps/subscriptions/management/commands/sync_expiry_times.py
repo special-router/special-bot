@@ -28,32 +28,42 @@ class Command(BaseCommand):
 
     async def _run(self) -> None:
         server_id = getattr(settings, 'SPECIAL_MONITOR_SERVER_ID', 1) or 1
-        server = await Server.objects.aget(id=server_id)
+
+        @sync_to_async
+        def _load():
+            server = Server.objects.get(id=server_id)
+            rows = list(
+                UserVPN.objects.with_related_user(TelegramUser.objects.all().annotate_balance())
+                .with_related_server()
+                .select_related('server__tariff', 'user')
+                .filter_by_enabled(True)
+                .filter(server_id=server.id)
+            )
+            return server, [
+                {
+                    'vpn_uuid': str(r.vpn_uuid),
+                    'balance': float(r.user.balance),
+                    'price': float(r.server.tariff.price),
+                }
+                for r in rows
+            ]
+
+        server, rows = await _load()
         api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password)
         await api.login()
         mirror = [int(i) for i in (getattr(settings, 'MIRROR_INBOUND_IDS', []) or []) if int(i) != server.inbound_id]
         inbound_ids = [server.inbound_id, *mirror]
 
-        @sync_to_async
-        def _load():
-            return list(
-                UserVPN.objects.with_related_user(TelegramUser.objects.all().annotate_balance())
-                .with_related_server()
-                .filter_by_enabled(True)
-                .filter(server_id=server.id)
-            )
-
-        user_vpns = await _load()
         synced = 0
-        for user_vpn in user_vpns:
-            price = user_vpn.server.tariff.price
+        for row in rows:
+            price = row['price']
             if price <= 0:
                 continue
-            days = int(user_vpn.user.balance // price)
+            days = int(row['balance'] // price)
             expiry_ms = int(time.time() * 1000) + days * 86_400_000
             for inbound_id in inbound_ids:
                 try:
-                    await self._sync_one(api, inbound_id, str(user_vpn.vpn_uuid), expiry_ms)
+                    await self._sync_one(api, inbound_id, row['vpn_uuid'], expiry_ms)
                 except Exception:
                     pass
             synced += 1
