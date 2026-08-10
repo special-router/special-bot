@@ -26,13 +26,15 @@
   `SUBSCRIPTION_CONNECTOR_ENABLED=true`). A subscription URL is the primary
   access path issued by the bot UI; the direct `vless://` key remains stored as
   fallback and rollback.
-- Entitlement/control-plane snapshot: **66 Django records**, **65 currently
-  entitled**, **87 primary-inbound clients**, and **21 compatibility-only**
-  clients; `entitled_missing=0`. Balance-based entitlement remains authoritative.
-- Django stores `sub_id` for **65 of 66** `UserVPN` records: every currently
+- Entitlement/control-plane snapshot: **65 Django records**, **64 currently
+  entitled**, **86 primary-inbound clients**, and **21 compatibility-only**
+  clients; `entitled_missing=0`. These counts are a dated live snapshot and may
+  change through legitimate user activity; balance-based entitlement remains
+  authoritative.
+- Django stores `sub_id` for **64 of 65** `UserVPN` records: every currently
   balance-entitled record has one. The remaining record is unpaid and disabled
-  in the primary 3x-ui inbound. The primary inbound has 87 unique clients:
-  65 entitled, one unpaid Django-owned record, and 21 compatibility-only
+  in the primary 3x-ui inbound. The primary inbound has 86 unique clients:
+  64 entitled, one unpaid Django-owned record, and 21 compatibility-only
   clients. Compatibility-only clients are never assigned ownership or mutated.
 - Domain subscription transport is live at `sub.special-wifi.ru`. NL nginx
   terminates TLS for `/sub/<subId>` and proxies only from NL to the custom
