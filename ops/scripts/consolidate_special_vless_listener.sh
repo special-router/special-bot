@@ -75,7 +75,7 @@ rm -f /tmp/special-monitoring-preflight.out
 BOTCHECK
 
 ssh "${SSH_OPTIONS[@]}" "$NL" bash -s -- \
-  "$NL_BACKUP" "$PRIMARY_INBOUND_ID" "$STATUS_INBOUND_ID" "$MIRROR_INBOUND_ID" <<'NLCUTOVER'
+  "$NL_BACKUP" "$PRIMARY_INBOUND_ID" "$STATUS_INBOUND_ID" "$MIRROR_INBOUND_ID" <<'NLPREP'
 set -euo pipefail
 backup=$1
 primary_id=$2
@@ -108,13 +108,64 @@ if not bool(primary[1]) or int(primary[2]) != 8443 or primary[3] != 'vless':
 primary_stream = json.loads(primary[5] or '{}')
 if primary_stream.get('network') != 'tcp' or primary_stream.get('security') != 'reality':
     raise SystemExit('BLOCK: primary stream shape')
-for disabled_id in (status_id, mirror_id):
-    candidate = rows[disabled_id]
+for duplicate_id in (status_id, mirror_id):
+    candidate = rows[duplicate_id]
     candidate_stream = json.loads(candidate[5] or '{}')
-    if int(candidate[2]) != int(primary[2]) or candidate[3] != primary[3]:
+    if not bool(candidate[1]) or int(candidate[2]) != int(primary[2]) or candidate[3] != primary[3]:
         raise SystemExit('BLOCK: duplicate listener shape drift')
     if candidate_stream.get('realitySettings') != primary_stream.get('realitySettings'):
         raise SystemExit('BLOCK: Reality settings drift')
+PY
+NLPREP
+
+# The protected canary's stored direct key is legacy no-flow. Normalize only
+# that explicitly configured internal client before removing duplicate listeners;
+# the NL database backup above covers this API mutation as part of rollback.
+ssh "${SSH_OPTIONS[@]}" "$BOT" bash -s -- "$PRIMARY_INBOUND_ID" <<'BOTCANARY'
+set -euo pipefail
+primary_id=$1
+cd /root/special-bot
+timeout 90 docker exec special-bot-web-1 python manage.py shell -c "
+import asyncio
+from django.conf import settings
+from apps.servers.models import Server
+from apps.vpn.models import UserVPN
+from utils.py3xui.async_api import AsyncApi
+async def normalize():
+    user_vpn = await UserVPN.objects.select_related('server').aget(pk=settings.SPECIAL_MONITOR_CANARY_USER_VPN_ID)
+    if user_vpn.server.inbound_id != int('$primary_id') or 'flow=' in (user_vpn.vpn_key or ''):
+        raise RuntimeError('canary_contract')
+    server = await Server.objects.aget(id=user_vpn.server_id)
+    api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password, use_tls_verify=False)
+    await api.login()
+    inbound = await api.inbound.get_by_id(server.inbound_id)
+    matches = [client for client in inbound.settings.clients if str(client.id) == str(user_vpn.vpn_uuid)]
+    if len(matches) != 1 or not matches[0].enable:
+        raise RuntimeError('canary_client')
+    client = matches[0]
+    client.flow = ''
+    client.inbound_id = server.inbound_id
+    await api.client.update(str(user_vpn.vpn_uuid), client)
+    refreshed = await api.inbound.get_by_id(server.inbound_id)
+    current = [item for item in refreshed.settings.clients if str(item.id) == str(user_vpn.vpn_uuid)]
+    if len(current) != 1 or current[0].flow:
+        raise RuntimeError('canary_flow')
+asyncio.run(normalize())
+" >/dev/null
+BOTCANARY
+
+ssh "${SSH_OPTIONS[@]}" "$NL" bash -s -- \
+  "$PRIMARY_INBOUND_ID" "$STATUS_INBOUND_ID" "$MIRROR_INBOUND_ID" <<'NLCUTOVER'
+set -euo pipefail
+primary_id=$1
+status_id=$2
+mirror_id=$3
+python3 - "$primary_id" "$status_id" "$mirror_id" <<'PY'
+import sqlite3
+import sys
+
+primary_id, status_id, mirror_id = map(int, sys.argv[1:])
+connection = sqlite3.connect('/etc/x-ui/x-ui.db')
 connection.execute('update inbounds set enable = 0 where id in (?, ?)', (status_id, mirror_id))
 connection.commit()
 states = dict(connection.execute('select id, enable from inbounds where id in (?, ?, ?)', (primary_id, status_id, mirror_id)))
