@@ -7,6 +7,23 @@ operational source for SPECIAL Bot. Use approved access paths and environment
 variables; never paste credentials, UUIDs, bearer subscription URLs, or client
 configuration into terminals, tickets, or logs.
 
+## RU relay administrative access
+
+The current verified emergency access path is `root` password authentication
+using `VPN_RELAY_SSH_PASS` from the protected, untracked
+`/home/fsdf1234/Projects/special-router-dev/.env`. Use
+`ops/scripts/relay_ssh.sh`; it passes the secret through `sshpass -e`, keeps
+strict existing host-key verification, and never places the password in argv or
+output. Never paste or log the value. A previous failed check came from an
+incorrect value-extraction command, not credential rotation; the corrected
+path authenticated and verified host `msk-1-vm-pdmp`, active nginx and four
+relay listeners.
+
+This is a temporary compatibility/admin path, not the desired end state. The
+relay currently has a different historical authorized key. Migrate to a newly
+verified operator key and rotate the exposed password only with a retained
+provider-console/password rollback session.
+
 ## Read-only checks
 
 Run from the approved operations environment only.
@@ -20,6 +37,8 @@ Run from the approved operations environment only.
    requesting or printing a bearer URL.
 4. Run `ops/scripts/tune_special_nl_tcp.sh verify`: it checks the single NL
    `:8443` listener plus persistent `fq`/BBR without restarting services.
+   For RU relay checks, use `ops/scripts/relay_ssh.sh` and verify nginx config,
+   the four listeners and NL targets before any mutation.
 5. Run an approved protected canary E2E only when authorized: import its
    protected configuration transiently, make an HTTPS egress check, and remove
    transient state. A successful TCP connect alone is insufficient. For

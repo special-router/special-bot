@@ -29,6 +29,12 @@ production state belongs in [STATUS.md](STATUS.md).
   guarded production verifier passed at revision `d13a978` with entitlement
   missing zero, healthy Host/L0/L1/L2 state, external BOT subscription-origin
   access blocked, and redundancy/legacy-retirement gates still false.
+- **2026-08-10:** RU relay admin access was revalidated as `root` plus the
+  protected `VPN_RELAY_SSH_PASS` through `sshpass -e` and strict host-key
+  checking. An earlier rejection was an extraction-command error, not a known
+  rotation. A combined BBR/buffer/nginx experiment failed its Relay benchmark
+  and was fully rolled back; the audited `cubic`/`fq_codel` baseline remains
+  active. Future relay tuning must change and benchmark one knob at a time.
 
 Detailed incident transcripts, bearer URLs, client UUIDs, credentials, raw
 environment values and temporary research artifacts are intentionally excluded

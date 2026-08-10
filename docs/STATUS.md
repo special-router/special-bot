@@ -23,6 +23,11 @@
   1 MiB A/B sample, Direct median increased from about 29.6 to 40.3 Mbps and
   Relay from about 2.7 to 8.2 Mbps; Relay p95 transfer time fell from about
   12.0 s to 1.9 s. These are path/canary samples, not promised client ISP speed.
+- RU relay admin access is verified through the protected password wrapper in
+  `ops/scripts/relay_ssh.sh`. A combined relay BBR/buffer/nginx experiment
+  regressed Relay to 0/8 and was rejected; automatic/manual rollback restored
+  the audited `cubic` + `fq_codel`, original buffers/backlogs, 30 s stream
+  timeout and no socket keepalive. Protected Direct/Relay then passed 5/5.
 - Inbound **14** (`🇳🇱 NL Relay`) remains a disabled runtime/control-plane mirror
   with its client and `subId` metadata preserved. `MIRROR_INBOUND_IDS=[14]`
   continues to synchronize add/remove/enable and `subId`; the public Relay link
