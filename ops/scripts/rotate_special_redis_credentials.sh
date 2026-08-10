@@ -38,6 +38,12 @@ unexpected=$(git status --porcelain | awk '$2 != ".environment" && $2 !~ /^\.env
 [[ -f .environment && $(stat -c '%a' .environment) == 600 ]] || { echo 'BLOCK: .environment mode'; exit 22; }
 [[ -f "$owner_compose" ]] || { echo 'BLOCK: owning Redis Compose file missing'; exit 23; }
 [[ -f "$owner_env" && $(stat -c '%a' "$owner_env") == 600 ]] || { echo 'BLOCK: owning Redis environment mode'; exit 30; }
+# Refuse historical owner Compose files that hardcode requirepass; rotating only
+# environment values would silently recreate Redis with the old literal.
+if grep -Eq -- '--requirepass[[:space:]]+[^"$]|--requirepass"?[[:space:]]*,[[:space:]]*"[^$]' "$owner_compose"; then
+  echo 'BLOCK: owning Redis Compose hardcodes requirepass; migrate it to REDIS_PASSWORD first'
+  exit 32
+fi
 [[ $(docker inspect -f '{{.State.Running}}' vpn_bot-postgres-1) == true ]] || { echo 'BLOCK: PostgreSQL not running'; exit 24; }
 [[ $(docker inspect -f '{{.State.Running}}' vpn_bot-redis-1) == true ]] || { echo 'BLOCK: Redis not running'; exit 25; }
 postgres_started=$(docker inspect -f '{{.State.StartedAt}}' vpn_bot-postgres-1)
