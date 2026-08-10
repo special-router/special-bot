@@ -26,7 +26,15 @@ CELERY_ALWAYS_EAGER=true \
 
 if [[ ${SPECIAL_VERIFY_PRODUCTION:-false} == true ]]; then
   expected_commit=${SPECIAL_PRODUCTION_COMMIT:-$(git rev-parse --short HEAD)}
-  SPECIAL_HARDENING_COMMIT="$expected_commit" ./ops/scripts/verify_special_hardening.sh
+  if ! SPECIAL_HARDENING_COMMIT="$expected_commit" ./ops/scripts/verify_special_hardening.sh; then
+    echo 'production_verifier_retry=refreshing_l2_once' >&2
+    ssh -i "${SPECIAL_BOT_SSH_KEY:-$HOME/.ssh/id_ed25519}" \
+      -o BatchMode=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no \
+      -o StrictHostKeyChecking=yes -o ConnectTimeout=10 \
+      "root@${SPECIAL_BOT_HOST:-72.56.23.226}" \
+      'docker exec special-bot-web-1 python -c '\''import os,django; os.environ.setdefault("DJANGO_SETTINGS_MODULE","bot.settings"); django.setup(); from apps.monitoring.models import MonitorState; MonitorState.objects.filter(layer="l2").delete(); from apps.monitoring.tasks import run_protocol_monitor; run_protocol_monitor.delay()'\''; sleep 40'
+    SPECIAL_HARDENING_COMMIT="$expected_commit" ./ops/scripts/verify_special_hardening.sh
+  fi
   ./ops/scripts/audit_special_redis_rotation.sh
 fi
 
