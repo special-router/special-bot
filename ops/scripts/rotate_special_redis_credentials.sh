@@ -6,8 +6,8 @@ SSH_KEY=${SPECIAL_BOT_SSH_KEY:-$HOME/.ssh/id_ed25519}
 EXPECTED_COMMIT=${SPECIAL_REDIS_COMMIT:-$(git -C "$(dirname "${BASH_SOURCE[0]}")/../.." rev-parse --short HEAD)}
 REMOTE_PATH=${SPECIAL_BOT_REMOTE_PATH:-/root/special-bot}
 APP_COMPOSE=${SPECIAL_BOT_COMPOSE_FILE:-docker-compose.deploy.yml}
-OWNER_COMPOSE=${SPECIAL_REDIS_OWNER_COMPOSE_FILE:-/root/vpn_bot/docker-compose.yml}
-OWNER_ENV=${SPECIAL_REDIS_OWNER_ENV_FILE:-/root/vpn_bot/.environment}
+OWNER_COMPOSE=${SPECIAL_REDIS_OWNER_COMPOSE_FILE:-$REMOTE_PATH/docker-compose.infrastructure.yml}
+OWNER_ENV=${SPECIAL_REDIS_OWNER_ENV_FILE:-$REMOTE_PATH/.environment}
 
 SSH=(
   ssh -i "$SSH_KEY"

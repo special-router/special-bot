@@ -81,6 +81,11 @@ host or in an approved secret store; never print them or put them in Git.
 
 ### Redis and bot services
 
+The tracked `docker-compose.infrastructure.yml` is the target clean owner for
+shared PostgreSQL/Redis. Adopt it only in an approved infrastructure window and
+only after verifying the external volume/network names. Until adoption, the
+rotation audit must fail closed rather than use the dirty historical checkout.
+
 1. Capture the mode-0600 bot environment backup and aggregate service state.
    PostgreSQL must not be restarted.
 2. Generate a new Redis password without printing it. Update `REDIS_PASSWORD`

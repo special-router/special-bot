@@ -26,6 +26,7 @@ terminate the Reality path. The subscription service terminates its own TLS.
 | Boundary | Owner / responsibility |
 |---|---|
 | `$BOT_HOST` / bot database | User records, balances, entitlement calculation, private delivery UX and audit scheduling. |
+| `docker-compose.infrastructure.yml` | Canonical ownership definition for the existing shared PostgreSQL/Redis containers, external network and data volumes. Adoption is a separate infrastructure window; ordinary app deployment never recreates it. |
 | 3x-ui control plane on `$VPN_MAIN_HOST` | Inbounds, client membership, `subId`, subscription rendering and control-plane inventory. |
 | Xray data plane on `$VPN_MAIN_HOST` | Active VLESS transports and encrypted client traffic. Generated Xray clients intentionally do not carry the control-plane-only `subId`. |
 | `$VPN_RELAY_HOST` | Byte-transparent RU relay for the legacy entry path; it is not an independent origin. |
