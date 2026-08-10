@@ -10,7 +10,7 @@ SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o PasswordAuthentication=no -o KbdInter
 set -euo pipefail
 owner_compose=$1
 [[ -f "$owner_compose" ]] || { echo 'redis_owner_compose=missing'; exit 20; }
-if grep -Eq -- '--requirepass[[:space:]]+[^"$]|--requirepass"?[[:space:]]*,[[:space:]]*"[^$]' "$owner_compose"; then
+if grep -E -- '--requirepass' "$owner_compose" | grep -Evq 'REDIS_PASSWORD'; then
   echo 'redis_owner_compose=hardcoded_requirepass blocker=true'
 else
   working_dir=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' vpn_bot-redis-1)

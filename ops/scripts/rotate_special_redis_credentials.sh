@@ -40,7 +40,7 @@ unexpected=$(git status --porcelain | awk '$2 != ".environment" && $2 !~ /^\.env
 [[ -f "$owner_env" && $(stat -c '%a' "$owner_env") == 600 ]] || { echo 'BLOCK: owning Redis environment mode'; exit 30; }
 # Refuse historical owner Compose files that hardcode requirepass; rotating only
 # environment values would silently recreate Redis with the old literal.
-if grep -Eq -- '--requirepass[[:space:]]+[^"$]|--requirepass"?[[:space:]]*,[[:space:]]*"[^$]' "$owner_compose"; then
+if grep -E -- '--requirepass' "$owner_compose" | grep -Evq 'REDIS_PASSWORD'; then
   echo 'BLOCK: owning Redis Compose hardcodes requirepass; migrate it to REDIS_PASSWORD first'
   exit 32
 fi
@@ -75,7 +75,7 @@ rollback() {
     cp --preserve=mode "$owner_backup" "$owner_env" 2>/dev/null || true
     set -a; source "$owner_env"; set +a
     export REDIS_PASSWORD
-    docker compose --env-file "$owner_env" -f "$owner_compose" up -d --no-deps --force-recreate redis >/dev/null 2>&1 || true
+    docker compose -p vpn_bot --env-file "$owner_env" -f "$owner_compose" up -d --no-deps --force-recreate redis >/dev/null 2>&1 || true
     docker compose -f "$app_compose" up -d --no-deps web celery celery_beat monitoring >/dev/null 2>&1 || true
     echo "ROLLBACK_ATTEMPTED rc=$rc" >&2
   fi
@@ -150,7 +150,7 @@ unset new_secret
 docker compose -f "$app_compose" stop web celery celery_beat monitoring >/dev/null
 set -a; source "$owner_env"; set +a
 export REDIS_PASSWORD
-docker compose --env-file "$owner_env" -f "$owner_compose" up -d --no-deps --force-recreate redis >/dev/null
+docker compose -p vpn_bot --env-file "$owner_env" -f "$owner_compose" up -d --no-deps --force-recreate redis >/dev/null
 for _ in $(seq 1 30); do
   if docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" vpn_bot-redis-1 redis-cli ping 2>/dev/null | grep -qx PONG; then
     break
