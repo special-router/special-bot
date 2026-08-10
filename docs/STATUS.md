@@ -37,11 +37,11 @@
   1. `📊 Подписка-осталось N дней` (non-working status entry, first)
   2. `🇳🇱 NL Direct` (`sub.special-wifi.ru:8443`)
   3. `🇳🇱 NL Relay` (`201.34.132.118:443`)
-- Production currently runs L0 control-plane, L1 regional TCP and protected L2
-  subscription/direct-VLESS monitoring on an isolated queue. The next app
-  deployment also includes a Host capacity layer (memory, swap, load and OOM
-  counter) plus a default-off provider-neutral paging adapter. Do not describe
-  Host/paging as live until that deployment and a paging destination exist.
+- Production runs L0 control-plane, L1 regional TCP, protected L2
+  subscription/direct-VLESS and Host capacity monitoring on an isolated queue.
+  Host records aggregate memory, swap, load-per-CPU and OOM count only. The
+  provider-neutral paging adapter is deployed but default-off; do not describe
+  external paging as live until a destination and accountable owner exist.
 
 ## Billing and subscription lifecycle
 

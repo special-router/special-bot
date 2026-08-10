@@ -1,7 +1,7 @@
 # Monitoring
 
-> **Deployed and live on the production bot host (2026-08-08).** L0, L1 and L2
-> run on schedule; L2 is confined to an isolated `monitoring` queue and worker.
+> **Deployed and live on the production bot host.** L0, L1, L2 and Host run on
+> schedule; L2/Host are confined to an isolated `monitoring` queue and worker.
 > `SPECIAL_MONITOR_ENABLED` and `SPECIAL_MONITOR_L2_ENABLED` are therefore true
 > in production. Subscription delivery is also enabled, but remains an
 > independent rollout/control surface.
