@@ -12,7 +12,7 @@ services:
 
   celery:
     image: vpnbot:latest
-    command: ["sh", "-c", "./entrypoint.sh celery -A bot.celery_app worker --loglevel=INFO --queues=celery"]
+    command: ["sh", "-c", "./entrypoint.sh celery -A bot.celery_app worker --loglevel=INFO --queues=celery --pool=solo"]
     env_file: [.environment]
     environment:
       DJANGO_SETTINGS_MODULE: bot.settings
@@ -28,7 +28,7 @@ services:
 
   monitoring:
     image: vpnbot:latest
-    command: ["sh", "-c", "./entrypoint.sh celery -A bot.celery_app worker --loglevel=INFO --queues=monitoring --concurrency=1"]
+    command: ["sh", "-c", "./entrypoint.sh celery -A bot.celery_app worker --loglevel=INFO --queues=monitoring --pool=solo"]
     env_file: [.environment]
     environment:
       DJANGO_SETTINGS_MODULE: bot.settings
