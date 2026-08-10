@@ -10,12 +10,11 @@ from __future__ import annotations
 import asyncio
 import time
 
+from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.core.management.base import BaseCommand
-from django.db.models import Sum
 
 from apps.servers.models import Server
-from apps.servers.vpn_client import APIVPNClient
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 from utils.py3xui.async_api import AsyncApi
@@ -28,25 +27,25 @@ class Command(BaseCommand):
         asyncio.run(self._run())
 
     async def _run(self) -> None:
-        server: Server = await Server.objects.aget(id=settings.SPECIAL_MONITOR_SERVER_ID) \
-            if getattr(settings, 'SPECIAL_MONITOR_SERVER_ID', None) else None
-        if server is None:
-            self.stderr.write('No SPECIAL_MONITOR_SERVER_ID configured; nothing to sync.')
-            return
-
+        server_id = getattr(settings, 'SPECIAL_MONITOR_SERVER_ID', 1) or 1
+        server = await Server.objects.aget(id=server_id)
         api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password)
         await api.login()
-        inbound_ids = [server.inbound_id, *[int(i) for i in (getattr(settings, 'MIRROR_INBOUND_IDS', []) or [])]]
+        mirror = [int(i) for i in (getattr(settings, 'MIRROR_INBOUND_IDS', []) or []) if int(i) != server.inbound_id]
+        inbound_ids = [server.inbound_id, *mirror]
 
-        # enabled, balance-entitled UserVPN rows with their tariff price.
-        qs = (
-            UserVPN.objects.with_related_user(TelegramUser.objects.all().annotate_balance())
-            .with_related_server()
-            .filter_by_enabled(True)
-            .filter(server_id=server.id)
-        )
+        @sync_to_async
+        def _load():
+            return list(
+                UserVPN.objects.with_related_user(TelegramUser.objects.all().annotate_balance())
+                .with_related_server()
+                .filter_by_enabled(True)
+                .filter(server_id=server.id)
+            )
+
+        user_vpns = await _load()
         synced = 0
-        async for user_vpn in qs:
+        for user_vpn in user_vpns:
             price = user_vpn.server.tariff.price
             if price <= 0:
                 continue
