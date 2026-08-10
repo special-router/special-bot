@@ -125,6 +125,18 @@ awk -v load_value="$load1" -v cpus="$cpus" 'BEGIN {exit !(load_value <= cpus * 4
 (( blocked == 0 )) || { echo 'BLOCK: BOT D-state tasks present'; exit 26; }
 timeout 15 docker info --format '{{.ServerVersion}}' >/dev/null || { echo 'BLOCK: BOT Docker API unavailable'; exit 27; }
 timeout 90 docker exec special-bot-web-1 python manage.py audit_legacy_vpn >/dev/null
+# Prove the current connector can authenticate before stopping app services.
+timeout 60 docker exec special-bot-web-1 python manage.py shell -c '
+import asyncio
+from apps.servers.models import Server
+from utils.py3xui.async_api import AsyncApi
+async def check():
+    server = await Server.objects.aget(id=1)
+    api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password, use_tls_verify=False)
+    await api.login()
+    await api.inbound.get_by_id(server.inbound_id)
+asyncio.run(check())
+' >/dev/null
 umask 077
 docker exec special-bot-web-1 python manage.py shell -c "
 import json
@@ -196,6 +208,20 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 tail -1 /tmp/special-rotation-audit.out | grep -qx 'Legacy VPN audit passed.'
+# The legacy audit proves a login plus inbound read using the new URL/path and
+# credentials. Verify the exact configured server once more without printing it.
+timeout 60 docker exec special-bot-web-1 python manage.py shell -c '
+import asyncio
+from apps.servers.models import Server
+from utils.py3xui.async_api import AsyncApi
+async def check():
+    server = await Server.objects.aget(id=1)
+    api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password, use_tls_verify=False)
+    await api.login()
+    inbound = await api.inbound.get_by_id(server.inbound_id)
+    assert inbound.id == server.inbound_id
+asyncio.run(check())
+' >/dev/null
 rm -f /tmp/special-rotation-audit.out
 timeout 90 docker exec special-bot-web-1 python manage.py audit_xui_sub_id_coverage --server-id "$server_id" >/dev/null
 timeout 30 docker exec special-bot-web-1 python manage.py shell -c '
