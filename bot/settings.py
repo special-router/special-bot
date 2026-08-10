@@ -198,6 +198,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.subscriptions.tasks.update_user_vpn',
         'schedule': crontab(minute=0, hour=0),  # 00:00 UTC daily
     },
+    'sync_expiry_times_daily': {
+        'task': 'apps.subscriptions.tasks.sync_expiry_times',
+        'schedule': crontab(minute=5, hour=0),  # 00:05 UTC, after daily billing
+    },
 }
 
 SPECIAL_MONITOR_ENABLED = env.bool('SPECIAL_MONITOR_ENABLED', False)
@@ -256,6 +260,7 @@ SPECIAL_MONITOR_EXPECTED_INBOUNDS = env.json(
     default=[],
 )
 SPECIAL_MONITOR_CANARY_USER_VPN_ID = env.int('SPECIAL_MONITOR_CANARY_USER_VPN_ID', 0)
+SPECIAL_MONITOR_SERVER_ID = env.int('SPECIAL_MONITOR_SERVER_ID', 1)
 SPECIAL_MONITOR_XRAY_PATH = env.str('SPECIAL_MONITOR_XRAY_PATH', '/usr/local/bin/xray')
 SPECIAL_MONITOR_EXPECTED_EGRESS = env.str('SPECIAL_MONITOR_EXPECTED_EGRESS', '')
 SPECIAL_MONITOR_HEALTH_URL = env.str('SPECIAL_MONITOR_HEALTH_URL', 'https://api.ipify.org')

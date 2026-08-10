@@ -32,7 +32,7 @@ class APIVPNClient:
         await self._api.login()
         new_client = Client(
             id=str(user_vpn.vpn_uuid),
-            email=f'{str(user_vpn.user.telegram_id)} - {now().isoformat()}',
+            email="",
             enable=True,
             limit_ip=settings.LIMIT_IP,
         )
@@ -73,7 +73,7 @@ class APIVPNClient:
                 return
             new_client = Client(
                 id=str(user_vpn.vpn_uuid),
-                email=f'{str(user_vpn.user.telegram_id)} - {now().isoformat()}',
+                email="",
                 enable=True,
                 limit_ip=settings.LIMIT_IP,
             )

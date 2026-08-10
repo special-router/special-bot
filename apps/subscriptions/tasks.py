@@ -59,3 +59,12 @@ def update_user_vpn():
                 )
                 # это чтобы слишком часто сообщения в телегу не отправлять
                 time.sleep(1)
+
+
+@shared_task
+def sync_expiry_times():
+    """Mirror remaining balance days into 3x-ui client expiryTime so subscription
+    clients (happ) display how many days are left. Does not create transactions and
+    does not enable disabled clients."""
+    from django.core.management import call_command
+    call_command('sync_expiry_times')
