@@ -24,8 +24,8 @@ relay/subscription plans are outside this repository.
 
 ## Separately authorized hardening — P0
 
-1. Rotate 3x-ui admin credentials and panel path atomically across NL and BOT,
-   with protected backups and rollback. Do not alter inbounds, client UUIDs,
+1. Keep 3x-ui rotation evidence and log suppression healthy; the atomic
+   credential/path rotation is complete. Do not alter inbounds, client UUIDs,
    Reality parameters or subscription identities.
 2. Rotate Redis credentials in a dedicated app/Celery stop → Redis restart →
    app/Celery start window. PostgreSQL must not be restarted.

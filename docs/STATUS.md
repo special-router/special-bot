@@ -78,8 +78,10 @@
 - The 48-hour monitored canary soak is **waived by owner decision for schedule
   reasons**. It is recorded as skipped, never as passed; the residual risk of
   promoting without sustained observation stays with the owner.
-- 3x-ui admin credential/path rotation remains staged but not executed. It
-  requires a separate authorized atomic NL/BOT rotation window.
+- 3x-ui admin credentials and panel path were rotated atomically across NL and
+  BOT with protected rollback. A second rotation immediately invalidated the
+  first generated username after the library exposed it in an INFO log; the
+  `py3xui` logger is now suppressed at WARNING and no password/path was logged.
 - Redis credential rotation requires a separate coordinated app/Celery stop,
   Redis restart, and rollback window. PostgreSQL must not be restarted.
 - SSH password/root hardening remains deferred until a retained rollback
