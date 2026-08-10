@@ -22,10 +22,12 @@ variant is not compatible with happ. Django therefore builds the base64 VLESS
 payload from the requested `UserVPN` UUID and cached Reality parameters.
 
 A subscription now returns three endpoints:
-1. `📊 Подписка-осталось N дней` (or `подписка окончена`) — non-working status
-   entry, inbound id 1, `externalProxy` → `127.0.0.1:1`.
-2. `🇳🇱 NL Direct` — `sub.special-wifi.ru:8443`, inbound id 5.
-3. `🇳🇱 NL Relay` — `201.34.132.118:443`, inbound id 14 (mirror of 5).
+1. `📊 Подписка-осталось N дней` (or `подписка окончена`) — non-working
+   status entry rendered by Django; control-plane record id 1 is preserved but
+   runtime-disabled.
+2. `🇳🇱 NL Direct` — `sub.special-wifi.ru:8443`, active inbound id 5.
+3. `🇳🇱 NL Relay` — `201.34.132.118:443`; the RU relay forwards to active
+   inbound 5. Control-plane mirror id 14 is preserved but runtime-disabled.
 
 - Existing direct `vless://` links remain live and are the rollback path.
 - Keep the legacy RU relay path unchanged during this migration.
@@ -58,10 +60,13 @@ expected projection, not membership drift.
   unpaid Django record remains disabled and intentionally has no `sub_id`.
   The 21 compatibility-only inbound clients remain ownership-free and are not
   mutated.
-- `MIRROR_INBOUND_IDS=[14]` keeps the RU relay inbound synchronized with the
-  primary inbound for add/remove/enable and `subId` assignment.
-- `STATUS_INBOUND_ID=1` carries the per-client balance label so happ shows the
-  remaining days as a dedicated, non-working entry ordered first.
+- `MIRROR_INBOUND_IDS=[14]` keeps the preserved Relay metadata synchronized
+  with the primary inbound for add/remove/enable and `subId` assignment.
+- `STATUS_INBOUND_ID=1` keeps per-client balance-label metadata synchronized;
+  the authoritative Django payload renders the dedicated non-working entry.
+- Inbounds 1 and 14 are runtime-disabled so Xray has one `:8443` listener. All
+  subscription Direct/Relay links preserve the deployed legacy no-flow client
+  contract and terminate on inbound 5.
 - `sync_expiry_times` runs daily after billing and mirrors `expiryTime`,
   enable state, and the status label to every relevant inbound.
 - L2 decodes all subscription entries, selects a non-loopback entry with the

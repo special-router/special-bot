@@ -7,15 +7,17 @@
 
 - Legacy route is live: client → RU relay `:443` → NL nginx `:443` → Xray
   inbound **5**, VLESS/TCP/Reality on NL `:8443`.
-- Inbound **14** (`🇳🇱 NL Relay`) mirrors inbound **5** clients with
-  `externalProxy` pointing at the RU relay front `201.34.132.118:443`. It is
-  kept in sync via `MIRROR_INBOUND_IDS=[14]`: add/remove/enable and `subId`
-  assignment propagate from the primary inbound.
-- Inbound **1** (`📊 Подписка`) is a dedicated, non-working subscription-status
-  endpoint (`externalProxy` → `127.0.0.1:1`). It carries the per-client balance
-  label in the 3x-ui `email` field so the subscription remark becomes
-  `📊 Подписка-осталось N дней` (or `подписка окончена`). It is ordered first in
-  the subscription because it has the lowest inbound id.
+- Inbound **5** is the sole active Xray listener on NL `:8443`. The previous
+  same-port status/mirror listeners caused kernel distribution across unequal
+  client/flow sets and intermittent Reality failures; consolidating to one
+  listener restored repeated Direct and Relay protocol checks to 20/20 each.
+- Inbound **14** (`🇳🇱 NL Relay`) remains a disabled runtime/control-plane mirror
+  with its client and `subId` metadata preserved. `MIRROR_INBOUND_IDS=[14]`
+  continues to synchronize add/remove/enable and `subId`; the public Relay link
+  still enters through `201.34.132.118:443` and terminates on active inbound 5.
+- Inbound **1** (`📊 Подписка`) also remains preserved but runtime-disabled. Its
+  balance-label metadata can still be synchronized, while the authoritative
+  Django subscription renders the non-working status entry itself.
 - Subscription delivery is **enabled** (`SUBSCRIPTION_DELIVERY_ENABLED=true`,
   `SUBSCRIPTION_CONNECTOR_ENABLED=true`). A subscription URL is the primary
   access path issued by the bot UI; the direct `vless://` key remains stored as
@@ -37,6 +39,8 @@
   1. `📊 Подписка-осталось N дней` (non-working status entry, first)
   2. `🇳🇱 NL Direct` (`sub.special-wifi.ru:8443`)
   3. `🇳🇱 NL Relay` (`201.34.132.118:443`)
+  Direct/Relay links preserve the deployed legacy no-flow client contract;
+  Vision is not forced without an explicit per-client migration.
 - Production runs L0 control-plane, L1 regional TCP, protected L2
   subscription/direct-VLESS and Host capacity monitoring on an isolated queue.
   Host records aggregate memory, swap, load-per-CPU and OOM count only. The
