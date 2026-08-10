@@ -11,6 +11,10 @@
   same-port status/mirror listeners caused kernel distribution across unequal
   client/flow sets and intermittent Reality failures; consolidating to one
   listener restored repeated Direct and Relay protocol checks to 20/20 each.
+- NL uses persistent `fq` + BBR for new TCP connections. In the same BOT-region
+  1 MiB A/B sample, Direct median increased from about 29.6 to 40.3 Mbps and
+  Relay from about 2.7 to 8.2 Mbps; Relay p95 transfer time fell from about
+  12.0 s to 1.9 s. These are path/canary samples, not promised client ISP speed.
 - Inbound **14** (`🇳🇱 NL Relay`) remains a disabled runtime/control-plane mirror
   with its client and `subId` metadata preserved. `MIRROR_INBOUND_IDS=[14]`
   continues to synchronize add/remove/enable and `subId`; the public Relay link

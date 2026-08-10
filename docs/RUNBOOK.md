@@ -18,10 +18,15 @@ Run from the approved operations environment only.
    the bot scheduler. Do not restart a service as part of a check.
 3. Verify relay-to-NL reachability and subscription TLS/SNI reachability without
    requesting or printing a bearer URL.
-4. Run an approved protected canary E2E only when authorized: import its
+4. Run `ops/scripts/tune_special_nl_tcp.sh verify`: it checks the single NL
+   `:8443` listener plus persistent `fq`/BBR without restarting services.
+5. Run an approved protected canary E2E only when authorized: import its
    protected configuration transiently, make an HTTPS egress check, and remove
-   transient state. A successful TCP connect alone is insufficient.
-5. Compare aggregate membership sets only: entitled bot records, 3x-ui DB/API,
+   transient state. A successful TCP connect alone is insufficient. For
+   repeated Direct/Relay fixed-file A/B samples, run
+   `ops/scripts/benchmark_special_vless.py` inside the isolated monitoring
+   container; never report raw links or canary identifiers.
+6. Compare aggregate membership sets only: entitled bot records, 3x-ui DB/API,
    and Xray runtime. `subId` absent from generated Xray client objects is
    expected; membership drift is not.
 
