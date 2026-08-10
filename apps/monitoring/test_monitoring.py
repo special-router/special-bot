@@ -96,13 +96,13 @@ class BeatScheduleTests(TestCase):
     def test_monitoring_schedules_are_disabled_by_default(self):
         schedule = self._schedule_keys(monitor_enabled=False, l2_enabled=False)
 
-        self.assertEqual(schedule, {'update_user_vpn_daily'})
+        self.assertEqual(schedule, {'update_user_vpn_daily', 'sync_expiry_times_daily'})
 
     def test_l2_schedule_requires_both_monitoring_flags(self):
         without_l2 = self._schedule_keys(monitor_enabled=True, l2_enabled=False)
         with_l2 = self._schedule_keys(monitor_enabled=True, l2_enabled=True)
 
-        self.assertEqual(without_l2, {'special_monitor_l0', 'special_monitor_l1', 'update_user_vpn_daily'})
+        self.assertEqual(without_l2, {'special_monitor_l0', 'special_monitor_l1', 'update_user_vpn_daily', 'sync_expiry_times_daily'})
         self.assertEqual(with_l2, without_l2 | {'special_monitor_l2'})
 
 
