@@ -103,7 +103,11 @@ def subscription_proxy(request, sub_id: str):
     direct_port = params['port']
 
     uuid_str = str(user_vpn.vpn_uuid)
-    flow = 'xtls-rprx-vision'
+    # Preserve the deployed legacy client contract. Most existing control-plane
+    # clients have no Vision flow, and forcing it in the generated subscription
+    # makes those links intermittently land on an incompatible same-port
+    # listener. Vision may be promoted only by an explicit per-client migration.
+    flow = ''
 
     links = []
     # 1) Status entry (non-working) first, matching the happ UX.
