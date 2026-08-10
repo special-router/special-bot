@@ -102,4 +102,5 @@ class Command(BaseCommand):
         client.expiry_time = expiry_ms
         client.email = status_label
         client.enable = enabled
+        client.inbound_id = inbound_id
         await api.client.update(vpn_uuid, client)
