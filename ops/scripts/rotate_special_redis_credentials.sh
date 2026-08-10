@@ -76,7 +76,12 @@ rollback() {
     set -a; source "$owner_env"; set +a
     export REDIS_PASSWORD
     docker compose -p vpn_bot --env-file "$owner_env" -f "$owner_compose" up -d --no-deps --force-recreate redis >/dev/null 2>&1 || true
-    docker compose -f "$app_compose" up -d --no-deps web celery celery_beat monitoring >/dev/null 2>&1 || true
+    RUN_MIGRATIONS=false docker compose -f "$app_compose" up -d --no-deps web celery celery_beat monitoring >/dev/null 2>&1 || true
+    docker compose -f "$app_compose" stop broadcast >/dev/null 2>&1 || true
+    docker compose -f "$app_compose" rm -sf broadcast >/dev/null 2>&1 || true
+    docker run --rm --network vpn_bot_default --env-file .environment redis:7 \
+      sh -c 'redis-cli -u "$REDIS_URL" DEL safe_broadcast_v1 >/dev/null' || true
+    echo "BROADCAST_QUARANTINED: rollback removed broadcast worker and purged safe_broadcast_v1 only; generic celery queue untouched" >&2
     echo "ROLLBACK_ATTEMPTED rc=$rc" >&2
   fi
   unset new_secret
@@ -147,7 +152,7 @@ chmod 600 .environment "$owner_env"
 unset new_secret
 
 # Stop only application processes. PostgreSQL remains untouched throughout.
-docker compose -f "$app_compose" stop web celery celery_beat monitoring >/dev/null
+docker compose -f "$app_compose" stop web celery broadcast celery_beat monitoring >/dev/null
 set -a; source "$owner_env"; set +a
 export REDIS_PASSWORD
 docker compose -p vpn_bot --env-file "$owner_env" -f "$owner_compose" up -d --no-deps --force-recreate redis >/dev/null
@@ -161,7 +166,15 @@ docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" vpn_bot-redis-1 redis-cli ping 2>
 container_secret_hash=$(docker inspect vpn_bot-redis-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | python3 -c 'import hashlib,sys; values=dict(line.rstrip().split("=",1) for line in sys.stdin if "=" in line); print(hashlib.sha256(values.get("REDIS_PASSWORD","").encode()).hexdigest())')
 expected_secret_hash=$(python3 -c 'import hashlib,os; print(hashlib.sha256(os.environ["REDIS_PASSWORD"].encode()).hexdigest())')
 [[ "$container_secret_hash" == "$expected_secret_hash" ]] || { echo 'FAIL: Redis container secret mismatch'; exit 31; }
-docker compose -f "$app_compose" up -d --no-deps web celery celery_beat monitoring >/dev/null
+RUN_MIGRATIONS=false docker compose -f "$app_compose" up -d --no-deps web celery celery_beat monitoring >/dev/null
+if docker run --rm --network vpn_bot_default --env-file .environment \
+  -e DJANGO_SETTINGS_MODULE=bot.settings vpnbot:latest python -c 'import django; django.setup(); from apps.telegram_bot.tasks import safe_broadcast_v1; assert safe_broadcast_v1.name == "apps.telegram_bot.tasks.safe_broadcast_v1"' >/dev/null; then
+  docker compose -f "$app_compose" up -d --no-deps broadcast >/dev/null
+else
+  docker compose -f "$app_compose" stop broadcast >/dev/null 2>&1 || true
+  docker compose -f "$app_compose" rm -sf broadcast >/dev/null 2>&1 || true
+  echo 'BROADCAST_QUARANTINED: image lacks safe_broadcast_v1; worker left stopped' >&2
+fi
 for _ in $(seq 1 30); do
   if docker exec special-bot-web-1 python manage.py audit_legacy_vpn >/tmp/special-redis-audit.out 2>&1; then break; fi
   sleep 2

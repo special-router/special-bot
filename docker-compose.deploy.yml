@@ -8,6 +8,7 @@ services:
     env_file: [.environment]
     environment:
       DJANGO_SETTINGS_MODULE: bot.settings
+      RUN_MIGRATIONS: "false"
     ports:
       - "72.56.23.226:8001:8001"
     restart: unless-stopped
@@ -18,6 +19,16 @@ services:
     env_file: [.environment]
     environment:
       DJANGO_SETTINGS_MODULE: bot.settings
+      RUN_MIGRATIONS: "false"
+    restart: unless-stopped
+
+  broadcast:
+    image: vpnbot:latest
+    command: ["sh", "-c", "./entrypoint.sh celery -A bot.celery_app worker --loglevel=INFO --queues=safe_broadcast_v1 --pool=solo --concurrency=1"]
+    env_file: [.environment]
+    environment:
+      DJANGO_SETTINGS_MODULE: bot.settings
+      RUN_MIGRATIONS: "false"
     restart: unless-stopped
 
   celery_beat:
@@ -26,6 +37,7 @@ services:
     env_file: [.environment]
     environment:
       DJANGO_SETTINGS_MODULE: bot.settings
+      RUN_MIGRATIONS: "false"
     restart: unless-stopped
 
   monitoring:
@@ -34,6 +46,7 @@ services:
     env_file: [.environment]
     environment:
       DJANGO_SETTINGS_MODULE: bot.settings
+      RUN_MIGRATIONS: "false"
       SPECIAL_MONITOR_XRAY_PATH: /usr/local/bin/xray
     restart: unless-stopped
     security_opt:

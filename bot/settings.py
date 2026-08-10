@@ -192,6 +192,7 @@ CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
 CELERY_TASK_ROUTES = {
     'apps.monitoring.tasks.run_protocol_monitor': {'queue': 'monitoring'},
     'apps.monitoring.tasks.run_host_capacity_monitor': {'queue': 'monitoring'},
+    'apps.telegram_bot.tasks.safe_broadcast_v1': {'queue': 'safe_broadcast_v1'},
 }
 
 CELERY_BEAT_SCHEDULE = {

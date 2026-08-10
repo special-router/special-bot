@@ -66,7 +66,20 @@ rollback() {
     cp --preserve=mode "$backup" .environment 2>/dev/null || true
     if [[ -n "$old_image_id" ]]; then
       docker tag "$previous_image" vpnbot:latest 2>/dev/null || true
-      docker compose -f "$compose_file" up -d --no-deps --force-recreate web celery celery_beat monitoring >/dev/null 2>&1 || true
+      docker compose -f "$compose_file" stop broadcast >/dev/null 2>&1 || true
+      docker compose -f "$compose_file" rm -sf broadcast >/dev/null 2>&1 || true
+      docker run --rm --network vpn_bot_default --env-file .environment redis:7 \
+        sh -c 'redis-cli -u "$REDIS_URL" DEL safe_broadcast_v1 >/dev/null' || true
+      echo "BROADCAST_QUARANTINED: rollback removed broadcast worker and purged safe_broadcast_v1 only; generic celery queue untouched" >&2
+      # The restored image predates the safe task.  Bring up exactly one web
+      # process first, wait for it, then restore non-broadcast workers so its
+      # legacy entrypoint can never race migration ownership.
+      RUN_MIGRATIONS=false docker compose -f "$compose_file" up -d --no-deps --force-recreate web >/dev/null 2>&1 || true
+      for _ in $(seq 1 30); do
+        docker exec special-bot-web-1 python manage.py check >/dev/null 2>&1 && break
+        sleep 2
+      done
+      RUN_MIGRATIONS=false docker compose -f "$compose_file" up -d --no-deps --force-recreate celery celery_beat monitoring >/dev/null 2>&1 || true
     fi
     echo "ROLLBACK_ATTEMPTED rc=$rc" >&2
   fi
@@ -86,7 +99,18 @@ rm -f /tmp/special-pre-audit.out
 chmod 600 .environment
 
 docker build -t vpnbot:latest .
+# This one-shot command is the sole migration owner; all long-running services
+# have RUN_MIGRATIONS=false in Compose.
+docker compose -f "$compose_file" run --rm -e RUN_MIGRATIONS=false web python manage.py migrate --noinput
 docker compose -f "$compose_file" up -d --no-deps --force-recreate web celery celery_beat monitoring
+if docker run --rm --network vpn_bot_default --env-file .environment \
+  -e DJANGO_SETTINGS_MODULE=bot.settings vpnbot:latest python -c 'import django; django.setup(); from apps.telegram_bot.tasks import safe_broadcast_v1; assert safe_broadcast_v1.name == "apps.telegram_bot.tasks.safe_broadcast_v1"' >/dev/null; then
+  docker compose -f "$compose_file" up -d --no-deps --force-recreate broadcast
+else
+  docker compose -f "$compose_file" stop broadcast >/dev/null 2>&1 || true
+  docker compose -f "$compose_file" rm -sf broadcast >/dev/null 2>&1 || true
+  echo 'BROADCAST_QUARANTINED: deployed image lacks safe_broadcast_v1; worker left stopped' >&2
+fi
 
 timeout 90 docker exec special-bot-web-1 python manage.py audit_legacy_vpn >/tmp/special-post-audit.out 2>&1
 post_audit=$(tail -1 /tmp/special-post-audit.out)

@@ -1,0 +1,21 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<h1>{{ heading }}</h1>
+<p>{{ warning }}</p>
+<section>
+  <p><strong>Заголовок:</strong> {{ broadcast.title }}</p>
+  <p><strong>Сообщение:</strong></p>
+  <pre style="white-space: pre-wrap">{{ broadcast.message }}</pre>
+  <p><strong>Аудитория:</strong> {{ broadcast.get_audience_display }}</p>
+  <p><strong>Кнопка «Открыть мою подписку»:</strong> {% if broadcast.include_subscription_button %}включена{% else %}выключена{% endif %}</p>
+  <p><strong>Получателей:</strong> {{ recipient_count }}</p>
+</section>
+<form method="post">{% csrf_token %}
+  <input type="hidden" name="action" value="{{ action }}">
+  <input type="hidden" name="post" value="yes">
+  <input type="hidden" name="confirmation_digest" value="{{ confirmation_digest }}">
+  <input type="hidden" name="_selected_action" value="{{ broadcast.pk }}">
+  <input type="submit" value="Подтвердить" class="default">
+  <button type="submit" name="cancel" value="yes" class="button cancel-link">Отмена и удалить снимок</button>
+</form>
+{% endblock %}

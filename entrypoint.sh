@@ -20,8 +20,11 @@ PY
   done
 fi
 
-# Run migrations
-python manage.py migrate --noinput
+# Development keeps the historical auto-migrate behavior. Deployment runs one
+# dedicated migration container, then starts every app service with this disabled.
+if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
+  python manage.py migrate --noinput
+fi
 
 # Collect static (noop if not configured)
 python manage.py collectstatic --noinput || true

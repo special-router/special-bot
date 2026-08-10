@@ -28,6 +28,27 @@ services:
     volumes:
       - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
 
+  migrate:
+    profiles: ["migrate"]
+    build: .
+    image: vpnbot:latest
+    command: ["sh", "-c", "./entrypoint.sh python manage.py migrate --noinput"]
+    env_file:
+      - .environment
+    environment:
+      DJANGO_SETTINGS_MODULE: bot.settings
+      RUN_MIGRATIONS: "false"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-vpnbot}
+      POSTGRES_USER: ${POSTGRES_USER:-vpnbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vpnbot}
+      DATABASE_URL: postgres://${POSTGRES_USER:-vpnbot}:${POSTGRES_PASSWORD:-vpnbot}@postgres:5432/${POSTGRES_DB:-vpnbot}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+
   web:
     build: .
     image: vpnbot:latest
@@ -36,6 +57,7 @@ services:
       - .environment
     environment:
       DJANGO_SETTINGS_MODULE: bot.settings
+      RUN_MIGRATIONS: "false"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-vpnbot}
@@ -55,6 +77,7 @@ services:
       - .environment
     environment:
       DJANGO_SETTINGS_MODULE: bot.settings
+      RUN_MIGRATIONS: "false"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-vpnbot}
@@ -76,11 +99,27 @@ services:
       - .environment
     environment:
       DJANGO_SETTINGS_MODULE: bot.settings
+      RUN_MIGRATIONS: "false"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-vpnbot}
       POSTGRES_USER: ${POSTGRES_USER:-vpnbot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vpnbot}
+      DATABASE_URL: postgres://${POSTGRES_USER:-vpnbot}:${POSTGRES_PASSWORD:-vpnbot}@postgres:5432/${POSTGRES_DB:-vpnbot}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+
+  broadcast:
+    image: vpnbot:latest
+    build: .
+    command: ["sh", "-c", "./entrypoint.sh celery -A bot.celery_app worker --loglevel=INFO --queues=safe_broadcast_v1 --pool=solo --concurrency=1"]
+    env_file:
+      - .environment
+    environment:
+      DJANGO_SETTINGS_MODULE: bot.settings
+      RUN_MIGRATIONS: "false"
       DATABASE_URL: postgres://${POSTGRES_USER:-vpnbot}:${POSTGRES_PASSWORD:-vpnbot}@postgres:5432/${POSTGRES_DB:-vpnbot}
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
     depends_on:
@@ -95,6 +134,7 @@ services:
       - .environment
     environment:
       DJANGO_SETTINGS_MODULE: bot.settings
+      RUN_MIGRATIONS: "false"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-vpnbot}
@@ -119,6 +159,7 @@ services:
       - .environment
     environment:
       DJANGO_SETTINGS_MODULE: bot.settings
+      RUN_MIGRATIONS: "false"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-vpnbot}

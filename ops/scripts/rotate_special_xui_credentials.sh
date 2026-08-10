@@ -90,7 +90,12 @@ Server.objects.filter(id=int(data["id"])).update(
 )
 ' >/dev/null 2>&1 || true
 fi
-docker compose -f docker-compose.deploy.yml up -d --no-deps web celery celery_beat monitoring >/dev/null 2>&1 || true
+RUN_MIGRATIONS=false docker compose -f docker-compose.deploy.yml up -d --no-deps web celery celery_beat monitoring >/dev/null 2>&1 || true
+    docker compose -f docker-compose.deploy.yml stop broadcast >/dev/null 2>&1 || true
+    docker compose -f docker-compose.deploy.yml rm -sf broadcast >/dev/null 2>&1 || true
+    docker run --rm --network vpn_bot_default --env-file .environment redis:7 \
+      sh -c 'redis-cli -u "$REDIS_URL" DEL safe_broadcast_v1 >/dev/null' || true
+    echo "BROADCAST_QUARANTINED: rollback removed broadcast worker and purged safe_broadcast_v1 only; generic celery queue untouched" >&2
 BOTROLLBACK
     echo "ROLLBACK_ATTEMPTED rc=$rc" >&2
   fi
@@ -150,7 +155,7 @@ print(json.dumps({
 }))
 " > "$backup"
 chmod 600 "$backup"
-docker compose -f docker-compose.deploy.yml stop web celery celery_beat monitoring >/dev/null
+docker compose -f docker-compose.deploy.yml stop web celery broadcast celery_beat monitoring >/dev/null
 BOTPREP
 
 ssh "${SSH_OPTIONS[@]}" "$NL" bash -s -- "$NL_BUNDLE" "$NL_BACKUP" <<'NLUPDATE'
@@ -200,7 +205,15 @@ server.vpn_password = data['password']
 server.vpn_url = urlunsplit((parts.scheme, parts.netloc, data['web_path'], '', ''))
 server.save(update_fields=['vpn_username', 'vpn_password', 'vpn_url', 'updated_at'])
 " >/dev/null
-docker compose -f docker-compose.deploy.yml up -d --no-deps web celery celery_beat monitoring >/dev/null
+RUN_MIGRATIONS=false docker compose -f docker-compose.deploy.yml up -d --no-deps web celery celery_beat monitoring >/dev/null
+if docker run --rm --network vpn_bot_default --env-file .environment \
+  -e DJANGO_SETTINGS_MODULE=bot.settings vpnbot:latest python -c 'import django; django.setup(); from apps.telegram_bot.tasks import safe_broadcast_v1; assert safe_broadcast_v1.name == "apps.telegram_bot.tasks.safe_broadcast_v1"' >/dev/null; then
+  docker compose -f docker-compose.deploy.yml up -d --no-deps broadcast >/dev/null
+else
+  docker compose -f docker-compose.deploy.yml stop broadcast >/dev/null 2>&1 || true
+  docker compose -f docker-compose.deploy.yml rm -sf broadcast >/dev/null 2>&1 || true
+  echo 'BROADCAST_QUARANTINED: image lacks safe_broadcast_v1; worker left stopped' >&2
+fi
 for _ in $(seq 1 30); do
   if docker exec special-bot-web-1 python manage.py audit_legacy_vpn >/tmp/special-rotation-audit.out 2>&1; then
     break
