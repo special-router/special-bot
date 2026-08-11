@@ -64,12 +64,13 @@ def _get_params(server_id: int, inbound_id: int) -> dict:
     return params
 
 
-def _build_vless(uuid: str, host: str, port: int, remark: str, params: dict, flow: str = '') -> str:
+def _build_vless(uuid: str, host: str, port: int, remark: str, params: dict, flow: str = '',
+                  fingerprint: str = 'chrome') -> str:
     from urllib.parse import quote
     network = params.get('network', 'tcp')
     query = (
         f"type={network}&security=reality&pbk={params['public_key']}"
-        f"&fp=chrome&sni={params['server_name']}&sid={params['short_ids'][0]}&spx=%2F"
+        f"&fp={fingerprint}&sni={params['server_name']}&sid={params['short_ids'][0]}&spx=%2F"
     )
     if flow:
         query = f"flow={flow}&" + query
@@ -177,6 +178,7 @@ def _backup_links(user_vpn_id: int, uuid_str: str) -> list[str] | None:
         links.append(_build_vless(
             ep['uuid'], ep['host'], ep['port'], ep['label'],
             params, flow=ep.get('flow', ''),
+            fingerprint=ep.get('fp', 'chrome'),
         ))
     return links
 
