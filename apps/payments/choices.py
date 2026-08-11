@@ -14,3 +14,4 @@ class TransactionSourceChoices(models.TextChoices):
     BUY = 'BUY', 'Покупка'
     MANUAL = 'MANUAL', 'Руками проставили'
     REFERRAL = 'REFERRAL', 'Реферальная система'
+    COMPENSATION = 'COMPENSATION', 'Компенсация простоя'

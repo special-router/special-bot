@@ -76,3 +76,29 @@ class Transaction(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - {self.amount} - {self.status}"
+
+
+class CompensationGrant(models.Model):
+    """One auditable grant per user for each named outage campaign."""
+
+    campaign = models.SlugField(max_length=64)
+    user = models.ForeignKey(
+        'users.TelegramUser',
+        on_delete=models.PROTECT,
+        related_name='compensation_grants',
+    )
+    amount = models.DecimalField('Сумма', max_digits=10, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Компенсационное начисление'
+        verbose_name_plural = 'Компенсационные начисления'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['campaign', 'user'],
+                name='unique_compensation_grant_per_campaign_user',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.campaign} - {self.user_id} - {self.amount}'

@@ -53,10 +53,10 @@ class APIVPNClient:
         # Retained canary identities are disabled rather than deleted so a
         # later reactivation cannot infer or recreate target ownership.
         await sync_internal_memberships(self._api, user_vpn, enabled=False)
-        await self._api.client.delete(self._server.inbound_id, user_vpn.vpn_uuid)
+        await self._api.inbound.delete_client_by_uuid(self._server.inbound_id, user_vpn.vpn_uuid)
         for inbound_id in self._mirror_inbound_ids():
             try:
-                await self._api.client.delete(inbound_id, user_vpn.vpn_uuid)
+                await self._api.inbound.delete_client_by_uuid(inbound_id, user_vpn.vpn_uuid)
             except Exception:
                 pass
 
