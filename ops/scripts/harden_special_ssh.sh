@@ -292,11 +292,13 @@ rollback_unit=$1
 operator_user=$2
 systemctl stop "$rollback_unit.timer"
 test "$(systemctl is-active "$rollback_unit.timer" || true)" != active
-systemctl reset-failed "$rollback_unit.timer" "$rollback_unit.service" >/dev/null 2>&1 || true
-if [[ -n $(systemctl show "$rollback_unit.service" -p ExecMainStartTimestamp --value 2>/dev/null || true) ]]; then
-  echo 'BLOCK: rollback watchdog already fired' >&2
+if systemctl list-jobs --no-legend "$rollback_unit.service" 2>/dev/null | grep -q . || \
+   [[ $(systemctl is-active "$rollback_unit.service" || true) == active ]] || \
+   [[ -n $(systemctl show "$rollback_unit.service" -p ExecMainStartTimestamp --value 2>/dev/null || true) ]]; then
+  echo 'BLOCK: rollback watchdog already fired or is queued' >&2
   exit 43
 fi
+systemctl reset-failed "$rollback_unit.timer" "$rollback_unit.service" >/dev/null 2>&1 || true
 read -r client_ip client_port server_ip server_port <<<"${SSH_CONNECTION:?missing SSH_CONNECTION}"
 for user in "$operator_user" root; do
   effective=$(/usr/sbin/sshd -T -C "user=$user,addr=$client_ip,host=$client_ip,laddr=$server_ip,lport=$server_port")
