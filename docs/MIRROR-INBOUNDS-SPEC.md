@@ -46,8 +46,8 @@ subscription links.
 
 Add **external backup VPN service** endpoints to the subscription so a
 client whose SPECIAL endpoint is blocked or down can switch to a reserve
-provider without re-importing. One UUID per backup service, rendered as
-additional VLESS lines.
+provider without re-importing. Opaque provider-owned VLESS lines are rendered
+as additional entries without local URI reconstruction.
 
 ## What a mirror IS (new definition)
 
@@ -78,29 +78,38 @@ Render order:
 
 ### Backup service configuration
 
-Each backup service is configured by an operator (not auto-discovered):
+Each backup subscription is configured by an operator through a mode-0600 JSON
+secret file on a host path **outside this repository and Docker build context**.
+For example, create `/etc/special-bot/subscription-backup.json` with mode 0600:
 
-```python
-SUBSCRIPTION_BACKUP_ENDPOINTS = [
-    {
-        "label": "🟢 Backup EU",
-        "host": "<backup-host>",
-        "port": 443,
-        "uuid": "<backup-service-uuid>",
-        "type": "tcp",
-        "security": "reality",
-        "pbk": "<public-key>",
-        "sni": "<server-name>",
-        "sid": "<short-id>",
-        "flow": "",
-    },
-    ...
-]
+```json
+{"upstream_urls": ["https://provider.example.invalid/opaque-subscription-SYNTHETIC"]}
 ```
 
-The renderer iterates this list and appends a VLESS link per entry. No
-per-inbound 3x-ui API call needed — the params are static and
-operator-provisioned.
+Set only the host path and rollout controls in ignored `.environment`:
+
+```dotenv
+SUBSCRIPTION_BACKUP_SECRET_HOST_PATH=/etc/special-bot/subscription-backup.json
+SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=false
+SUBSCRIPTION_BACKUP_TEST_USER_IDS=[]
+SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS=["provider.example.invalid"]
+SUBSCRIPTION_BACKUP_CONNECT_TIMEOUT_SECONDS=3
+SUBSCRIPTION_BACKUP_READ_TIMEOUT_SECONDS=5
+SUBSCRIPTION_BACKUP_RESPONSE_MAX_BYTES=262144
+SUBSCRIPTION_BACKUP_CACHE_TTL_SECONDS=300
+```
+
+The backup secret mount is optional while the feature is disabled: Compose
+binds `/dev/null` when `SUBSCRIPTION_BACKUP_SECRET_HOST_PATH` is unset. The
+application rejects that nonregular device (and any missing or malformed file)
+and accepts only a regular 0600 file whose JSON root is an object containing
+`upstream_urls` as `list[str]`. The renderer fetches each configured
+subscription within bounded time and size
+limits, accepts plain newline-separated or standard-base64 payloads, filters
+only coarse sentinel entries, and appends accepted `vless://` lines unchanged.
+It never parses or rebuilds provider URI query parameters or fragments. Rotate
+or revoke a provider bearer immediately with the provider and replace the host
+secret file; never store provider lines or bearer URLs in Git.
 
 ### Feature gate
 
@@ -147,8 +156,12 @@ production `.environment` and the test subscription reverted to 3 lines.
 - **Legacy contract preserved** — flag defaults false; all existing
   subscribers see 3-line subscription until backup endpoints are
   provisioned and tested.
-- **No secret exposure** — backup endpoint params are public VLESS
-  parameters (pbk/sid/sni are public); UUIDs are per-service.
+- **No secret exposure** — bearer URLs, provider UUIDs, raw payloads and raw
+  VLESS lines remain in the host secret file, must not be logged, documented,
+  or stored in Git, and are rotated/revoked through the provider.
+- **Least privilege** — local Compose mounts the secret only in `django_web`
+  (the HTTP service). The deploy Compose service still combines Gunicorn and
+  the bot process, so it retains this residual least-privilege limitation.
 - **Operator-owned** — each backup service has an accountable owner; not
   auto-discovered from competitor research.
 

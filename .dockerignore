@@ -1,6 +1,12 @@
 .environment
+.environment*
 .env
 .env.*
+subscription-backup.json
+*subscription-backup*
+*subscription_backup*
+*backup-subscription*
+*backup_subscription*
 .git
 .pi-subagents
 .pytest_cache

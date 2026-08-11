@@ -85,6 +85,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vpnbot}
       DATABASE_URL: postgres://${POSTGRES_USER:-vpnbot}:${POSTGRES_PASSWORD:-vpnbot}@postgres:5432/${POSTGRES_DB:-vpnbot}
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+      SUBSCRIPTION_BACKUP_SECRET_FILE: /run/secrets/subscription-backup.json
+    volumes:
+      - ${SUBSCRIPTION_BACKUP_SECRET_HOST_PATH:-/dev/null}:/run/secrets/subscription-backup.json:ro
     ports:
       - "8000:8000"
     depends_on:

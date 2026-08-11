@@ -99,6 +99,13 @@ celerybeat-schedule.*
 
 # Environments
 .env
+.environment
+.environment*
+subscription-backup.json
+*subscription-backup*
+*subscription_backup*
+*backup-subscription*
+*backup_subscription*
 .venv
 env/
 venv/

@@ -13,8 +13,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
+import hashlib
+import ipaddress
+import socket
+import ssl
+import subprocess
+import threading
 import time
 from functools import lru_cache
+from urllib.parse import unquote_to_bytes, urlsplit
 
 from django.http import HttpResponse, HttpResponseNotFound
 from django.views.decorators.csrf import csrf_exempt
@@ -83,10 +91,10 @@ def subscription_proxy(request, sub_id: str):
     try:
         user_vpn = UserVPN.objects.select_related('server', 'user').get(sub_id=sub_id)
     except UserVPN.DoesNotExist:
-        return HttpResponseNotFound()
+        return _no_cache_response(HttpResponseNotFound())
 
     if not user_vpn.enabled:
-        return HttpResponseNotFound()
+        return _no_cache_response(HttpResponseNotFound())
 
     server = user_vpn.server
     params = _get_params(server.id, server.inbound_id)
@@ -119,9 +127,7 @@ def subscription_proxy(request, sub_id: str):
     # 2) Direct NL primary.
     links.append(_build_vless(uuid_str, direct_host, direct_port, '🇳🇱 NL Direct', params, flow=flow))
     # 3) External backup endpoints (feature-gated test group).
-    backup_links = _backup_links(
-        user_vpn.id, uuid_str,
-    ) if _is_backup_test_user(user_vpn.id) else None
+    backup_links = _backup_links() if _is_backup_test_user(user_vpn.id) else None
     if backup_links:
         links.extend(backup_links)
     # 4) RU relay (only if configured).
@@ -133,7 +139,14 @@ def subscription_proxy(request, sub_id: str):
     resp = HttpResponse(encoded, content_type='text/plain')
     resp['Profile-Update-Interval'] = '12'
     resp['Subscription-Userinfo'] = f'upload=0; download=0; total=0; expire=0'
-    return resp
+    return _no_cache_response(resp)
+
+
+def _no_cache_response(response: HttpResponse) -> HttpResponse:
+    """Prevent bearer subscription responses, including 404s, from being stored."""
+    response['Cache-Control'] = 'private, no-store'
+    response['Pragma'] = 'no-cache'
+    return response
 
 
 def _endpoint(client_vpn_host: str, default_port: int) -> tuple[str, int]:
@@ -147,40 +160,391 @@ def _is_backup_test_user(user_vpn_id: int) -> bool:
     from django.conf import settings
     if not getattr(settings, 'SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED', False):
         return False
-    test_ids = getattr(settings, 'SUBSCRIPTION_BACKUP_TEST_USER_IDS', []) or []
-    # Empty allowlist during rollout = no one receives backups yet.
-    return bool(test_ids) and user_vpn_id in test_ids
+    test_ids = getattr(settings, 'SUBSCRIPTION_BACKUP_TEST_USER_IDS', [])
+    # Empty or malformed allowlists during rollout = no one receives backups.
+    return isinstance(test_ids, list) and bool(test_ids) and user_vpn_id in test_ids
 
 
-def _backup_links(user_vpn_id: int, uuid_str: str) -> list[str] | None:
-    """Render external backup service VLESS links for the test group.
+# Hard caps prevent a provider response or settings error from growing a normal
+# subscription refresh without bound. Cache keys are digests, never bearer URLs.
+_BACKUP_RESPONSE_HARD_MAX_BYTES = 1024 * 1024
+_BACKUP_CACHE_HARD_MAX_ENTRIES = 32
+_BACKUP_CACHE: dict[str, tuple[float, list[str]]] = {}
+_BACKUP_CACHE_LOCK = threading.RLock()
+_BACKUP_FETCHING: dict[str, threading.Event] = {}
+_BACKUP_CACHE_GENERATION = 0
 
-    Backup endpoints are external VPN services (MORI, etc.), NOT our own
-    3x-ui ports. Each entry is a static, operator-provisioned VLESS Reality
-    endpoint. See docs/MIRROR-INBOUNDS-SPEC.md.
-    """
+
+def _backup_links() -> list[str] | None:
+    """Return a bounded, stable-deduplicated aggregate of opaque VLESS lines."""
     from django.conf import settings
     if not getattr(settings, 'SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED', False):
+        _clear_backup_cache()
         return None
-    endpoints = getattr(settings, 'SUBSCRIPTION_BACKUP_ENDPOINTS', []) or []
-    if not endpoints:
+    urls = getattr(settings, 'SUBSCRIPTION_BACKUP_UPSTREAM_URLS', [])
+    if not isinstance(urls, list):
+        _clear_backup_cache()
         return None
+
+    source_limit = int(_bounded_number(
+        getattr(settings, 'SUBSCRIPTION_BACKUP_MAX_SOURCES', 8), default=8, lower=1, upper=32))
+    valid_urls = [url for url in urls if isinstance(url, str) and _valid_upstream_url(url)][:source_limit]
+    if not valid_urls:
+        _clear_backup_cache()
+        return None
+    _evict_backup_cache({_backup_cache_key(url) for url in valid_urls})
+    line_limit = int(_bounded_number(
+        getattr(settings, 'SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES', 128), default=128, lower=1, upper=2048))
+    byte_limit = int(_bounded_number(
+        getattr(settings, 'SUBSCRIPTION_BACKUP_AGGREGATE_MAX_BYTES', 262144), default=262144,
+        lower=1, upper=_BACKUP_RESPONSE_HARD_MAX_BYTES))
+    links, seen, total_bytes = [], set(), 0
+    for url in valid_urls:
+        for link in _cached_upstream_links(url):
+            encoded = link.encode('utf-8')
+            if link in seen or len(links) >= line_limit or total_bytes + len(encoded) > byte_limit:
+                continue
+            seen.add(link)
+            links.append(link)
+            total_bytes += len(encoded)
+    return links or None
+
+
+def _backup_cache_key(url: str) -> str:
+    return hashlib.sha256(url.encode('utf-8')).hexdigest()
+
+
+def _clear_backup_cache() -> None:
+    global _BACKUP_CACHE_GENERATION
+    with _BACKUP_CACHE_LOCK:
+        _BACKUP_CACHE.clear()
+        _BACKUP_CACHE_GENERATION += 1
+
+
+def _evict_backup_cache(active_keys: set[str]) -> None:
+    now = time.monotonic()
+    with _BACKUP_CACHE_LOCK:
+        for key, (expiry, _links) in list(_BACKUP_CACHE.items()):
+            if expiry <= now or key not in active_keys:
+                _BACKUP_CACHE.pop(key, None)
+        while len(_BACKUP_CACHE) > _BACKUP_CACHE_HARD_MAX_ENTRIES:
+            _BACKUP_CACHE.pop(next(iter(_BACKUP_CACHE)), None)
+
+
+def _cached_upstream_links(url: str) -> list[str]:
+    """Fetch one upstream and cache only a current, validated result."""
+    from django.conf import settings
+    key = _backup_cache_key(url)
+    now = time.monotonic()
+    with _BACKUP_CACHE_LOCK:
+        cached = _BACKUP_CACHE.get(key)
+        if cached and cached[0] > now:
+            return cached[1]
+        if cached:
+            _BACKUP_CACHE.pop(key, None)
+        in_flight = _BACKUP_FETCHING.get(key)
+        if in_flight is None:
+            in_flight = threading.Event()
+            _BACKUP_FETCHING[key] = in_flight
+            generation = _BACKUP_CACHE_GENERATION
+            fetcher = True
+        else:
+            fetcher = False
+
+    if not fetcher:
+        in_flight.wait()
+        with _BACKUP_CACHE_LOCK:
+            cached = _BACKUP_CACHE.get(key)
+            return cached[1] if cached and cached[0] > time.monotonic() else []
+
+    try:
+        links = _sanitize_upstream_payload(_fetch_upstream_payload(url))
+        if not links:
+            return []
+        ttl = _bounded_number(getattr(settings, 'SUBSCRIPTION_BACKUP_CACHE_TTL_SECONDS', 300),
+                              default=300, lower=1, upper=3600)
+        # Start TTL only after all network and payload validation has succeeded.
+        with _BACKUP_CACHE_LOCK:
+            if generation != _BACKUP_CACHE_GENERATION:
+                return []
+            _BACKUP_CACHE[key] = (time.monotonic() + ttl, links)
+            active_keys = set(_BACKUP_CACHE)
+        _evict_backup_cache(active_keys)
+        return links
+    except (ValueError, UnicodeError, OSError):
+        return []
+    finally:
+        with _BACKUP_CACHE_LOCK:
+            _BACKUP_FETCHING.pop(key, None)
+            in_flight.set()
+
+
+def _is_public_unicast(address: str) -> bool:
+    """Accept only ordinary public unicast addresses, never special ranges."""
+    try:
+        parsed = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return not any((
+        parsed.is_multicast,
+        parsed.is_unspecified,
+        parsed.is_loopback,
+        parsed.is_link_local,
+        parsed.is_private,
+        parsed.is_reserved,
+        not parsed.is_global,
+    ))
+
+
+_DNS_RESOLVER_COMMAND = ('getent',)
+
+
+def _resolve_public_upstream(url: str, deadline: float) -> set[str]:
+    """Resolve A/AAAA records in killable children within an absolute deadline.
+
+    ``getent`` uses the host's configured NSS resolver but runs outside the web
+    worker. ``subprocess.run(timeout=...)`` kills and reaps it on expiry, unlike
+    an in-process ``socket.getaddrinfo`` call that cannot be cancelled safely.
+    """
+    try:
+        parsed = urlsplit(url)
+        host, port = parsed.hostname, parsed.port or 443
+        addresses = set()
+        for database, family in (('ahostsv4', 4), ('ahostsv6', 6)):
+            result = subprocess.run(
+                (*_DNS_RESOLVER_COMMAND, database, host),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=_remaining_timeout(deadline, maximum=60),
+                check=False,
+            )
+            for line in result.stdout.splitlines():
+                candidate = line.split(maxsplit=1)[0] if line else ''
+                try:
+                    address = ipaddress.ip_address(candidate)
+                except ValueError:
+                    continue
+                if address.version == family:
+                    addresses.add(str(address))
+        if not addresses or any(not _is_public_unicast(address) for address in addresses):
+            raise ValueError('unsafe_upstream_destination')
+        return addresses
+    except (TypeError, ValueError, OSError, subprocess.TimeoutExpired):
+        raise ValueError('unsafe_upstream_destination') from None
+
+
+def _chosen_upstream_ip(addresses: set[str]) -> str:
+    """Select a validated DNS answer deterministically (IPv4 before IPv6)."""
+    return min(addresses, key=lambda address: (ipaddress.ip_address(address).version,
+                                                int(ipaddress.ip_address(address))))
+
+
+def _remaining_timeout(deadline: float, maximum: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ValueError('upstream_fetch_deadline')
+    return min(maximum, remaining)
+
+
+def _host_header(host: str, port: int) -> str:
+    return host if port == 443 else f'{host}:{port}'
+
+
+def _fetch_upstream_payload(url: str) -> bytes:
+    """Fetch identity bytes over TLS pinned to one pre-resolved public IP.
+
+    A single absolute monotonic deadline starts before DNS. Every blocking
+    receive is bounded by the remaining time, so a slow-drip response cannot
+    extend the request by repeatedly resetting a per-read timeout.
+    """
+    from django.conf import settings
+    deadline_seconds = _bounded_number(getattr(settings, 'SUBSCRIPTION_BACKUP_FETCH_DEADLINE_SECONDS', 8),
+                                       default=8, lower=0.1, upper=60)
+    deadline = time.monotonic() + deadline_seconds
+    parsed = urlsplit(url)
+    host, port = parsed.hostname, parsed.port or 443
+    addresses = _resolve_public_upstream(url, deadline)
+    destination = _chosen_upstream_ip(addresses)
+    connect_timeout = _bounded_number(getattr(settings, 'SUBSCRIPTION_BACKUP_CONNECT_TIMEOUT_SECONDS', 3),
+                                      default=3, lower=0.1, upper=30)
+    read_timeout = _bounded_number(getattr(settings, 'SUBSCRIPTION_BACKUP_READ_TIMEOUT_SECONDS', 5),
+                                   default=5, lower=0.1, upper=30)
+    max_bytes = int(_bounded_number(getattr(settings, 'SUBSCRIPTION_BACKUP_RESPONSE_MAX_BYTES', 262144),
+                                    default=262144, lower=1, upper=_BACKUP_RESPONSE_HARD_MAX_BYTES))
+    target = parsed.path or '/'
+    if parsed.query:
+        target = f'{target}?{parsed.query}'
+    raw_socket = tls_socket = None
+    try:
+        raw_socket = socket.create_connection(
+            (destination, port), timeout=_remaining_timeout(deadline, connect_timeout))
+        context = ssl.create_default_context()
+        raw_socket.settimeout(_remaining_timeout(deadline, connect_timeout))
+        tls_socket = context.wrap_socket(raw_socket, server_hostname=host)
+        tls_socket.settimeout(_remaining_timeout(deadline, read_timeout))
+        peer_ip = tls_socket.getpeername()[0]
+        if (ipaddress.ip_address(peer_ip) != ipaddress.ip_address(destination)
+                or not _is_public_unicast(peer_ip)):
+            raise ValueError('upstream_peer_mismatch')
+
+        request = (
+            f'GET {target} HTTP/1.1\r\n'
+            f'Host: {_host_header(host, port)}\r\n'
+            'User-Agent: SPECIAL-subscription-backup/1\r\n'
+            'Accept-Encoding: identity\r\n'
+            'Connection: close\r\n\r\n'
+        ).encode('ascii')
+        tls_socket.sendall(request)
+        status, headers, body = _read_upstream_response(
+            tls_socket, deadline, read_timeout, max_bytes)
+        if status != 200:
+            raise ValueError('upstream_http_status')
+        encoding = headers.get('content-encoding', '').strip().lower()
+        if encoding not in ('', 'identity'):
+            raise ValueError('upstream_compressed_response')
+        if headers.get('transfer-encoding', '').strip().lower() not in ('', 'identity'):
+            raise ValueError('upstream_unsupported_transfer_encoding')
+        declared = headers.get('content-length')
+        try:
+            declared_size = int(declared) if declared is not None else None
+        except (TypeError, ValueError):
+            raise ValueError('upstream_response_too_large') from None
+        if declared_size is not None and (declared_size < 0 or declared_size > max_bytes):
+            raise ValueError('upstream_response_too_large')
+        if len(body) > max_bytes:
+            raise ValueError('upstream_response_too_large')
+        if declared_size is not None and len(body) != declared_size:
+            raise ValueError('upstream_incomplete_response')
+        return bytes(body)
+    finally:
+        if tls_socket is not None:
+            tls_socket.close()
+        elif raw_socket is not None:
+            raw_socket.close()
+
+
+def _read_upstream_response(socket_, deadline: float, read_timeout: float,
+                            max_bytes: int) -> tuple[int, dict[str, str], bytearray]:
+    """Read HTTP/1.1 with deadline-bounded single recv calls.
+
+    HTTPResponse's buffered header parsing can issue several socket reads without
+    an opportunity to recompute the absolute timeout. This small identity-only
+    reader keeps that invariant for both headers and body.
+    """
+    raw = bytearray()
+    header_limit = 64 * 1024
+    while b'\r\n\r\n' not in raw:
+        if len(raw) > header_limit:
+            raise ValueError('upstream_headers_too_large')
+        socket_.settimeout(_remaining_timeout(deadline, read_timeout))
+        chunk = socket_.recv(8192)
+        if not chunk:
+            raise ValueError('upstream_incomplete_response')
+        raw.extend(chunk)
+    raw_headers, body = raw.split(b'\r\n\r\n', 1)
+    try:
+        lines = raw_headers.decode('iso-8859-1').split('\r\n')
+        _protocol, status, _reason = lines[0].split(' ', 2)
+        headers = {}
+        for line in lines[1:]:
+            name, value = line.split(':', 1)
+            headers[name.casefold()] = value.strip()
+    except (UnicodeDecodeError, ValueError):
+        raise ValueError('upstream_invalid_response') from None
+
+    declared = headers.get('content-length')
+    try:
+        expected_size = int(declared) if declared is not None else None
+    except ValueError:
+        raise ValueError('upstream_response_too_large') from None
+    if expected_size is not None and (expected_size < 0 or expected_size > max_bytes):
+        raise ValueError('upstream_response_too_large')
+    while expected_size is None or len(body) < expected_size:
+        socket_.settimeout(_remaining_timeout(deadline, read_timeout))
+        chunk = socket_.recv(min(8192, max_bytes - len(body) + 1))
+        if not chunk:
+            break
+        body.extend(chunk)
+        if len(body) > max_bytes:
+            raise ValueError('upstream_response_too_large')
+    return int(status), headers, body
+
+
+def _sanitize_upstream_payload(payload: bytes) -> list[str]:
+    """Decode payload framing while retaining accepted VLESS line bytes exactly."""
+    decoded = _decode_subscription_payload(payload)
     links = []
-    for ep in endpoints:
-        params = {
-            'public_key': ep['pbk'],
-            'server_name': ep['sni'],
-            'short_ids': [ep['sid']],
-            'port': ep['port'],
-            'network': ep.get('type', 'tcp'),
-            'inbound_id': 0,
-        }
-        links.append(_build_vless(
-            ep['uuid'], ep['host'], ep['port'], ep['label'],
-            params, flow=ep.get('flow', ''),
-            fingerprint=ep.get('fp', 'chrome'),
-        ))
+    for raw_line in decoded.splitlines():
+        if not raw_line.startswith(b'vless://') or _is_sentinel_vless_line(raw_line):
+            continue
+        links.append(raw_line.decode('utf-8'))
     return links
+
+
+def _decode_subscription_payload(payload: bytes) -> bytes:
+    compact = b''.join(payload.split())
+    if not compact:
+        raise ValueError('empty_upstream_payload')
+    try:
+        return base64.b64decode(compact, validate=True)
+    except (binascii.Error, ValueError):
+        return payload
+
+
+def _is_sentinel_vless_line(raw_line: bytes) -> bool:
+    """Reject only exact, normalized marker remarks and unsafe literal hosts."""
+    try:
+        parsed = urlsplit(raw_line.decode('utf-8'))
+        host = parsed.hostname
+        if not host or host.lower() == 'localhost':
+            return True
+        try:
+            literal = ipaddress.ip_address(host)
+        except ValueError:
+            literal = None
+        if literal and (literal.is_private or literal.is_loopback or literal.is_unspecified):
+            return True
+        fragment = unquote_to_bytes(parsed.fragment).decode('utf-8').strip().casefold()
+    except (UnicodeDecodeError, ValueError):
+        return True
+    return fragment in {'dummy', 'expired', 'non-working', 'nonworking', 'subscription expired'}
+
+
+def _valid_upstream_url(url: str) -> bool:
+    """Accept only allowlisted HTTPS DNS names with a valid optional port."""
+    from django.conf import settings
+    try:
+        parsed = urlsplit(url)
+        if (parsed.scheme != 'https' or not parsed.hostname or parsed.username
+                or parsed.password or parsed.fragment):
+            return False
+        # Access deliberately validates malformed and out-of-range ports.
+        parsed.port
+        try:
+            ipaddress.ip_address(parsed.hostname)
+        except ValueError:
+            pass
+        else:
+            return False
+        allowed_hosts = getattr(settings, 'SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS', None)
+        if allowed_hosts is not None:
+            if not isinstance(allowed_hosts, list):
+                return False
+            return parsed.hostname.casefold() in {
+                item.casefold() for item in allowed_hosts if isinstance(item, str)
+            }
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _bounded_number(value, *, default: float, lower: float, upper: float) -> float:
+    try:
+        return min(max(float(value), lower), upper)
+    except (TypeError, ValueError):
+        return default
 
 
 def settings_relays():

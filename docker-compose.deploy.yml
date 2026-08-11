@@ -9,6 +9,9 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: bot.settings
       RUN_MIGRATIONS: "false"
+      SUBSCRIPTION_BACKUP_SECRET_FILE: /run/secrets/subscription-backup.json
+    volumes:
+      - ${SUBSCRIPTION_BACKUP_SECRET_HOST_PATH:-/dev/null}:/run/secrets/subscription-backup.json:ro
     ports:
       - "72.56.23.226:8001:8001"
     restart: unless-stopped

@@ -10,6 +10,9 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import json
+import os
+import stat
 from pathlib import Path
 from urllib.parse import quote
 
@@ -253,15 +256,50 @@ SUBSCRIPTION_BASE_URL = env.str('SUBSCRIPTION_BASE_URL', env.str('SUB_URL', ''))
 # Add/remove/enable/disable are propagated to every id listed here.
 MIRROR_INBOUND_IDS = env.json('MIRROR_INBOUND_IDS', default=[])
 
-# External backup VPN service endpoints for subscription failover.
-# Each entry is a static, operator-provisioned external VLESS Reality endpoint
-# (e.g. MORI VPN). NOT our own 3x-ui ports. See docs/MIRROR-INBOUNDS-SPEC.md.
+# External backup subscriptions are runtime-only opaque bearer URLs.  Fetched
+# VLESS lines are preserved verbatim; do not put URLs or provider data in Git.
 SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED = env.bool(
     'SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED', False)
 SUBSCRIPTION_BACKUP_TEST_USER_IDS = env.json(
     'SUBSCRIPTION_BACKUP_TEST_USER_IDS', default=[])
-SUBSCRIPTION_BACKUP_ENDPOINTS = env.json(
-    'SUBSCRIPTION_BACKUP_ENDPOINTS', default=[])
+# Bearer URLs may be supplied only through an owner-readable JSON mount in the
+# web service. A missing, malformed, symlinked, or overly-permissive file fails
+# open without ever logging its contents.
+def _backup_urls_from_secret_file():
+    path = env.str('SUBSCRIPTION_BACKUP_SECRET_FILE', '')
+    if not path:
+        return []
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, encoding='utf-8') as secret_file:
+            metadata = os.fstat(secret_file.fileno())
+            if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o600:
+                return []
+            document = json.load(secret_file)
+        if not isinstance(document, dict):
+            return []
+        urls = document.get('upstream_urls', [])
+        return urls if isinstance(urls, list) and all(isinstance(url, str) for url in urls) else []
+    except (OSError, ValueError, json.JSONDecodeError):
+        return []
+
+SUBSCRIPTION_BACKUP_UPSTREAM_URLS = _backup_urls_from_secret_file()
+# Optional JSON allowlist of exact DNS hostnames for backup URL sources.
+# An absent setting permits a controlled rollout; a present malformed list denies all.
+SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS = env.json(
+    'SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS', default=None)
+SUBSCRIPTION_BACKUP_CONNECT_TIMEOUT_SECONDS = env.float(
+    'SUBSCRIPTION_BACKUP_CONNECT_TIMEOUT_SECONDS', 3)
+SUBSCRIPTION_BACKUP_READ_TIMEOUT_SECONDS = env.float(
+    'SUBSCRIPTION_BACKUP_READ_TIMEOUT_SECONDS', 5)
+SUBSCRIPTION_BACKUP_RESPONSE_MAX_BYTES = env.int(
+    'SUBSCRIPTION_BACKUP_RESPONSE_MAX_BYTES', 262144)
+SUBSCRIPTION_BACKUP_CACHE_TTL_SECONDS = env.int(
+    'SUBSCRIPTION_BACKUP_CACHE_TTL_SECONDS', 300)
+SUBSCRIPTION_BACKUP_MAX_SOURCES = env.int('SUBSCRIPTION_BACKUP_MAX_SOURCES', 8)
+SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES = env.int('SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES', 128)
+SUBSCRIPTION_BACKUP_AGGREGATE_MAX_BYTES = env.int('SUBSCRIPTION_BACKUP_AGGREGATE_MAX_BYTES', 262144)
+SUBSCRIPTION_BACKUP_FETCH_DEADLINE_SECONDS = env.float('SUBSCRIPTION_BACKUP_FETCH_DEADLINE_SECONDS', 8)
 
 # Monitoring runs inside the persistent bot Celery worker/beat deployment.
 # It never restarts application or VPN services and emits aggregate metadata only.
@@ -317,6 +355,12 @@ LOGGING = {
         'console': {
             'class': 'logging.StreamHandler',
             'formatter': 'standard',
+            'filters': ['redact_subscription_path'],
+        },
+    },
+    'filters': {
+        'redact_subscription_path': {
+            '()': 'bot.logging_filters.SubscriptionPathRedactionFilter',
         },
     },
     'root': {
@@ -330,5 +374,11 @@ LOGGING = {
         'httpx._client': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
         'utils.py3xui': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
         'py3xui': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
+        'urllib3': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
+        # Django can log request paths at warning/error level. These explicit
+        # handlers prevent an unfiltered ancestor from emitting bearer paths.
+        'django': {'handlers': ['console'], 'level': 'INFO', 'propagate': False},
+        'django.request': {'handlers': ['console'], 'level': 'INFO', 'propagate': False},
+        'django.server': {'handlers': ['console'], 'level': 'INFO', 'propagate': False},
     },
 }
