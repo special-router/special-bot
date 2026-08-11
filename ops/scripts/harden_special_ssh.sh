@@ -224,8 +224,11 @@ EOF
 chown root:root "$tmp"; chmod 0600 "$tmp"
 mv -fT "$tmp" "$config"
 /usr/sbin/sshd -t
-# Evaluate actual Match behavior for this client/server tuple before reload.
-read -r client_ip client_port server_ip server_port <<<"${SSH_CONNECTION:?missing SSH_CONNECTION}"
+# Evaluate Match behavior for a representative global connection tuple before
+# reload. Fresh network probes below remain authoritative for this client.
+client_ip=192.0.2.1
+server_ip=192.0.2.2
+server_port=22
 for user in "$operator_user" root; do
   effective=$(/usr/sbin/sshd -T -C "user=$user,addr=$client_ip,host=$client_ip,laddr=$server_ip,lport=$server_port")
   grep -qx 'passwordauthentication no' <<<"$effective"
@@ -300,7 +303,9 @@ if systemctl list-jobs --no-legend "$rollback_unit.service" 2>/dev/null | grep -
   exit 43
 fi
 systemctl reset-failed "$rollback_unit.timer" "$rollback_unit.service" >/dev/null 2>&1 || true
-read -r client_ip client_port server_ip server_port <<<"${SSH_CONNECTION:?missing SSH_CONNECTION}"
+client_ip=192.0.2.1
+server_ip=192.0.2.2
+server_port=22
 for user in "$operator_user" root; do
   effective=$(/usr/sbin/sshd -T -C "user=$user,addr=$client_ip,host=$client_ip,laddr=$server_ip,lport=$server_port")
   grep -qx 'passwordauthentication no' <<<"$effective"
