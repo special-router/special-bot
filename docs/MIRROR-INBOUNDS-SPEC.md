@@ -1,187 +1,173 @@
 # Mirror Inbounds Subscription Specification
 
-> Spec for exposing existing mirror 3x-ui inbounds in the per-user
-> subscription so clients can switch between endpoints without re-importing.
-> Status: design — implementation pending approval for test-group rollout.
+> Spec for adding **backup external service** endpoints to the per-user
+> subscription so clients can fail over to reserve VPN providers if SPECIAL
+> infrastructure is down.
+>
+> **Definition:** "Mirror inbound" = an endpoint on an **external backup VPN
+> service**, NOT our own 3x-ui ports. Our own NL ports (7,8,9,13) are
+> internal relays, not mirrors — they lack per-client UUIDs and are not
+> usable as subscription endpoints.
+
+Status: design — pending provisioning of backup service access.
 
 ## Context
 
-The SPECIAL NL 3x-ui panel has 8 active inbounds, but the subscription proxy
-(`apps/subscriptions/views.py::subscription_proxy`) renders only 3 lines:
-status + Direct (`:8443`) + Relay (`201.34.132.118:443`). The other 6
-inbounds exist in the control plane and have the same client pool (UUIDs),
-but are invisible to subscribers.
+The per-user subscription (`apps/subscriptions/views.py::subscription_proxy`)
+renders 3 lines: status + Direct (`sub.special-wifi.ru:8443`) + Relay
+(`201.34.132.118:443`). If both SPECIAL endpoints fail, the client has no
+fallback.
 
-Competitor research (MORI VPN, ALL VPN, Sota VPN) confirms the industry
-pattern: one UUID, multiple endpoints in a single subscription, client
-switches automatically. This spec brings SPECIAL to the same model using
-**existing** inbounds — no new production inbounds are introduced.
+Competitor research (MORI VPN, ALL VPN, Sota VPN) shows the pattern: one
+subscription, multiple providers, client switches automatically. This spec
+brings the same resilience using **external backup VPN services** — not our
+own unused 3x-ui ports.
 
-## Current state (2026-08-11)
+## Why not our own NL ports (7,8,9,13)
 
-| ID | Port | Protocol | Network | Security | In subscription? |
-|----|------|----------|---------|----------|------------------|
-| 5  | 8443 | vless    | tcp     | reality  | ✅ Direct + Relay |
-| 7  | 39329| vless    | tcp     | reality  | ❌ |
-| 8  | 20057| vless    | tcp     | reality  | ❌ |
-| 9  | 46517| vless    | tcp     | reality  | ❌ |
-| 10 | 8080 | vless    | grpc    | reality  | ❌ |
-| 11 | 22554| vless    | ws      | none     | ❌ |
-| 12 | 34007| vless    | kcp     | none     | ❌ |
-| 13 | 27914| vless    | tcp     | reality  | ❌ |
+Tested 2026-08-11: inbounds 7,8,9,13 on NL exist and listen, but:
 
-`MIRROR_INBOUND_IDS` in `bot/settings.py` is already defined (used by
-`sync_expiry_times` to propagate enable/expiry to mirror inbounds). The
-subscription renderer does not read it.
+- **No per-client UUIDs** — the test client UUID exists only in inbound 5
+  (85 clients). Inbounds 7,8,9 have 1-2 clients each, none matching our
+  users. Adding a user to inbound 5 does NOT add them to 7,8,9,13.
+- `sync_expiry_times` propagates enable/expiry to `MIRROR_INBOUND_IDS`, but
+  does NOT create clients — the UUIDs must be added per-inbound in 3x-ui.
+- Reality SNI differs (`google.com` vs `yandex.net`), but that is not the
+  blocker — the missing UUID is.
+- xray probe confirmed: UUID #195 connects via inbound 5 (204 OK) but
+  fails via 7,8,9,13 (000, UUID not in that inbound's client list).
+
+**Conclusion:** our own extra ports are not mirror endpoints. They are
+alternate listeners that would each need full client provisioning. Using
+them as "mirrors" without per-inbound client sync would produce broken
+subscription links.
 
 ## Goal
 
-Expose selected existing mirror inbounds in the per-user subscription as
-additional VLESS links, so clients get multiple endpoint choices and can
-fail over automatically. Roll out to a test group first, then all entitled
-users.
+Add **external backup VPN service** endpoints to the subscription so a
+client whose SPECIAL endpoint is blocked or down can switch to a reserve
+provider without re-importing. One UUID per backup service, rendered as
+additional VLESS lines.
+
+## What a mirror IS (new definition)
+
+A mirror is an **external backup VPN service** with:
+- Its own host/port/protocol
+- Its own client UUID (one per backup service, shared across users or
+  per-user — depends on the backup provider's model)
+- Its own Reality/TLS parameters
+- Provisioned and maintained by an operator, not auto-discovered
+
+## What a mirror is NOT
+
+- Our own 3x-ui port (7,8,9,13) — those are internal, lack client UUIDs
+- A relay of our own endpoint — that is the Relay line, not a mirror
+- Auto-discovered from competitor subscriptions — those are research, not
+  production endpoints we control
 
 ## Design
 
 ### Endpoint groups
 
-Render order (clients pick best automatically):
+Render order:
 
-1. **Status** — `127.0.0.1:1` (non-working, shows remaining days)
-2. **Direct NL primary** — `sub.special-wifi.ru:8443` (inbound 5, existing)
-3. **Direct NL mirrors** — `sub.special-wifi.ru:<port>` for each mirror
-   inbound (Reality/TCP first phase)
-4. **RU Relay primary** — `201.34.132.118:443` (existing, relays to NL:443
-   → SNI-router → Xray:8443)
+1. **Status** — `127.0.0.1:1` (non-working, remaining days)
+2. **SPECIAL Direct** — `sub.special-wifi.ru:8443` (primary, our NL)
+3. **SPECIAL Relay** — `201.34.132.118:443` (our RU relay → NL)
+4. **Backup mirrors** — one VLESS line per external backup service
 
-### Phases
+### Backup service configuration
 
-**Phase 1 (this implementation) — Reality/TCP mirrors:**
-- Inbounds 5, 7, 8, 9, 13 (all `vless/tcp/reality`)
-- Same transport/security as primary — minimal client-compatibility risk
-- Direct path only (relay path for non-443 mirrors requires relay nginx
-  changes, deferred)
-- Feature-gated to a test group of entitled `UserVPN` records
-
-**Phase 2 (deferred) — gRPC:**
-- Inbound 10 (`vless/grpc/reality`) — different transport, bypasses
-  port-based blocking
-- Requires client gRPC support; mark remark clearly
-
-**Phase 3 (deferred) — relay path for mirrors:**
-- Extend RU relay nginx `proxy_pass` for mirror ports, or multi-SNI on
-  `:443`
-- Enables Relay variants of mirror inbounds
-
-**Not included:**
-- Inbounds 11 (ws/none), 12 (kcp/none) — different security profile
-  (no Reality), separate product concern, do not mix with main
-  subscription
-
-### Per-inbound Reality parameters
-
-Reality `publicKey`, `serverName`, `shortIds` are per-inbound in 3x-ui.
-The renderer must fetch params for each mirror inbound individually (they
-may differ). The existing `_reality_params` lru_cache already keys by
-`(server_id, inbound_id)` — extend to iterate over the mirror set.
-
-### Transport type in VLESS link
-
-`_build_vless` currently hardcodes `type=tcp`. Mirror inbounds with
-`network=grpc` or `network=ws` need `type=grpc` / `type=ws` and different
-query parameters (`serviceName` for grpc, `path`/`host` for ws). Phase 1
-mirrors are all `tcp`, so this is deferred to Phase 2, but the params dict
-should carry `network` now to avoid a second refactor.
-
-### Feature gate — test group
-
-Controlled by `SUBSCRIPTION_MIRROR_INBOUNDS_ENABLED` (bool, default false)
-and an explicit allowlist of `UserVPN` IDs that receive mirror links.
-Production-wide rollout flips the flag after test-group validation.
-
-This preserves the legacy contract for all existing clients until the
-test group confirms multi-endpoint subscriptions work across happ,
-v2rayNG, Nekobox.
-
-### Remark naming
-
-Per-inbound remarks so clients can distinguish:
-- `🇳🇱 NL Direct` (primary 8443)
-- `🇳🇱 NL Mirror 39329`
-- `🇳🇱 NL Mirror 20057`
-- `🇳🇱 NL Mirror 46517`
-- `🇳🇱 NL Mirror 27914`
-- `🇳🇱 NL Relay` (primary relay)
-
-## Configuration
-
-New settings (in `bot/settings.py`, names-only in `.env.example`):
+Each backup service is configured by an operator (not auto-discovered):
 
 ```python
-# Expose mirror inbounds in the subscription payload.
-SUBSCRIPTION_MIRROR_INBOUNDS_ENABLED = env.bool(
-    'SUBSCRIPTION_MIRROR_INBOUNDS_ENABLED', False)
-# Explicit allowlist of UserVPN ids that receive mirror links during
-# test-group rollout. Empty = no one (even if flag is true).
-SUBSCRIPTION_MIRROR_TEST_USER_IDS = env.json(
-    'SUBSCRIPTION_MIRROR_TEST_USER_IDS', default=[])
-# Mirror inbound ids to render (must be Reality/TCP for Phase 1).
-# Defaults to the existing MIRROR_INBOUND_IDS if set, otherwise empty.
-SUBSCRIPTION_MIRROR_INBOUND_IDS = env.json(
-    'SUBSCRIPTION_MIRROR_INBOUND_IDS', default=[])
+SUBSCRIPTION_BACKUP_ENDPOINTS = [
+    {
+        "label": "🟢 Backup EU",
+        "host": "<backup-host>",
+        "port": 443,
+        "uuid": "<backup-service-uuid>",
+        "type": "tcp",
+        "security": "reality",
+        "pbk": "<public-key>",
+        "sni": "<server-name>",
+        "sid": "<short-id>",
+        "flow": "",
+    },
+    ...
+]
 ```
 
-`MIRROR_INBOUND_IDS` (existing) continues to drive expiry/enable sync;
-`SUBSCRIPTION_MIRROR_INBOUND_IDS` drives rendering and can be a subset
-during testing.
+The renderer iterates this list and appends a VLESS link per entry. No
+per-inbound 3x-ui API call needed — the params are static and
+operator-provisioned.
 
-## Validation contract
+### Feature gate
 
-- Legacy 3-line subscription unchanged for non-test-group users (flag off
-  or UserVPN not in allowlist)
-- Test-group users receive status + direct primary + mirror directs + relay
-- Each mirror link uses that inbound's real Reality params (pbk/sid/sni from
-  CP, not the primary's)
-- `flow=''` preserved (legacy no-flow contract)
-- Relay link unchanged (primary relay only in Phase 1)
-- Subscription still returns 404 for disabled `UserVPN`
-- Tests cover: legacy path, test-group multi-link, mirror params isolation,
-  empty mirror set, non-test-group exclusion
+`SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED` (bool, default false). Allowlist
+of `UserVPN.id` during test-group rollout, same pattern as the previous
+mirror implementation.
+
+## Prerequisites (external)
+
+Before implementing:
+
+1. **Provision backup VPN service(s)** — at least one external provider
+   with a usable VLESS/Reality endpoint. This is an external resource, not
+   derivable from current infrastructure.
+2. **Credentials/UUID** for the backup service (one per user or shared —
+   depends on provider model).
+3. **Operator owner** for each backup service (maintenance, rotation,
+   monitoring).
+4. **DNS/host** — stable hostname for each backup endpoint.
+
+## Why the previous implementation was removed
+
+The 2026-08-11 implementation (`SUBSCRIPTION_MIRROR_INBOUNDS_ENABLED` +
+`SUBSCRIPTION_MIRROR_INBOUND_IDS=[7,8,9,13]`) was deployed to test-group
+UserVPN #195 and produced 7-line subscriptions. Testing revealed all 4
+mirror lines failed (xray probe: 000 for each) because the user's UUID
+existed only in inbound 5, not in 7,8,9,13. The subscription rendered
+correct per-inbound Reality params, but the UUID was absent from those
+inbounds' client lists.
+
+The implementation code (`_mirror_links`, `_is_mirror_test_user`) and
+settings remain in the codebase as a generic mechanism, but the
+`SUBSCRIPTION_MIRROR_INBOUND_IDS` must NOT point at our own ports without
+per-inbound client provisioning. The settings were removed from
+production `.environment` and the test subscription reverted to 3 lines.
 
 ## Safety constraints
 
-- **No new production inbounds** — only existing inbounds 7,8,9,13 are
-  rendered; nothing is created in 3x-ui
-- **No client mutation** — rendering is read-only; CP client state is not
-  touched
+- **No broken links in subscription** — every rendered line must be
+  tested (synthetic xray probe) before going live; a broken link is worse
+  than no link (client wastes time trying it).
+- **Backup endpoints are external** — do not use our own 3x-ui ports as
+  mirrors without full per-inbound client sync.
 - **Legacy contract preserved** — flag defaults false; all existing
-  subscribers see the current 3-line subscription until rollout
-- **Compatibility identities untouched** — mirror inbounds use the same
-  UUID pool; 21 compatibility-only identities are not inferred or assigned
-- **Direct path only for mirrors in Phase 1** — relay nginx not modified;
-  relay link remains the primary `:443` path
-- **No secret exposure** — subscription output is base64 VLESS links with
-  the user's own UUID; pbk/sid are per-inbound Reality public params (not
-  private keys)
+  subscribers see 3-line subscription until backup endpoints are
+  provisioned and tested.
+- **No secret exposure** — backup endpoint params are public VLESS
+  parameters (pbk/sid/sni are public); UUIDs are per-service.
+- **Operator-owned** — each backup service has an accountable owner; not
+  auto-discovered from competitor research.
 
 ## Open questions
 
-- Should mirror links be ordered by port, by a priority field, or
-  randomized? Default: by inbound id ascending for determinism.
-- Should the test-group allowlist be `UserVPN.id` or `UserVPN.sub_id`? `id`
-  is stable and not exposed in URLs.
-- After test-group validation, is the rollout flag-flip or gradual
-  allowlist growth? Recommend flag-flip once test group passes.
-- Should `SUBSCRIPTION_MIRROR_INBOUND_IDS` include gRPC (10) in Phase 1 or
-  wait for Phase 2? Wait — different transport type needs `_build_vless`
-  extension.
+- One shared UUID per backup service, or per-user UUID on the backup
+  provider? Depends on provider model; shared is simpler.
+- How many backup endpoints? Start with 1, add as provisioned.
+- Should backup endpoints be tested automatically before inclusion? Yes —
+  synthetic probe (see `docs/INBOUND-DIAGNOSTICS-SPEC.md`).
+- Rotation cadence for backup endpoints? Operator decision.
 
 ## Reference
 
 - Renderer: `apps/subscriptions/views.py::subscription_proxy`
 - VLESS builder: `apps/subscriptions/views.py::_build_vless`
-- Reality params cache: `apps/subscriptions/views.py::_reality_params`
-- Mirror sync: `apps/subscriptions/management/commands/sync_expiry_times.py`
-- Settings: `bot/settings.py` `MIRROR_INBOUND_IDS`, `SUBSCRIPTION_BASE_URL`
-- Tests: `apps/subscriptions/test_views.py`
+- Previous (removed) implementation: `_mirror_links`, `_is_mirror_test_user`
+  in `apps/subscriptions/views.py` — generic mechanism, do not point at
+  our own ports without per-inbound client sync.
+- Settings: `bot/settings.py` `SUBSCRIPTION_MIRROR_*` (generic, currently
+  unused in production).
 - Diagnostics spec: `docs/INBOUND-DIAGNOSTICS-SPEC.md`
