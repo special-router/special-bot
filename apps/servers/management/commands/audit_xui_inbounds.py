@@ -26,7 +26,7 @@ class InboundSnapshot:
 
 async def _fetch_inbound_snapshots_once(server: Server) -> list[InboundSnapshot]:
     """Read one normalized inbound inventory snapshot without changing 3x-ui."""
-    api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password, use_tls_verify=False)
+    api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password)
     await api.login()
     inbounds = await api.inbound.get_list()
     snapshots = []

@@ -21,7 +21,7 @@ each inbound instead of the UUID belonging to the requested `subId`; its JSON
 variant is not compatible with happ. Django therefore builds the base64 VLESS
 payload from the requested `UserVPN` UUID and cached Reality parameters.
 
-A subscription now returns three endpoints:
+A subscription normally returns three endpoints:
 1. `📊 Подписка-осталось N дней` (or `подписка окончена`) — non-working
    status entry rendered by Django; control-plane record id 1 is preserved but
    runtime-disabled.
@@ -42,7 +42,14 @@ A subscription now returns three endpoints:
   Compatibility-only clients must never be assigned ownership.
 - Production has `SUBSCRIPTION_DELIVERY_ENABLED=true`,
   `SUBSCRIPTION_CONNECTOR_ENABLED=true`, `MIRROR_INBOUND_IDS=[14]`,
-  `STATUS_INBOUND_ID=1`.
+  `STATUS_INBOUND_ID=1`. The separate internal-inbound canary namespace
+  defaults off. When explicitly enabled it is restricted to UserVPN 801 and
+  same-NL-origin retained inbounds 7/9/13 TCP plus 10 gRPC public :80; it is
+  not a redundant external mirror and each candidate is live membership/expiry
+  revalidated before rendering. Its exact retained memberships are synchronized
+  separately from `MIRROR_INBOUND_IDS`: the fixed canary policy only updates
+  existing exact UUID members and fails closed on missing, duplicate, mismatched
+  or partial panel state; it never creates/infers ownership.
 
 3x-ui remains the source used to create/recover `subId`; Django persists the
 result in `UserVPN.sub_id` so the public proxy can resolve a bearer path to the
@@ -69,6 +76,11 @@ expected projection, not membership drift.
   contract and terminate on inbound 5.
 - `sync_expiry_times` runs daily after billing and mirrors `expiryTime`,
   enable state, and the status label to every relevant inbound.
+- Manual internal-inbound canaries must revalidate entitlement, enabled and
+  unexpired exactly-once target membership immediately before use. The gRPC
+  candidate advertises public :80 only; backend :8080 remains diagnostic-only.
+  `multiMode` has no URI field and is supported solely by empirical public
+  frontend validation.
 - L2 decodes all subscription entries, selects a non-loopback entry with the
   canary UUID, and verifies both subscription and unchanged direct-VLESS paths.
   L0/L1/L2 are healthy; bounded retry absorbs transient Reality handshakes.

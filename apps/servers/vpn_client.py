@@ -4,6 +4,7 @@ from django.conf import settings
 from django.utils.timezone import now
 from py3xui import Client, Inbound
 
+from apps.servers.internal_membership import sync_internal_memberships
 from apps.servers.models import Server
 from apps.vpn.models import UserVPN
 from utils.py3xui.async_api import AsyncApi
@@ -37,6 +38,9 @@ class APIVPNClient:
             limit_ip=settings.LIMIT_IP,
         )
         await self._api.client.add(self._server.inbound_id, [new_client])
+        # Never create a canary membership: only an already retained exact UUID
+        # can be enabled, and malformed/missing targets fail closed.
+        await sync_internal_memberships(self._api, user_vpn, enabled=True)
         for inbound_id in self._mirror_inbound_ids():
             try:
                 await self._api.client.add(inbound_id, [new_client])
@@ -46,6 +50,9 @@ class APIVPNClient:
 
     async def remove_user(self, user_vpn: UserVPN):
         await self._api.login()
+        # Retained canary identities are disabled rather than deleted so a
+        # later reactivation cannot infer or recreate target ownership.
+        await sync_internal_memberships(self._api, user_vpn, enabled=False)
         await self._api.client.delete(self._server.inbound_id, user_vpn.vpn_uuid)
         for inbound_id in self._mirror_inbound_ids():
             try:
@@ -56,6 +63,7 @@ class APIVPNClient:
     async def enable_user(self, user_vpn: UserVPN, enabled: bool = True):
         await self._api.login()
         await self._sync_enable(self._server.inbound_id, user_vpn, enabled, add_if_missing=True)
+        await sync_internal_memberships(self._api, user_vpn, enabled=enabled)
         for inbound_id in self._mirror_inbound_ids():
             try:
                 await self._sync_enable(inbound_id, user_vpn, enabled, add_if_missing=False)

@@ -23,8 +23,9 @@ import time
 
 from asgiref.sync import sync_to_async
 from django.conf import settings
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
+from apps.servers.internal_membership import InternalMembershipSyncError, sync_internal_memberships
 from apps.servers.models import Server
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
@@ -51,6 +52,7 @@ class Command(BaseCommand):
                 if u is None:
                     continue
                 rows.append({
+                    'user_vpn_id': r.id,
                     'vpn_uuid': str(r.vpn_uuid),
                     'balance': float(getattr(u, 'balance', 0) or 0),
                     'price': float(r.server.tariff.price),
@@ -65,6 +67,7 @@ class Command(BaseCommand):
         working_ids = [server.inbound_id, *mirror]
 
         synced = 0
+        errors: list[str] = []
         for row in rows:
             price = row['price']
             if price <= 0:
@@ -85,6 +88,15 @@ class Command(BaseCommand):
                     await self._sync_one(api, inbound_id, row['vpn_uuid'], expiry_ms, '', enabled)
                 except Exception:
                     pass
+            # The canary is intentionally outside MIRROR_INBOUND_IDS.  It can
+            # update only existing exact UUID memberships and validates every
+            # configured retained target before mutating any of them.
+            try:
+                await sync_internal_memberships(
+                    api, type('UserVPNRef', (), {'id': row['user_vpn_id'], 'vpn_uuid': row['vpn_uuid']})(),
+                    enabled=enabled, expiry_time=expiry_ms)
+            except InternalMembershipSyncError:
+                errors.append('internal_membership_sync')
             # Status inbound: additionally write the status label into email.
             if status_inbound_id:
                 try:
@@ -93,6 +105,9 @@ class Command(BaseCommand):
                     pass
             synced += 1
         self.stdout.write(f'synced_expiry_times={synced}')
+        if errors:
+            # Do not include client or panel details in scheduler-visible output.
+            raise CommandError(f'internal_membership_sync_errors={len(errors)}')
 
     async def _sync_one(self, api: AsyncApi, inbound_id: int, vpn_uuid: str, expiry_ms: int, status_label: str, enabled: bool) -> None:
         inbound = await api.inbound.get_by_id(inbound_id)

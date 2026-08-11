@@ -321,6 +321,55 @@ SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES = env.int('SUBSCRIPTION_BACKUP_AGGREGATE
 SUBSCRIPTION_BACKUP_AGGREGATE_MAX_BYTES = env.int('SUBSCRIPTION_BACKUP_AGGREGATE_MAX_BYTES', 262144)
 SUBSCRIPTION_BACKUP_FETCH_DEADLINE_SECONDS = env.float('SUBSCRIPTION_BACKUP_FETCH_DEADLINE_SECONDS', 8)
 
+# Internal 3x-ui alternate-inbound canary. Endpoint records deliberately carry
+# only routing metadata; live 3x-ui remains the authority for client and
+# Reality data. A malformed rollout config produces no additional links.
+SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED = env.bool(
+    'SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED', False)
+# Membership synchronization is independent from link rendering. Enable it
+# before exposing any canary link so retained existing memberships follow
+# disable/renewal/expiry state while the renderer remains default-off.
+SUBSCRIPTION_INTERNAL_MEMBERSHIP_SYNC_ENABLED = env.bool(
+    'SUBSCRIPTION_INTERNAL_MEMBERSHIP_SYNC_ENABLED', False)
+
+
+def _internal_canary_json(name):
+    """Malformed runtime rollout JSON must disable canary links, not web startup."""
+    try:
+        return env.json(name, default=[])
+    except (ValueError, json.JSONDecodeError):
+        return None
+
+
+SUBSCRIPTION_INTERNAL_TEST_USER_IDS = _internal_canary_json(
+    'SUBSCRIPTION_INTERNAL_TEST_USER_IDS')
+SUBSCRIPTION_INTERNAL_ENDPOINTS = _internal_canary_json(
+    'SUBSCRIPTION_INTERNAL_ENDPOINTS')
+
+
+# Optional private CA bundle for the privileged 3x-ui panel.  The filename is
+# runtime configuration only; its certificate contents never enter settings,
+# logs, repository, or Docker image.  A configured invalid file causes panel
+# API construction to fail closed rather than silently disabling verification.
+def _panel_ca_from_runtime_file():
+    path = env.str('XUI_PANEL_CA_FILE', '')
+    if not path:
+        return None, False
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, 'rb') as certificate:
+            metadata = os.fstat(certificate.fileno())
+            if (not stat.S_ISREG(metadata.st_mode)
+                    or stat.S_IMODE(metadata.st_mode) != 0o600
+                    or not certificate.read(1)):
+                return None, True
+        return path, False
+    except OSError:
+        return None, True
+
+
+XUI_PANEL_CA_CERTIFICATE_PATH, XUI_PANEL_CA_FILE_INVALID = _panel_ca_from_runtime_file()
+
 # Monitoring runs inside the persistent bot Celery worker/beat deployment.
 # It never restarts application or VPN services and emits aggregate metadata only.
 SPECIAL_MONITOR_FAILURE_THRESHOLD = env.int('SPECIAL_MONITOR_FAILURE_THRESHOLD', 2)

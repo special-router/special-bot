@@ -16,13 +16,14 @@ import base64
 import binascii
 import hashlib
 import ipaddress
+import json
 import socket
 import ssl
 import subprocess
 import threading
 import time
 from functools import lru_cache
-from urllib.parse import unquote_to_bytes, urlsplit
+from urllib.parse import quote, unquote_to_bytes, urlencode, urlsplit
 
 from django.http import HttpResponse, HttpResponseNotFound
 from django.views.decorators.csrf import csrf_exempt
@@ -72,16 +73,259 @@ def _get_params(server_id: int, inbound_id: int) -> dict:
     return params
 
 
+# The rollout intentionally recognizes only the production-validated targets.
+# Values in configuration are public routing metadata, never client or Reality
+# credentials.  Target membership is checked live for every subscription read.
+_INTERNAL_EXPECTED = {
+    7: (39329, 'tcp', 'reality'),
+    9: (46517, 'tcp', 'reality'),
+    13: (27914, 'tcp', 'reality'),
+    10: (8080, 'grpc', 'reality'),
+}
+_INTERNAL_PROFILE_TTL_SECONDS = 300
+_INTERNAL_PROFILE_CACHE: dict[tuple[int, int], tuple[float, str, dict]] = {}
+_INTERNAL_PROFILE_CACHE_LOCK = threading.RLock()
+
+
+def _config_internal_endpoints() -> list[dict]:
+    """Validate the narrow, public-only canary configuration or return no targets."""
+    from django.conf import settings
+    endpoints = getattr(settings, 'SUBSCRIPTION_INTERNAL_ENDPOINTS', [])
+    if not isinstance(endpoints, list) or not endpoints:
+        return []
+    configured, ids, ports = [], set(), set()
+    for endpoint in endpoints:
+        if not isinstance(endpoint, dict) or set(endpoint) != {'inbound_id', 'advertised_port', 'label'}:
+            return []
+        inbound_id, advertised_port, label = (
+            endpoint.get('inbound_id'), endpoint.get('advertised_port'), endpoint.get('label'))
+        if (type(inbound_id) is not int or type(advertised_port) is not int
+                or not isinstance(label, str) or not label.strip() or len(label) > 128
+                or any(character in label for character in '\r\n\x00')
+                or inbound_id not in _INTERNAL_EXPECTED
+                or inbound_id in ids or advertised_port in ports):
+            return []
+        expected_port, _network, _security = _INTERNAL_EXPECTED[inbound_id]
+        # Inbound 10's x-ui backend is :8080, but it is reached via its public
+        # nginx gRPC frontend on :80 and must never be advertised as :8080.
+        if advertised_port != (80 if inbound_id == 10 else expected_port):
+            return []
+        ids.add(inbound_id)
+        ports.add(advertised_port)
+        configured.append({
+            'inbound_id': inbound_id,
+            'advertised_port': advertised_port,
+            'label': label,
+        })
+    return configured
+
+
+def _is_internal_test_user(user_vpn_id: int) -> bool:
+    """Fail open unless the fixed UserVPN 801 rollout is exactly configured."""
+    from django.conf import settings
+    if not getattr(settings, 'SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED', False):
+        return False
+    # This feature is a one-user canary, not a generic audience mechanism.
+    # Reject malformed, reordered, duplicate, or broadened allowlists.
+    if getattr(settings, 'SUBSCRIPTION_INTERNAL_TEST_USER_IDS', []) != [801]:
+        return False
+    return user_vpn_id == 801 and bool(_config_internal_endpoints())
+
+
+def _mapping(value) -> dict:
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, 'model_dump'):
+        return value.model_dump(by_alias=True)
+    if hasattr(value, 'dict'):
+        return value.dict()
+    return {}
+
+
+def _value(value, snake_name: str, default=None):
+    data = _mapping(value)
+    camel_name = snake_name.split('_')[0] + ''.join(part.title() for part in snake_name.split('_')[1:])
+    if snake_name in data:
+        return data[snake_name]
+    if camel_name in data:
+        return data[camel_name]
+    return getattr(value, snake_name, getattr(value, camel_name, default))
+
+
+def _first_nonempty(value) -> str:
+    if isinstance(value, list):
+        value = next((item for item in value if isinstance(item, str) and item), '')
+    return value if isinstance(value, str) else ''
+
+
+def _normalized_internal_snapshot(inbound, requested_uuid: str) -> dict | None:
+    """Normalize only fields that gate internal link rendering; never log them."""
+    stream = _value(inbound, 'stream_settings', {})
+    reality = _value(stream, 'reality_settings', {})
+    reality_settings = _value(reality, 'settings', {})
+    clients = _value(_value(inbound, 'settings', {}), 'clients', [])
+    if not isinstance(clients, list):
+        return None
+    membership = []
+    for client in clients:
+        if str(_value(client, 'id', '')) == requested_uuid:
+            try:
+                expiry = int(_value(client, 'expiry_time', 0) or 0)
+            except (TypeError, ValueError):
+                return None
+            membership.append((bool(_value(client, 'enable', False)), expiry))
+    grpc = _value(stream, 'grpc_settings', {})
+    return {
+        'enabled': bool(_value(inbound, 'enable', False)),
+        'port': _value(inbound, 'port'),
+        'protocol': str(_value(inbound, 'protocol', '')).lower(),
+        'network': str(_value(stream, 'network', '')).lower(),
+        'security': str(_value(stream, 'security', '')).lower(),
+        'public_key': _value(reality_settings, 'public_key', ''),
+        'server_name': _first_nonempty(_value(reality, 'server_names', [])),
+        'short_id': _first_nonempty(_value(reality, 'short_ids', [])),
+        'service_name': _value(grpc, 'service_name', ''),
+        'membership': membership,
+    }
+
+
+async def _read_internal_snapshots(server_id: int, inbound_ids: list[int], requested_uuid: str) -> dict[int, dict] | None:
+    """Read all canary targets twice through one authenticated API session."""
+    server = await Server.objects.aget(id=server_id)
+    api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password)
+    await api.login()
+    previous = None
+    # Two bounded full rounds make one target's transient short response fail
+    # the whole internal batch without repeating authentication per endpoint.
+    for _round in range(2):
+        current: dict[int, dict] = {}
+        for inbound_id in inbound_ids:
+            snapshot = _normalized_internal_snapshot(
+                await api.inbound.get_raw_config_by_id(inbound_id), requested_uuid)
+            if snapshot is None:
+                return None
+            current[inbound_id] = snapshot
+        if previous is not None and current == previous:
+            return current
+        previous = current
+    return None
+
+
+def _stable_internal_snapshots(server_id: int, inbound_ids: list[int], requested_uuid: str) -> dict[int, dict] | None:
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(asyncio.wait_for(
+            _read_internal_snapshots(server_id, inbound_ids, requested_uuid), timeout=5))
+    except Exception:
+        return None
+    finally:
+        loop.close()
+
+
+def _stable_internal_snapshot(server_id: int, inbound_id: int, requested_uuid: str) -> dict | None:
+    """Compatibility helper; batch rendering uses _stable_internal_snapshots."""
+    result = _stable_internal_snapshots(server_id, [inbound_id], requested_uuid)
+    return result.get(inbound_id) if result else None
+
+
+def _internal_profile(server_id: int, inbound_id: int, snapshot: dict) -> dict | None:
+    """Return a cached static profile only after the current live gate succeeded."""
+    static = {
+        key: snapshot[key] for key in (
+            'enabled', 'port', 'protocol', 'network', 'security', 'public_key',
+            'server_name', 'short_id', 'service_name')
+    }
+    try:
+        fingerprint = json.dumps(static, sort_keys=True, separators=(',', ':'))
+    except (TypeError, ValueError):
+        return None
+    key = (server_id, inbound_id)
+    now = time.monotonic()
+    with _INTERNAL_PROFILE_CACHE_LOCK:
+        cached = _INTERNAL_PROFILE_CACHE.get(key)
+        if cached and cached[0] > now and cached[1] == fingerprint:
+            return cached[2]
+    expected_port, expected_network, expected_security = _INTERNAL_EXPECTED[inbound_id]
+    if (not snapshot['enabled'] or snapshot['port'] != expected_port
+            or snapshot['protocol'] != 'vless' or snapshot['network'] != expected_network
+            or snapshot['security'] != expected_security):
+        return None
+    if not all(isinstance(snapshot[field], str) and snapshot[field]
+               for field in ('public_key', 'server_name', 'short_id')):
+        return None
+    if inbound_id == 10 and (not isinstance(snapshot['service_name'], str)
+                             or not snapshot['service_name']):
+        return None
+    profile = {
+        'public_key': snapshot['public_key'],
+        'server_name': snapshot['server_name'],
+        'short_ids': [snapshot['short_id']],
+        'network': expected_network,
+        'service_name': snapshot['service_name'] if inbound_id == 10 else '',
+    }
+    with _INTERNAL_PROFILE_CACHE_LOCK:
+        if len(_INTERNAL_PROFILE_CACHE) >= 32:
+            _INTERNAL_PROFILE_CACHE.pop(next(iter(_INTERNAL_PROFILE_CACHE)))
+        _INTERNAL_PROFILE_CACHE[key] = (now + _INTERNAL_PROFILE_TTL_SECONDS, fingerprint, profile)
+    return profile
+
+
+def _internal_links(server_id: int, requested_uuid: str) -> list[str]:
+    """Render a batch-gated TCP/gRPC canary; uncertainty emits no internal lines."""
+    from django.conf import settings
+    try:
+        sub_domain = urlsplit(settings.SUBSCRIPTION_BASE_URL).hostname
+    except (TypeError, ValueError):
+        return []
+    if not sub_domain:
+        return []
+    endpoints = _config_internal_endpoints()
+    snapshots = _stable_internal_snapshots(
+        server_id, [endpoint['inbound_id'] for endpoint in endpoints], requested_uuid)
+    if snapshots is None:
+        return []
+    links = []
+    for endpoint in endpoints:
+        inbound_id = endpoint['inbound_id']
+        snapshot = snapshots.get(inbound_id)
+        if snapshot is None:
+            return []
+        memberships = snapshot['membership']
+        now_ms = int(time.time() * 1000)
+        if len(memberships) != 1 or not memberships[0][0] or (memberships[0][1] and memberships[0][1] <= now_ms):
+            return []
+        profile = _internal_profile(server_id, inbound_id, snapshot)
+        if profile is None:
+            return []
+        links.append(_build_vless(
+            requested_uuid, sub_domain, endpoint['advertised_port'], endpoint['label'], profile,
+            flow='', service_name=profile['service_name']))
+    return links
+
+
 def _build_vless(uuid: str, host: str, port: int, remark: str, params: dict, flow: str = '',
-                  fingerprint: str = 'chrome') -> str:
-    from urllib.parse import quote
+                  fingerprint: str = 'chrome', service_name: str = '') -> str:
+    """Build a VLESS URI with encoded query values and explicit transport fields.
+
+    The ordered TCP fields intentionally serialize identically to the deployed
+    Direct/Relay output for normal Reality values.  New transports add only
+    their protocol-defined fields rather than leaking TCP assumptions.
+    """
     network = params.get('network', 'tcp')
-    query = (
-        f"type={network}&security=reality&pbk={params['public_key']}"
-        f"&fp={fingerprint}&sni={params['server_name']}&sid={params['short_ids'][0]}&spx=%2F"
-    )
+    query_fields = [
+        ('type', network),
+        ('security', 'reality'),
+        ('pbk', params['public_key']),
+        ('fp', fingerprint),
+        ('sni', params['server_name']),
+        ('sid', params['short_ids'][0]),
+        ('spx', '/'),
+    ]
     if flow:
-        query = f"flow={flow}&" + query
+        query_fields.insert(0, ('flow', flow))
+    if network == 'grpc' and service_name:
+        query_fields.append(('serviceName', service_name))
+    query = urlencode(query_fields, quote_via=quote)
     return f"vless://{uuid}@{host}:{port}?{query}#{quote(remark)}"
 
 
@@ -126,11 +370,15 @@ def subscription_proxy(request, sub_id: str):
     links.append(_build_vless(uuid_str, '127.0.0.1', 1, f'📊 Подписка-{status_label}', params, flow=''))
     # 2) Direct NL primary.
     links.append(_build_vless(uuid_str, direct_host, direct_port, '🇳🇱 NL Direct', params, flow=flow))
-    # 3) External backup endpoints (feature-gated test group).
+    # 3) Same-origin internal transport canary. Every candidate independently
+    # stable-reads its own live inbound and silently omits on any uncertainty.
+    if _is_internal_test_user(user_vpn.id):
+        links.extend(_internal_links(server.id, uuid_str))
+    # 4) External backup endpoints (feature-gated test group).
     backup_links = _backup_links() if _is_backup_test_user(user_vpn.id) else None
     if backup_links:
         links.extend(backup_links)
-    # 4) RU relay (only if configured).
+    # 5) RU relay (only if configured).
     if relay_host:
         links.append(_build_vless(uuid_str, relay_host, relay_port, '🇳🇱 NL Relay', params, flow=flow))
 

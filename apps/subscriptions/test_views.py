@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlsplit
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from apps.subscriptions import views
-from apps.subscriptions.views import _build_vless, _is_backup_test_user
+from apps.subscriptions.views import _build_vless, _is_backup_test_user, _is_internal_test_user
 
 
 class BuildVlessTests(SimpleTestCase):
@@ -50,6 +50,20 @@ class BuildVlessTests(SimpleTestCase):
 
         self.assertEqual(query['flow'], ['xtls-rprx-vision'])
 
+    def test_legacy_tcp_bytes_are_unchanged_for_deployed_safe_values(self):
+        self.assertEqual(
+            _build_vless('client-id', 'vpn.example.com', 8443, 'Direct', self.params),
+            'vless://client-id@vpn.example.com:8443?type=tcp&security=reality&'
+            'pbk=public-key&fp=chrome&sni=example.com&sid=short-id&spx=%2F#Direct',
+        )
+
+    def test_query_values_are_percent_encoded(self):
+        params = dict(self.params, public_key='key+with space', server_name='sni/name')
+        query = parse_qs(urlsplit(_build_vless(
+            'client-id', 'vpn.example.com', 8443, 'remark', params)).query)
+        self.assertEqual(query['pbk'], ['key+with space'])
+        self.assertEqual(query['sni'], ['sni/name'])
+
 
 class BuildVlessNetworkTests(SimpleTestCase):
     params_tcp = {
@@ -68,6 +82,162 @@ class BuildVlessNetworkTests(SimpleTestCase):
     def test_grpc_link_uses_grpc_type(self):
         link = _build_vless('client-id', 'host.example', 8080, 'remark', self.params_grpc)
         self.assertEqual(parse_qs(urlsplit(link).query)['type'], ['grpc'])
+
+
+class InternalInboundCanaryTests(SimpleTestCase):
+    endpoints = [
+        {'inbound_id': 7, 'advertised_port': 39329, 'label': '🇳🇱 NL TCP 39329'},
+        {'inbound_id': 9, 'advertised_port': 46517, 'label': '🇳🇱 NL TCP 46517'},
+        {'inbound_id': 13, 'advertised_port': 27914, 'label': '🇳🇱 NL TCP 27914'},
+        {'inbound_id': 10, 'advertised_port': 80, 'label': '🇳🇱 NL gRPC 80'},
+    ]
+
+    def setUp(self):
+        super().setUp()
+        with views._INTERNAL_PROFILE_CACHE_LOCK:
+            views._INTERNAL_PROFILE_CACHE.clear()
+        self.addCleanup(lambda: views._INTERNAL_PROFILE_CACHE.clear())
+
+    @override_settings(SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=False)
+    def test_disabled_flag_excludes_everyone(self):
+        self.assertFalse(_is_internal_test_user(801))
+
+    @override_settings(SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=True,
+                       SUBSCRIPTION_INTERNAL_TEST_USER_IDS=[],
+                       SUBSCRIPTION_INTERNAL_ENDPOINTS=endpoints)
+    def test_empty_allowlist_excludes_everyone(self):
+        self.assertFalse(_is_internal_test_user(801))
+
+    @override_settings(SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=True,
+                       SUBSCRIPTION_INTERNAL_TEST_USER_IDS=[801],
+                       SUBSCRIPTION_INTERNAL_ENDPOINTS=endpoints)
+    def test_only_uservpn_801_is_eligible(self):
+        self.assertTrue(_is_internal_test_user(801))
+        self.assertFalse(_is_internal_test_user(802))
+
+    @override_settings(SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=True,
+                       SUBSCRIPTION_INTERNAL_TEST_USER_IDS=[801, 802],
+                       SUBSCRIPTION_INTERNAL_ENDPOINTS=endpoints)
+    def test_broadened_or_malformed_allowlist_fails_open(self):
+        self.assertFalse(_is_internal_test_user(801))
+
+    @override_settings(SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=True,
+                       SUBSCRIPTION_INTERNAL_TEST_USER_IDS=[801],
+                       SUBSCRIPTION_INTERNAL_ENDPOINTS=[
+                           {'inbound_id': 8, 'advertised_port': 20057, 'label': 'bad'},
+                       ])
+    def test_forbidden_inbound_fails_open(self):
+        self.assertFalse(_is_internal_test_user(801))
+
+    @override_settings(SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=True,
+                       SUBSCRIPTION_INTERNAL_TEST_USER_IDS=[801],
+                       SUBSCRIPTION_INTERNAL_ENDPOINTS=[
+                           {'inbound_id': 10, 'advertised_port': 8080, 'label': 'bad'},
+                       ])
+    def test_grpc_backend_port_fails_open(self):
+        self.assertFalse(_is_internal_test_user(801))
+
+    @override_settings(SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=True,
+                       SUBSCRIPTION_INTERNAL_TEST_USER_IDS=[801],
+                       SUBSCRIPTION_INTERNAL_ENDPOINTS=[
+                           {'inbound_id': 7, 'advertised_port': 39329, 'label': 'one'},
+                           {'inbound_id': 7, 'advertised_port': 46517, 'label': 'two'},
+                       ])
+    def test_duplicate_config_fails_open(self):
+        self.assertFalse(_is_internal_test_user(801))
+
+    @override_settings(SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=True,
+                       SUBSCRIPTION_INTERNAL_TEST_USER_IDS=[801],
+                       SUBSCRIPTION_INTERNAL_ENDPOINTS=[
+                           {'inbound_id': 7, 'advertised_port': 39329, 'label': 'bad\nlabel'},
+                       ])
+    def test_malformed_label_fails_open(self):
+        self.assertFalse(_is_internal_test_user(801))
+
+    def _snapshot(self, inbound_id, *, membership=None, service_name='synthetic-service'):
+        port, network, security = views._INTERNAL_EXPECTED[inbound_id]
+        return {
+            'enabled': True, 'port': port, 'protocol': 'vless', 'network': network,
+            'security': security, 'public_key': f'pk-{inbound_id}',
+            'server_name': f'sni-{inbound_id}.example', 'short_id': f'sid-{inbound_id}',
+            'service_name': service_name if inbound_id == 10 else '',
+            'membership': [(True, 0)] if membership is None else membership,
+        }
+
+    @override_settings(SUBSCRIPTION_BASE_URL='https://sub.example/sub',
+                       SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=True,
+                       SUBSCRIPTION_INTERNAL_TEST_USER_IDS=[801],
+                       SUBSCRIPTION_INTERNAL_ENDPOINTS=endpoints)
+    @patch('apps.subscriptions.views._stable_internal_snapshots')
+    def test_target_profiles_are_isolated_and_transport_specific(self, stable):
+        stable.side_effect = lambda _server, inbounds, _uuid: {
+            inbound: self._snapshot(inbound) for inbound in inbounds}
+
+        links = views._internal_links(1, 'synthetic-client')
+
+        self.assertEqual(len(links), 4)
+        tcp = [parse_qs(urlsplit(link).query) for link in links[:3]]
+        self.assertEqual([query['pbk'] for query in tcp], [['pk-7'], ['pk-9'], ['pk-13']])
+        self.assertTrue(all('flow' not in query for query in tcp))
+        grpc = parse_qs(urlsplit(links[3]).query)
+        self.assertEqual(urlsplit(links[3]).port, 80)
+        self.assertEqual(grpc['type'], ['grpc'])
+        self.assertEqual(grpc['serviceName'], ['synthetic-service'])
+        self.assertNotIn('flow', grpc)
+
+    @override_settings(SUBSCRIPTION_BASE_URL='https://sub.example/sub',
+                       SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=True,
+                       SUBSCRIPTION_INTERNAL_TEST_USER_IDS=[801],
+                       SUBSCRIPTION_INTERNAL_ENDPOINTS=endpoints)
+    @patch('apps.subscriptions.views._stable_internal_snapshots')
+    def test_missing_membership_or_malformed_transport_omits_only_candidate(self, stable):
+        def snapshots(_server, inbounds, _uuid):
+            result = {inbound: self._snapshot(inbound) for inbound in inbounds}
+            result[9]['membership'] = []
+            result[13]['network'] = 'ws'
+            return result
+        stable.side_effect = snapshots
+
+        links = views._internal_links(1, 'synthetic-client')
+
+        self.assertEqual(links, [])
+
+    @override_settings(SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=True,
+                       SUBSCRIPTION_INTERNAL_TEST_USER_IDS=None,
+                       SUBSCRIPTION_INTERNAL_ENDPOINTS=endpoints)
+    def test_malformed_allowlist_value_fails_open(self):
+        self.assertFalse(_is_internal_test_user(801))
+
+    def test_raw_snapshot_extracts_grpc_service_name_from_live_raw_fields(self):
+        inbound = {
+            'enable': True, 'port': 8080, 'protocol': 'vless',
+            'settings': {'clients': [{'id': 'synthetic', 'enable': True, 'expiryTime': 0}]},
+            'streamSettings': {
+                'network': 'grpc', 'security': 'reality',
+                'grpcSettings': {'serviceName': 'synthetic-service'},
+                'realitySettings': {'settings': {'publicKey': 'pk'},
+                                    'serverNames': ['sni'], 'shortIds': ['sid']},
+            },
+        }
+        self.assertEqual(
+            views._normalized_internal_snapshot(inbound, 'synthetic')['service_name'],
+            'synthetic-service',
+        )
+
+    def test_raw_snapshot_requires_exactly_one_enabled_unexpired_client(self):
+        inbound = {
+            'enable': True, 'port': 39329, 'protocol': 'vless',
+            'settings': {'clients': [{'id': 'synthetic', 'enable': True, 'expiryTime': 0}]},
+            'streamSettings': {
+                'network': 'tcp', 'security': 'reality',
+                'realitySettings': {'settings': {'publicKey': 'pk'},
+                                    'serverNames': ['sni'], 'shortIds': ['sid']},
+            },
+        }
+        snapshot = views._normalized_internal_snapshot(inbound, 'synthetic')
+        self.assertEqual(snapshot['membership'], [(True, 0)])
+        inbound['settings']['clients'].append(dict(inbound['settings']['clients'][0]))
+        self.assertEqual(len(views._normalized_internal_snapshot(inbound, 'synthetic')['membership']), 2)
 
 
 class BackupGateTests(SimpleTestCase):
@@ -616,6 +786,11 @@ class BackupSecretFileTests(SimpleTestCase):
 
 
 class SubscriptionLogRedactionTests(SimpleTestCase):
+    def test_control_plane_warning_urls_are_redacted(self):
+        from bot.logging_filters import _redact
+        message = 'request failed https://panel.example.invalid/private/path?token=synthetic'
+        self.assertEqual(_redact(message), 'request failed [REDACTED]')
+
     def test_configured_django_loggers_emit_only_redacted_output(self):
         from bot import settings as bot_settings
         configured = copy.deepcopy(bot_settings.LOGGING)

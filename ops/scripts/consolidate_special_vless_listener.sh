@@ -139,7 +139,7 @@ async def normalize():
     if user_vpn.server.inbound_id != int('$primary_id') or 'flow=' in (user_vpn.vpn_key or ''):
         raise RuntimeError('canary_contract')
     server = await Server.objects.aget(id=user_vpn.server_id)
-    api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password, use_tls_verify=False)
+    api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password)
     await api.login()
     inbound = await api.inbound.get_by_id(server.inbound_id)
     matches = [client for client in inbound.settings.clients if str(client.id) == str(user_vpn.vpn_uuid)]

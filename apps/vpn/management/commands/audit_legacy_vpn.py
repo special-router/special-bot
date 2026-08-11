@@ -29,7 +29,6 @@ async def fetch_control_plane_client_ids(server: Server) -> tuple[set[str], set[
                 server.vpn_url,
                 server.vpn_username,
                 server.vpn_password,
-                use_tls_verify=False,
             )
             await api.login()
             inbound = await api.inbound.get_by_id(server.inbound_id)

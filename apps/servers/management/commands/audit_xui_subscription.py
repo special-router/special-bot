@@ -17,7 +17,7 @@ class SubscriptionClientCounts:
 
 async def fetch_subscription_client_counts(server: Server) -> SubscriptionClientCounts:
     """Read subscription readiness from the legacy inbound without mutations."""
-    api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password, use_tls_verify=False)
+    api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password)
     await api.login()
     inbound = await api.inbound.get_by_id(server.inbound_id)
     clients = inbound.settings.clients

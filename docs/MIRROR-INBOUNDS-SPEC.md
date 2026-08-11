@@ -1,8 +1,9 @@
 # Mirror Inbounds Subscription Specification
 
-> Spec for adding **backup external service** endpoints to the per-user
-> subscription so clients can fail over to reserve VPN providers if SPECIAL
-> infrastructure is down.
+> Spec for external backup services and the separately gated **internal inbound
+> transport canary**. The internal canary is not an independent mirror or a
+> country-diverse fallback: every candidate remains on the same NL origin.
+> It is limited to specifically validated alternate transports.
 >
 > **Definition:** "Mirror inbound" = an endpoint on an **external backup VPN
 > service**, NOT our own 3x-ui ports. Our own NL ports (7,8,9,13) are
@@ -23,24 +24,59 @@ subscription, multiple providers, client switches automatically. This spec
 brings the same resilience using **external backup VPN services** — not our
 own unused 3x-ui ports.
 
-## Why not our own NL ports (7,8,9,13)
+## Internal inbound canary (UserVPN 801 only)
 
-Tested 2026-08-11: inbounds 7,8,9,13 on NL exist and listen, but:
+Protected operation `op-20260811T180315Z-533cbef3` later established that
+UserVPN 801 exists exactly once in retained inbounds **7, 9, 13 and 10**, and
+fresh RU sing-box probes passed 3/3 for each: TCP/Reality on public ports
+39329, 46517 and 27914, plus gRPC/Reality through the public frontend on port
+80. Inbound 10's direct `:8080` is diagnostic-only and is never advertised.
 
-- **No per-client UUIDs** — the test client UUID exists only in inbound 5
-  (85 clients). Inbounds 7,8,9 have 1-2 clients each, none matching our
-  users. Adding a user to inbound 5 does NOT add them to 7,8,9,13.
-- `sync_expiry_times` propagates enable/expiry to `MIRROR_INBOUND_IDS`, but
-  does NOT create clients — the UUIDs must be added per-inbound in 3x-ui.
-- Reality SNI differs (`google.com` vs `yandex.net`), but that is not the
-  blocker — the missing UUID is.
-- xray probe confirmed: UUID #195 connects via inbound 5 (204 OK) but
-  fails via 7,8,9,13 (000, UUID not in that inbound's client list).
+Inbound 8 and 11 failed and are absent; inbound 12 (mKCP) is unsupported and
+absent. These targets are not generic mirrors: they are same-NL-origin
+alternate listeners and each relies on the requested user's separate
+per-inbound membership. `sync_expiry_times` does not create that membership.
 
-**Conclusion:** our own extra ports are not mirror endpoints. They are
-alternate listeners that would each need full client provisioning. Using
-them as "mirrors" without per-inbound client sync would produce broken
-subscription links.
+The default-off runtime namespace is:
+
+```dotenv
+SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=false
+SUBSCRIPTION_INTERNAL_TEST_USER_IDS=[]
+SUBSCRIPTION_INTERNAL_ENDPOINTS=[]
+```
+
+Each endpoint contains only `inbound_id`, `advertised_port`, and `label`.
+The renderer accepts only 7/9/13/10 and uses one authenticated panel session
+for two bounded, identical full snapshot rounds. It freshly revalidates
+enabled, unexpired, exactly-once client membership for every emitted line;
+uncertainty omits the complete internal batch. TCP links have empty flow. gRPC
+uses the raw live `grpcSettings.serviceName` and public port 80. `multiMode`
+has no VLESS URI field; its public-frontend behavior is empirical validation,
+not an encoded semantic claim.
+
+For the exactly configured UserVPN 801 canary, normal disable, reactivation,
+removal and daily expiry synchronization update only pre-existing, exact UUID
+memberships in all four retained targets. This separate policy never adds
+these IDs to `MIRROR_INBOUND_IDS`, never creates a target member, and reports
+missing, duplicate, mismatched or partial-panel results as an aggregate
+fail-closed error. It makes no ownership inference.
+
+Panel access requires HTTPS with certificate verification. Before any mutation,
+operators run the protected read-only `probe_special_uservpn801.py --tls-check`;
+it prints only pass/block and never URL, path, certificate, or panel output.
+Deployments whose certificate does not chain to public trust may set `XUI_PANEL_CA_FILE` to a
+regular mode-0600 protected runtime CA file; do not put certificate contents
+or its host path in Git or logs. Invalid/missing configured CA material fails
+closed.
+
+Protected operator backups and journals remain retained through review and
+acceptance. After documented owner acceptance, an owner may use the protected
+host procedure to archive/remove only the completed operation directory after
+verifying its backup checksum and that no resume/manual-recovery state exists.
+Never delete current production artifacts as routine cleanup.
+
+Manual canaries must repeat entitlement, enable, expiry and exact membership
+checks before use. The 48-hour soak remains waived, not passed.
 
 ## Goal
 
@@ -139,19 +175,10 @@ Before implementing:
 
 ## Why the previous implementation was removed
 
-The 2026-08-11 implementation (`SUBSCRIPTION_MIRROR_INBOUNDS_ENABLED` +
-`SUBSCRIPTION_MIRROR_INBOUND_IDS=[7,8,9,13]`) was deployed to test-group
-UserVPN #195 and produced 7-line subscriptions. Testing revealed all 4
-mirror lines failed (xray probe: 000 for each) because the user's UUID
-existed only in inbound 5, not in 7,8,9,13. The subscription rendered
-correct per-inbound Reality params, but the UUID was absent from those
-inbounds' client lists.
-
-The implementation code (`_mirror_links`, `_is_mirror_test_user`) and
-settings remain in the codebase as a generic mechanism, but the
-`SUBSCRIPTION_MIRROR_INBOUND_IDS` must NOT point at our own ports without
-per-inbound client provisioning. The settings were removed from
-production `.environment` and the test subscription reverted to 3 lines.
+An earlier internal-mirror attempt was removed after memberships were found
+missing. The later protected operation above provisioned and validated only
+801's retained set. Do not set `MIRROR_INBOUND_IDS` to these ports: that
+setting owns synchronization behavior and is not part of this renderer.
 
 ## Safety constraints
 

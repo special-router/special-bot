@@ -223,7 +223,6 @@ async def get_canary_subscription(user_vpn: UserVPN) -> str:
         user_vpn.server.vpn_url,
         user_vpn.server.vpn_username,
         user_vpn.server.vpn_password,
-        use_tls_verify=False,
     )
     await api.login()
     inbound = await api.inbound.get_by_id(user_vpn.server.inbound_id)

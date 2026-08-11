@@ -153,7 +153,7 @@ from apps.servers.models import Server
 from utils.py3xui.async_api import AsyncApi
 async def check():
     server = await Server.objects.aget(id=1)
-    api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password, use_tls_verify=False)
+    api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password)
     await api.login()
     await api.inbound.get_by_id(server.inbound_id)
 asyncio.run(check())
@@ -245,7 +245,7 @@ from apps.servers.models import Server
 from utils.py3xui.async_api import AsyncApi
 async def check():
     server = await Server.objects.aget(id=1)
-    api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password, use_tls_verify=False)
+    api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password)
     await api.login()
     inbound = await api.inbound.get_by_id(server.inbound_id)
     assert inbound.id == server.inbound_id

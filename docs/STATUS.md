@@ -60,7 +60,11 @@
   2. `🇳🇱 NL Direct` (`sub.special-wifi.ru:8443`)
   3. `🇳🇱 NL Relay` (`201.34.132.118:443`)
   Direct/Relay links preserve the deployed legacy no-flow client contract;
-  Vision is not forced without an explicit per-client migration.
+  Vision is not forced without an explicit per-client migration. A separately
+  default-off internal-inbound canary may add 801-only same-NL-origin lines
+  from retained 7/9/13 TCP and 10 gRPC via public :80 after fresh per-target
+  membership/enable/expiry checks. It is not an independent mirror; 8/11/12
+  are excluded, :8080 is diagnostic-only, and gRPC multiMode has no URI field.
 - Production runs L0 control-plane, L1 regional TCP, protected L2
   subscription/direct-VLESS and Host capacity monitoring on an isolated queue.
   Host records aggregate memory, swap, load-per-CPU and OOM count only. The
@@ -75,7 +79,10 @@
 - `sync_expiry_times` runs at 00:05 UTC (after billing) and mirrors the
   remaining balance days into the 3x-ui client `expiryTime` across the primary
   inbound and mirrors, and writes the status label into the status inbound's
-  `email` field. Clients with no remaining days are disabled and marked
+  `email` field. The disabled-by-default internal canary has a separate,
+  fixed UserVPN 801 policy for the pre-existing retained 7/9/13/10 memberships:
+  it updates enable/expiry only after exact membership validation and never
+  creates or infers a target membership. Clients with no remaining days are disabled and marked
   `подписка окончена` with an `expiryTime` in the past, so happ hides them.
 - `add_user` no longer stamps the telegram id/timestamp into the 3x-ui client
   `email`; working inbounds keep an empty `email` so their subscription remark
