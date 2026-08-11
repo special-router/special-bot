@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/special_ssh.sh"
+
 BOT_HOST=${SPECIAL_BOT_HOST:-72.56.23.226}
 SSH_KEY=${SPECIAL_BOT_SSH_KEY:-$HOME/.ssh/id_ed25519}
 SSH=(
@@ -17,9 +19,9 @@ SSH=(
 if [[ -n "${SPECIAL_BOT_SSH_JUMP:-}" ]]; then
   SSH+=(-J "$SPECIAL_BOT_SSH_JUMP")
 fi
-SSH+=("root@$BOT_HOST")
+SSH+=("$(special_ssh_target "$SPECIAL_BOT_SSH_USER" "$BOT_HOST")")
 
-timeout "${SPECIAL_PREFLIGHT_TIMEOUT:-240}" "${SSH[@]}" bash -s <<'REMOTE'
+timeout "${SPECIAL_PREFLIGHT_TIMEOUT:-240}" "${SSH[@]}" sudo -n bash -s <<'REMOTE'
 set -euo pipefail
 cd /root/special-bot
 printf 'revision='; git rev-parse --short HEAD

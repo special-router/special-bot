@@ -53,16 +53,21 @@ systemctl is-active "$unit"
 ss -lntp '( sport = :22 )'
 ```
 
-From the operator workstation, verify the existing pinned key and host key:
+From the operator workstation, verify the normal named-operator key, host key,
+and non-interactive privileged path. Root SSH is a bootstrap/rollback-only
+channel before `PermitRootLogin no` is applied, never the normal post-cutover
+verification route:
 
 ```bash
 ssh -i ~/.ssh/id_ed25519 \
-  -o BatchMode=yes \
+  -o IdentitiesOnly=yes -o BatchMode=yes \
   -o PasswordAuthentication=no \
   -o KbdInteractiveAuthentication=no \
+  -o ControlMaster=no -o ControlPath=none \
   -o StrictHostKeyChecking=yes \
   -o ConnectTimeout=10 \
-  root@"$SPECIAL_BOT_HOST" 'echo KEY_ONLY_OK'
+  "${SPECIAL_BOT_SSH_USER:-specialops}@${SPECIAL_BOT_HOST}" \
+  'test "$(id -u)" -ne 0; test "$(sudo -n id -u)" = 0; echo OPS_KEY_SUDO_OK'
 ```
 
 If reload succeeds but no banner appears, inspect load/OOM/conntrack, memory

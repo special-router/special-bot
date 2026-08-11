@@ -11,6 +11,23 @@ ROOT = Path(__file__).resolve().parents[2]
 MARKDOWN = [ROOT / 'README.md', *sorted((ROOT / 'docs').glob('*.md'))]
 SHELL = sorted((ROOT / 'ops' / 'scripts').glob('*.sh'))
 PYTHON_SCRIPTS = sorted((ROOT / 'ops' / 'scripts').glob('*.py'))
+CANONICAL_OPERATOR_SCRIPTS = (
+    'preflight_special_subscription.sh',
+    'deploy_special_subscription_app.sh',
+    'backfill_special_subscription_ids.sh',
+    'rotate_special_xui_credentials.sh',
+    'rotate_special_redis_credentials.sh',
+    'consolidate_special_vless_listener.sh',
+    'tune_special_nl_tcp.sh',
+    'verify_special_hardening.sh',
+    'verify_special_full_backlog.sh',
+    'verify_scale_closeout.sh',
+    'preflight_special_infrastructure_adoption.sh',
+    'adopt_special_infrastructure_ownership.sh',
+    'audit_special_redis_rotation.sh',
+    'retire_special_legacy_app_assets.sh',
+)
+BOOTSTRAP_ROOT_SCRIPT = 'harden_special_ssh.sh'
 
 STALE_MARKERS = (
     'vpn-ops/scripts',
@@ -67,6 +84,26 @@ def check_scripts() -> None:
                 fail(f'{relative}: possible {name}')
         if path.stat().st_mode & 0o111 == 0:
             fail(f'{relative}: script is not executable')
+    helper = ROOT / 'ops' / 'scripts' / 'special_ssh.sh'
+    if not helper.exists():
+        fail('ops/scripts/special_ssh.sh: named-operator helper missing')
+    helper_text = helper.read_text(encoding='utf-8')
+    if 'SPECIAL_SSH_USER:=specialops' not in helper_text:
+        fail('ops/scripts/special_ssh.sh: specialops default missing')
+    bootstrap = (ROOT / 'ops' / 'scripts' / BOOTSTRAP_ROOT_SCRIPT).read_text(encoding='utf-8')
+    if 'PermitRootLogin no' not in bootstrap or 'SPECIAL_SSH_HARDEN_APPROVED' not in bootstrap:
+        fail('ops/scripts/harden_special_ssh.sh: approved root-login cutover gate missing')
+    for name in CANONICAL_OPERATOR_SCRIPTS:
+        path = ROOT / 'ops' / 'scripts' / name
+        text = path.read_text(encoding='utf-8')
+        if 'root@' in text:
+            fail(f'ops/scripts/{name}: direct root SSH target is forbidden')
+        if 'special_ssh.sh' not in text:
+            fail(f'ops/scripts/{name}: named-operator helper is required')
+        if 'SPECIAL_BOT_SSH_USER' not in text and 'SPECIAL_NL_SSH_USER' not in text:
+            fail(f'ops/scripts/{name}: host-specific operator variable is required')
+        if 'sudo -n' not in text:
+            fail(f'ops/scripts/{name}: non-interactive sudo is required')
 
 
 def main() -> None:

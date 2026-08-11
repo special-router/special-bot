@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/special_ssh.sh"
+
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 PYTHON=${SPECIAL_VERIFY_PYTHON:-$ROOT/.venv/bin/python}
 BOT_HOST=${SPECIAL_BOT_HOST:-72.56.23.226}
@@ -19,7 +21,7 @@ SSH=(
 if [[ -n "${SPECIAL_BOT_SSH_JUMP:-}" ]]; then
   SSH+=(-J "$SPECIAL_BOT_SSH_JUMP")
 fi
-SSH+=("root@$BOT_HOST")
+SSH+=("$(special_ssh_target "$SPECIAL_BOT_SSH_USER" "$BOT_HOST")")
 
 [[ -x "$PYTHON" ]] || {
   echo "BLOCK: Python venv not found at $PYTHON; set SPECIAL_VERIFY_PYTHON" >&2
@@ -41,7 +43,7 @@ CELERY_ALWAYS_EAGER=true \
   "$PYTHON" -m pytest -q
 
 printf '%s\n' '=== production aggregate validation ==='
-timeout "${SPECIAL_VERIFY_REMOTE_TIMEOUT:-180}" "${SSH[@]}" 'bash -s' <<'REMOTE'
+timeout "${SPECIAL_VERIFY_REMOTE_TIMEOUT:-180}" "${SSH[@]}" 'sudo -n bash -s' <<'REMOTE'
 set -euo pipefail
 cd /root/special-bot
 printf 'production_commit='; git rev-parse --short HEAD

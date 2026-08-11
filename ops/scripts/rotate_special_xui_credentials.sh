@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/special_ssh.sh"
+
 BOT_HOST=${SPECIAL_BOT_HOST:-72.56.23.226}
 NL_HOST=${SPECIAL_XUI_HOST:-195.66.213.74}
 SERVER_ID=${SPECIAL_SERVER_ID:-1}
 EXPECTED_COMMIT=${SPECIAL_SUBSCRIPTION_COMMIT:-$(git -C "$(dirname "${BASH_SOURCE[0]}")/../.." rev-parse --short HEAD)}
+special_require_commit "$EXPECTED_COMMIT" SPECIAL_EXPECTED_COMMIT
 SSH_KEY=${SPECIAL_BOT_SSH_KEY:-$HOME/.ssh/id_ed25519}
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-BOT_BUNDLE="/root/.special-xui-rotation.$STAMP.json"
-BOT_BACKUP="/root/.special-xui-server.$STAMP.json"
-NL_BUNDLE="/root/.special-xui-rotation.$STAMP.json"
+special_ssh_require_tmp_dir
+BOT_STAGE_DIR=
+NL_STAGE_DIR=
+BOT_BUNDLE=
+BOT_BACKUP=
+NL_BUNDLE=
 NL_BACKUP="/etc/x-ui/x-ui.db.subscription-rotation.$STAMP.bak"
 TMP_DIR=$(mktemp -d)
 BUNDLE="$TMP_DIR/rotation.json"
@@ -31,10 +37,19 @@ cleanup_local() {
 trap cleanup_local EXIT
 chmod 700 "$TMP_DIR"
 
-BOT="root@$BOT_HOST"
-NL="root@$NL_HOST"
-ssh "${SSH_OPTIONS[@]}" "$BOT" 'echo bot_ssh=ok' >/dev/null
-ssh "${SSH_OPTIONS[@]}" "$NL" 'echo nl_ssh=ok' >/dev/null
+BOT="$(special_ssh_target "$SPECIAL_BOT_SSH_USER" "$BOT_HOST")"
+NL="$(special_ssh_target "$SPECIAL_NL_SSH_USER" "$NL_HOST")"
+ssh "${SSH_OPTIONS[@]}" "$BOT" 'sudo -n true; echo bot_ssh=ok' >/dev/null
+ssh "${SSH_OPTIONS[@]}" "$NL" 'sudo -n true; echo nl_ssh=ok' >/dev/null
+BOT_STAGE_DIR=$(ssh "${SSH_OPTIONS[@]}" "$BOT" "sudo -n mktemp -d -p '$SPECIAL_SSH_TMP_DIR' .special-xui-rotation.XXXXXXXX.bot")
+NL_STAGE_DIR=$(ssh "${SSH_OPTIONS[@]}" "$NL" "sudo -n mktemp -d -p '$SPECIAL_SSH_TMP_DIR' .special-xui-rotation.XXXXXXXX.nl")
+[[ $BOT_STAGE_DIR == "$SPECIAL_SSH_TMP_DIR"/.special-xui-rotation.*.bot ]]
+[[ $NL_STAGE_DIR == "$SPECIAL_SSH_TMP_DIR"/.special-xui-rotation.*.nl ]]
+ssh "${SSH_OPTIONS[@]}" "$BOT" sudo -n chown "$SPECIAL_BOT_SSH_USER:$SPECIAL_BOT_SSH_USER" "$BOT_STAGE_DIR"
+ssh "${SSH_OPTIONS[@]}" "$NL" sudo -n chown "$SPECIAL_NL_SSH_USER:$SPECIAL_NL_SSH_USER" "$NL_STAGE_DIR"
+BOT_BUNDLE="$BOT_STAGE_DIR/rotation.json"
+BOT_BACKUP="$BOT_STAGE_DIR/server-backup.json"
+NL_BUNDLE="$NL_STAGE_DIR/rotation.json"
 
 username="special_$(openssl rand -hex 8)"
 password=$(openssl rand -hex 32)
@@ -50,7 +65,8 @@ unset username password web_path
 
 scp "${SSH_OPTIONS[@]}" "$BUNDLE" "$BOT:$BOT_BUNDLE" >/dev/null
 if ! scp "${SSH_OPTIONS[@]}" "$BUNDLE" "$NL:$NL_BUNDLE" >/dev/null; then
-  ssh "${SSH_OPTIONS[@]}" "$BOT" "rm -f -- '$BOT_BUNDLE'" >/dev/null 2>&1 || true
+  ssh "${SSH_OPTIONS[@]}" "$BOT" "sudo -n rm -rf -- '$BOT_STAGE_DIR'" >/dev/null 2>&1 || true
+  ssh "${SSH_OPTIONS[@]}" "$NL" "sudo -n rm -rf -- '$NL_STAGE_DIR'" >/dev/null 2>&1 || true
   exit 24
 fi
 
@@ -60,7 +76,7 @@ rollback() {
   if [[ "$rc" -ne 0 ]]; then
     # Restore the panel first so restarted bot services never use credentials
     # that point at the wrong control-plane state.
-    ssh "${SSH_OPTIONS[@]}" "$NL" bash -s -- "$NL_BACKUP" <<'NLROLLBACK' >/dev/null 2>&1 || true
+    ssh "${SSH_OPTIONS[@]}" "$NL" sudo -n bash -s -- "$NL_BACKUP" <<'NLROLLBACK' >/dev/null 2>&1 || true
 set -u
 backup=$1
 if [[ -f "$backup" ]]; then
@@ -69,7 +85,7 @@ if [[ -f "$backup" ]]; then
   x-ui restart >/dev/null 2>&1 || true
 fi
 NLROLLBACK
-    ssh "${SSH_OPTIONS[@]}" "$BOT" bash -s -- "$BOT_BACKUP" "$SERVER_ID" <<'BOTROLLBACK' >/dev/null 2>&1 || true
+    ssh "${SSH_OPTIONS[@]}" "$BOT" sudo -n bash -s -- "$BOT_BACKUP" "$SERVER_ID" <<'BOTROLLBACK' >/dev/null 2>&1 || true
 set -u
 backup=$1
 server_id=$2
@@ -99,14 +115,14 @@ RUN_MIGRATIONS=false docker compose -f docker-compose.deploy.yml up -d --no-deps
 BOTROLLBACK
     echo "ROLLBACK_ATTEMPTED rc=$rc" >&2
   fi
-  ssh "${SSH_OPTIONS[@]}" "$BOT" "rm -f -- '$BOT_BUNDLE'" >/dev/null 2>&1 || true
-  ssh "${SSH_OPTIONS[@]}" "$NL" "rm -f -- '$NL_BUNDLE'" >/dev/null 2>&1 || true
+  ssh "${SSH_OPTIONS[@]}" "$BOT" "sudo -n rm -rf -- '$BOT_STAGE_DIR'" >/dev/null 2>&1 || true
+  ssh "${SSH_OPTIONS[@]}" "$NL" "sudo -n rm -rf -- '$NL_STAGE_DIR'" >/dev/null 2>&1 || true
   cleanup_local
   exit "$rc"
 }
 trap rollback EXIT
 
-ssh "${SSH_OPTIONS[@]}" "$BOT" bash -s -- \
+ssh "${SSH_OPTIONS[@]}" "$BOT" sudo -n bash -s -- \
   "$BOT_BUNDLE" "$BOT_BACKUP" "$SERVER_ID" "$EXPECTED_COMMIT" <<'BOTPREP'
 set -euo pipefail
 bundle=$1
@@ -158,7 +174,7 @@ chmod 600 "$backup"
 docker compose -f docker-compose.deploy.yml stop web celery broadcast celery_beat monitoring >/dev/null
 BOTPREP
 
-ssh "${SSH_OPTIONS[@]}" "$NL" bash -s -- "$NL_BUNDLE" "$NL_BACKUP" <<'NLUPDATE'
+ssh "${SSH_OPTIONS[@]}" "$NL" sudo -n bash -s -- "$NL_BUNDLE" "$NL_BACKUP" <<'NLUPDATE'
 set -euo pipefail
 bundle=$1
 backup=$2
@@ -184,7 +200,7 @@ echo 'FAIL: x-ui listeners did not recover' >&2
 exit 32
 NLUPDATE
 
-ssh "${SSH_OPTIONS[@]}" "$BOT" bash -s -- "$BOT_BUNDLE" "$SERVER_ID" <<'BOTUPDATE'
+ssh "${SSH_OPTIONS[@]}" "$BOT" sudo -n bash -s -- "$BOT_BUNDLE" "$SERVER_ID" <<'BOTUPDATE'
 set -euo pipefail
 bundle=$1
 server_id=$2
@@ -246,9 +262,9 @@ print("monitoring=healthy")
 ' >/dev/null
 BOTUPDATE
 
-ssh "${SSH_OPTIONS[@]}" "$NL" "test \"\$(stat -c '%a' /etc/x-ui/x-ui.db)\" = 600" >/dev/null
+ssh "${SSH_OPTIONS[@]}" "$NL" "sudo -n test \"\$(sudo -n stat -c '%a' /etc/x-ui/x-ui.db)\" = 600" >/dev/null
 trap - EXIT
-ssh "${SSH_OPTIONS[@]}" "$NL" "rm -f -- '$NL_BUNDLE' '$NL_BACKUP'" >/dev/null 2>&1 || true
-ssh "${SSH_OPTIONS[@]}" "$BOT" "rm -f -- '$BOT_BUNDLE' '$BOT_BACKUP'" >/dev/null 2>&1 || true
+ssh "${SSH_OPTIONS[@]}" "$NL" "sudo -n rm -rf -- '$NL_STAGE_DIR'; sudo -n rm -f -- '$NL_BACKUP'" >/dev/null 2>&1 || true
+ssh "${SSH_OPTIONS[@]}" "$BOT" "sudo -n rm -rf -- '$BOT_STAGE_DIR'" >/dev/null 2>&1 || true
 cleanup_local
 echo 'rotation=passed'

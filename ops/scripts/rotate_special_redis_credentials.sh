@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/special_ssh.sh"
+
 BOT_HOST=${SPECIAL_BOT_HOST:-72.56.23.226}
 SSH_KEY=${SPECIAL_BOT_SSH_KEY:-$HOME/.ssh/id_ed25519}
 EXPECTED_COMMIT=${SPECIAL_REDIS_COMMIT:-$(git -C "$(dirname "${BASH_SOURCE[0]}")/../.." rev-parse --short HEAD)}
+special_require_commit "$EXPECTED_COMMIT" SPECIAL_EXPECTED_COMMIT
 REMOTE_PATH=${SPECIAL_BOT_REMOTE_PATH:-/root/special-bot}
+special_ssh_require_abs_path "$REMOTE_PATH" SPECIAL_BOT_REMOTE_PATH
 APP_COMPOSE=${SPECIAL_BOT_COMPOSE_FILE:-docker-compose.deploy.yml}
+special_ssh_require_relative_path "$APP_COMPOSE" SPECIAL_BOT_COMPOSE_FILE
 OWNER_COMPOSE=${SPECIAL_REDIS_OWNER_COMPOSE_FILE:-$REMOTE_PATH/docker-compose.infrastructure.yml}
 OWNER_ENV=${SPECIAL_REDIS_OWNER_ENV_FILE:-$REMOTE_PATH/.environment}
+special_ssh_require_abs_path "$OWNER_COMPOSE" SPECIAL_REDIS_OWNER_COMPOSE_FILE
+special_ssh_require_abs_path "$OWNER_ENV" SPECIAL_REDIS_OWNER_ENV_FILE
 
 SSH=(
   ssh -i "$SSH_KEY"
@@ -21,9 +28,9 @@ SSH=(
   -o ServerAliveCountMax=2
 )
 [[ -z "${SPECIAL_BOT_SSH_JUMP:-}" ]] || SSH+=(-J "$SPECIAL_BOT_SSH_JUMP")
-SSH+=("root@$BOT_HOST")
+SSH+=("$(special_ssh_target "$SPECIAL_BOT_SSH_USER" "$BOT_HOST")")
 
-"${SSH[@]}" bash -s -- "$REMOTE_PATH" "$APP_COMPOSE" "$OWNER_COMPOSE" "$OWNER_ENV" "$EXPECTED_COMMIT" <<'REMOTE'
+"${SSH[@]}" sudo -n bash -s -- "$REMOTE_PATH" "$APP_COMPOSE" "$OWNER_COMPOSE" "$OWNER_ENV" "$EXPECTED_COMMIT" <<'REMOTE'
 set -euo pipefail
 remote_path=$1
 app_compose=$2

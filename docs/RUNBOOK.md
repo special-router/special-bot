@@ -127,9 +127,15 @@ expiryTime, billing, inbound deletion or transport changes.
 
 ## Guarded scripts
 
-Run from the canonical SPECIAL Bot checkout. Scripts are fail-closed and keep
-remote secrets out of output; mutating scripts still require the authorization
-stated above.
+Run from the canonical SPECIAL Bot checkout. Canonical BOT/NL scripts connect
+as the named operator `specialops` by default (`SPECIAL_SSH_USER`), with
+`SPECIAL_BOT_SSH_USER` and `SPECIAL_NL_SSH_USER` available for host-specific
+accounts. They require a pinned key, `BatchMode=yes`, and `sudo -n`; `/root/special-bot`
+may remain the sudo-managed checkout via `SPECIAL_BOT_REMOTE_PATH`. Do not use
+root SSH after the cutover. SCP inputs are staged only below `SPECIAL_SSH_TMP_DIR`
+(default `/tmp`, mode-0600 artifacts) and privileged remote bodies run through
+`sudo -n`. Scripts are fail-closed and keep remote secrets out of output;
+mutating scripts still require the authorization stated above.
 
 - `ops/scripts/preflight_special_subscription.sh` — read-only host/deployment
   preflight.
@@ -148,8 +154,14 @@ stated above.
   separate backup/restore window.
 - `ops/scripts/rotate_special_redis_credentials.sh` — disruptive clean-owner
   Redis rotation; separate window required, PostgreSQL is excluded.
-- `ops/scripts/harden_special_ssh.sh` — staged SSH hardening; refuses without an
-  explicit approval flag and still requires a retained human rollback session.
+- `ops/scripts/harden_special_ssh.sh` — root-bootstrap-only staged SSH hardening;
+  refuses without `SPECIAL_SSH_HARDEN_APPROVED=true`. Before cutover it provisions
+  or verifies `specialops`, its single ED25519 key and isolated `NOPASSWD` sudoers
+  entry, proves a fresh non-multiplexed key+sudo session, retains a root master,
+  arms an on-host five-minute rollback watchdog, verifies connection-specific
+  `sshd -T -C` precedence, reloads one host, then proves fresh `specialops` and
+  rejects fresh root before disarming rollback. Run BOT fully before NL; do not
+  invoke it without an approved retained root/provider recovery channel.
 - `ops/scripts/retire_special_legacy_app_assets.sh` — exact allowlisted stopped
   app cleanup; refuses by default and never targets PostgreSQL/Redis.
 - `ops/scripts/verify_special_hardening.sh` — firewall, swap, legacy and

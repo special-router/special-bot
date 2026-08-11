@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/special_ssh.sh"
+
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 PYTHON=${SPECIAL_VERIFY_PYTHON:-$ROOT/.venv/bin/python}
 [[ -x "$PYTHON" ]] || {
@@ -31,8 +33,8 @@ if [[ ${SPECIAL_VERIFY_PRODUCTION:-false} == true ]]; then
     ssh -i "${SPECIAL_BOT_SSH_KEY:-$HOME/.ssh/id_ed25519}" \
       -o BatchMode=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no \
       -o StrictHostKeyChecking=yes -o ConnectTimeout=10 \
-      "root@${SPECIAL_BOT_HOST:-72.56.23.226}" \
-      'docker exec special-bot-web-1 python -c '\''import os,django; os.environ.setdefault("DJANGO_SETTINGS_MODULE","bot.settings"); django.setup(); from apps.monitoring.models import MonitorState; MonitorState.objects.filter(layer="l2").delete(); from apps.monitoring.tasks import run_protocol_monitor; run_protocol_monitor.delay()'\''; sleep 40'
+      "$(special_ssh_target "$SPECIAL_BOT_SSH_USER" "${SPECIAL_BOT_HOST:-72.56.23.226}")" \
+      'sudo -n docker exec special-bot-web-1 python -c '\''import os,django; os.environ.setdefault("DJANGO_SETTINGS_MODULE","bot.settings"); django.setup(); from apps.monitoring.models import MonitorState; MonitorState.objects.filter(layer="l2").delete(); from apps.monitoring.tasks import run_protocol_monitor; run_protocol_monitor.delay()'\''; sleep 40'
     SPECIAL_HARDENING_COMMIT="$expected_commit" ./ops/scripts/verify_special_hardening.sh
   fi
   ./ops/scripts/audit_special_redis_rotation.sh

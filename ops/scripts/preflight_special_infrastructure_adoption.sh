@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/special_ssh.sh"
+
 BOT_HOST=${SPECIAL_BOT_HOST:-72.56.23.226}
 SSH_KEY=${SPECIAL_BOT_SSH_KEY:-$HOME/.ssh/id_ed25519}
 REMOTE_PATH=${SPECIAL_BOT_REMOTE_PATH:-/root/special-bot}
+special_ssh_require_abs_path "$REMOTE_PATH" SPECIAL_BOT_REMOTE_PATH
 COMPOSE_FILE=${SPECIAL_INFRA_COMPOSE_FILE:-docker-compose.infrastructure.yml}
+special_ssh_require_relative_path "$COMPOSE_FILE" SPECIAL_INFRA_COMPOSE_FILE
 EXPECTED_COMMIT=${SPECIAL_INFRA_COMMIT:-$(git -C "$(dirname "${BASH_SOURCE[0]}")/../.." rev-parse --short HEAD)}
-SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o StrictHostKeyChecking=yes -o ConnectTimeout=10 "root@$BOT_HOST")
+special_require_commit "$EXPECTED_COMMIT" SPECIAL_EXPECTED_COMMIT
+SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o StrictHostKeyChecking=yes -o ConnectTimeout=10 "$(special_ssh_target "$SPECIAL_BOT_SSH_USER" "$BOT_HOST")")
 
-"${SSH[@]}" bash -s -- "$REMOTE_PATH" "$COMPOSE_FILE" "$EXPECTED_COMMIT" <<'REMOTE'
+"${SSH[@]}" sudo -n bash -s -- "$REMOTE_PATH" "$COMPOSE_FILE" "$EXPECTED_COMMIT" <<'REMOTE'
 set -euo pipefail
 remote_path=$1
 compose_file=$2

@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/special_ssh.sh"
+
 BOT_HOST=${SPECIAL_BOT_HOST:-72.56.23.226}
 NL_HOST=${SPECIAL_XUI_HOST:-195.66.213.74}
 EXPECTED_COMMIT=${SPECIAL_PRODUCTION_COMMIT:-$(git -C "$(dirname "${BASH_SOURCE[0]}")/../.." rev-parse --short HEAD)}
+special_require_commit "$EXPECTED_COMMIT" SPECIAL_EXPECTED_COMMIT
 SSH_KEY=${SPECIAL_BOT_SSH_KEY:-$HOME/.ssh/id_ed25519}
 PRIMARY_INBOUND_ID=${SPECIAL_PRIMARY_INBOUND_ID:-5}
 STATUS_INBOUND_ID=${SPECIAL_STATUS_INBOUND_ID:-1}
@@ -22,22 +25,22 @@ SSH_OPTIONS=(
   -o ServerAliveInterval=10
   -o ServerAliveCountMax=2
 )
-BOT="root@$BOT_HOST"
-NL="root@$NL_HOST"
+BOT="$(special_ssh_target "$SPECIAL_BOT_SSH_USER" "$BOT_HOST")"
+NL="$(special_ssh_target "$SPECIAL_NL_SSH_USER" "$NL_HOST")"
 
 [[ ${SPECIAL_APPROVE_LISTENER_CONSOLIDATION:-} == YES ]] || {
   echo 'BLOCK: set SPECIAL_APPROVE_LISTENER_CONSOLIDATION=YES for this production cutover' >&2
   exit 2
 }
 
-ssh "${SSH_OPTIONS[@]}" "$BOT" 'echo bot_ssh=ok' >/dev/null
-ssh "${SSH_OPTIONS[@]}" "$NL" 'echo nl_ssh=ok' >/dev/null
+ssh "${SSH_OPTIONS[@]}" "$BOT" 'sudo -n true; echo bot_ssh=ok' >/dev/null
+ssh "${SSH_OPTIONS[@]}" "$NL" 'sudo -n true; echo nl_ssh=ok' >/dev/null
 
 rollback() {
   rc=$?
   trap - EXIT
   if [[ $rc -ne 0 ]]; then
-    ssh "${SSH_OPTIONS[@]}" "$NL" bash -s -- "$NL_BACKUP" <<'NLROLLBACK' >/dev/null 2>&1 || true
+    ssh "${SSH_OPTIONS[@]}" "$NL" sudo -n bash -s -- "$NL_BACKUP" <<'NLROLLBACK' >/dev/null 2>&1 || true
 set -u
 backup=$1
 if [[ -f "$backup" ]]; then
@@ -52,7 +55,7 @@ NLROLLBACK
 }
 trap rollback EXIT
 
-ssh "${SSH_OPTIONS[@]}" "$BOT" bash -s -- "$EXPECTED_COMMIT" <<'BOTCHECK'
+ssh "${SSH_OPTIONS[@]}" "$BOT" sudo -n bash -s -- "$EXPECTED_COMMIT" <<'BOTCHECK'
 set -euo pipefail
 expected_commit=$1
 cd /root/special-bot
@@ -74,7 +77,7 @@ grep -q 'layer=l1 ok=true' /tmp/special-monitoring-preflight.out
 rm -f /tmp/special-monitoring-preflight.out
 BOTCHECK
 
-ssh "${SSH_OPTIONS[@]}" "$NL" bash -s -- \
+ssh "${SSH_OPTIONS[@]}" "$NL" sudo -n bash -s -- \
   "$NL_BACKUP" "$PRIMARY_INBOUND_ID" "$STATUS_INBOUND_ID" "$MIRROR_INBOUND_ID" <<'NLPREP'
 set -euo pipefail
 backup=$1
@@ -121,7 +124,7 @@ NLPREP
 # The protected canary's stored direct key is legacy no-flow. Normalize only
 # that explicitly configured internal client before removing duplicate listeners;
 # the NL database backup above covers this API mutation as part of rollback.
-ssh "${SSH_OPTIONS[@]}" "$BOT" bash -s -- "$PRIMARY_INBOUND_ID" <<'BOTCANARY'
+ssh "${SSH_OPTIONS[@]}" "$BOT" sudo -n bash -s -- "$PRIMARY_INBOUND_ID" <<'BOTCANARY'
 set -euo pipefail
 primary_id=$1
 cd /root/special-bot
@@ -154,7 +157,7 @@ asyncio.run(normalize())
 " >/dev/null
 BOTCANARY
 
-ssh "${SSH_OPTIONS[@]}" "$NL" bash -s -- \
+ssh "${SSH_OPTIONS[@]}" "$NL" sudo -n bash -s -- \
   "$PRIMARY_INBOUND_ID" "$STATUS_INBOUND_ID" "$MIRROR_INBOUND_ID" <<'NLCUTOVER'
 set -euo pipefail
 primary_id=$1
@@ -197,7 +200,7 @@ print('listener_state=consolidated records_preserved=true')
 PY
 NLCUTOVER
 
-ssh "${SSH_OPTIONS[@]}" "$BOT" bash -s <<'BOTVERIFY'
+ssh "${SSH_OPTIONS[@]}" "$BOT" sudo -n bash -s <<'BOTVERIFY'
 set -euo pipefail
 cd /root/special-bot
 timeout 90 docker exec special-bot-web-1 python manage.py audit_legacy_vpn >/dev/null
@@ -227,5 +230,5 @@ exit 40
 BOTVERIFY
 
 trap - EXIT
-ssh "${SSH_OPTIONS[@]}" "$NL" "rm -f -- '$NL_BACKUP'" >/dev/null
+ssh "${SSH_OPTIONS[@]}" "$NL" "sudo -n rm -f -- '$NL_BACKUP'" >/dev/null
 echo 'listener_consolidation=passed'

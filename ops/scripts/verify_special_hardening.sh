@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/special_ssh.sh"
+
 BOT_HOST=${SPECIAL_BOT_HOST:-72.56.23.226}
 NL_HOST=${SPECIAL_NL_HOST:-195.66.213.74}
 SSH_KEY=${SPECIAL_SSH_KEY:-$HOME/.ssh/id_ed25519}
+REMOTE_PATH=${SPECIAL_BOT_REMOTE_PATH:-/root/special-bot}
+special_ssh_require_abs_path "$REMOTE_PATH" SPECIAL_BOT_REMOTE_PATH
+REMOTE_PATH_Q=$(special_shell_quote "$REMOTE_PATH")
 SSH_OPTS=(
   -i "$SSH_KEY"
   -o BatchMode=yes
@@ -12,15 +17,19 @@ SSH_OPTS=(
 )
 REMOTE_TIMEOUT=${SPECIAL_HARDENING_REMOTE_TIMEOUT:-120}
 EXPECTED_COMMIT=${SPECIAL_HARDENING_COMMIT:-$(git -C "$(dirname "${BASH_SOURCE[0]}")/../.." rev-parse --short HEAD)}
+special_require_commit "$EXPECTED_COMMIT" SPECIAL_EXPECTED_COMMIT
 
 remote() {
-  local host=$1
-  shift
-  timeout "$REMOTE_TIMEOUT" ssh "${SSH_OPTS[@]}" "root@$host" "$@"
+  local host=$1 command=$2
+  local user=$SPECIAL_NL_SSH_USER
+  [[ $host == "$BOT_HOST" ]] && user=$SPECIAL_BOT_SSH_USER
+  printf '%s\n' "$command" | timeout "$REMOTE_TIMEOUT" ssh "${SSH_OPTS[@]}" \
+    "$(special_ssh_target "$user" "$host")" \
+    "sudo -n env SPECIAL_BOT_REMOTE_PATH=$REMOTE_PATH_Q bash -s"
 }
 
-commit=$(remote "$BOT_HOST" 'cd /root/special-bot && git rev-parse --short HEAD')
-origin=$(remote "$BOT_HOST" 'cd /root/special-bot && git rev-parse --short origin/main')
+commit=$(remote "$BOT_HOST" 'cd "$SPECIAL_BOT_REMOTE_PATH" && git rev-parse --short HEAD')
+origin=$(remote "$BOT_HOST" 'cd "$SPECIAL_BOT_REMOTE_PATH" && git rev-parse --short origin/main')
 [[ $commit == "$EXPECTED_COMMIT" && $origin == "$EXPECTED_COMMIT" ]]
 
 port_binding=$(remote "$BOT_HOST" 'docker port special-bot-web-1 8001/tcp')
@@ -51,8 +60,8 @@ for layer in host l0 l1 l2; do
   grep -q "layer=$layer ok=true alert=false" <<<"$monitoring"
 done
 
-remote "$BOT_HOST" 'cd /root/special-bot && docker compose -f docker-compose.deploy.yml config >/dev/null'
-scale_readiness=$(remote "$BOT_HOST" 'cd /root/special-bot && docker exec special-bot-web-1 python manage.py validate_scale_readiness --json --origins-file ops/origins.example.json')
+remote "$BOT_HOST" 'cd "$SPECIAL_BOT_REMOTE_PATH" && docker compose -f docker-compose.deploy.yml config >/dev/null'
+scale_readiness=$(remote "$BOT_HOST" 'cd "$SPECIAL_BOT_REMOTE_PATH" && docker exec special-bot-web-1 python manage.py validate_scale_readiness --json --origins-file ops/origins.example.json')
 python3 - "$scale_readiness" <<'PY'
 import json, sys
 report = json.loads(sys.argv[1])

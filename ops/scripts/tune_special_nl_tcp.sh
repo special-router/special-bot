@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/special_ssh.sh"
+
 NL_HOST=${SPECIAL_NL_HOST:-195.66.213.74}
 SSH_KEY=${SPECIAL_SSH_KEY:-$HOME/.ssh/id_ed25519}
 MODE=${1:-verify}
@@ -16,7 +18,7 @@ SSH_OPTIONS=(
 
 case "$MODE" in
   verify)
-    ssh "${SSH_OPTIONS[@]}" "root@$NL_HOST" bash -s <<'REMOTE'
+    ssh "${SSH_OPTIONS[@]}" "$(special_ssh_target "$SPECIAL_NL_SSH_USER" "$NL_HOST")" sudo -n bash -s <<'REMOTE'
 set -euo pipefail
 [[ $(sysctl -n net.core.default_qdisc) == fq ]]
 [[ $(sysctl -n net.ipv4.tcp_congestion_control) == bbr ]]
@@ -41,7 +43,7 @@ REMOTE
       echo 'BLOCK: set SPECIAL_APPROVE_NL_TCP_TUNING=YES' >&2
       exit 2
     }
-    ssh "${SSH_OPTIONS[@]}" "root@$NL_HOST" bash -s <<'REMOTE'
+    ssh "${SSH_OPTIONS[@]}" "$(special_ssh_target "$SPECIAL_NL_SSH_USER" "$NL_HOST")" sudo -n bash -s <<'REMOTE'
 set -euo pipefail
 path=/etc/sysctl.d/99-special-vless-tuning.conf
 stamp=$(date -u +%Y%m%dT%H%M%SZ)

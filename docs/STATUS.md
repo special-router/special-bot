@@ -82,10 +82,14 @@
 
 ## Production source and deployment
 
-- Production deploy source is the clean `/root/special-bot` checkout tracking
-  `special-router/special-bot@main`. Image `vpnbot:latest` serves web, celery,
-  celery_beat and monitoring. Verify the exact deployed revision with the
-  guarded scripts instead of copying a commit snapshot into long-lived docs.
+- Production deploy source remains the clean sudo-managed `/root/special-bot`
+  checkout tracking `special-router/special-bot@main` (override with
+  `SPECIAL_BOT_REMOTE_PATH`). Canonical operational tooling connects as
+  `specialops` (or host override) and executes this root-owned checkout through
+  `sudo -n`; direct root SSH is not an operational dependency after cutover.
+  Image `vpnbot:latest` serves web, celery, celery_beat and monitoring. Verify
+  the exact deployed revision with guarded scripts instead of copying a commit
+  snapshot into long-lived docs.
 - Gunicorn serves the subscription endpoint with one worker/four threads; both
   Celery workers use `--pool=solo`. This removed the prefork child processes
   that caused the prior OOM pressure.
@@ -112,8 +116,9 @@
 - The ED25519 public key is installed on BOT and NL MAIN; key-only SSH access
   was independently verified from a client configured with
   `PasswordAuthentication=no`. Server-side password authentication and root
-  login remain enabled pending a separate hardening window with a retained
-  rollback session.
+  login remain enabled pending a separate hardening window. That window must
+  first independently prove the new `specialops` account/key plus `sudo -n`, a
+  retained root rollback channel and an on-host timed rollback watchdog.
 - Stopped legacy application containers and their unreferenced rollback images
   were retired after tracked infrastructure ownership was established. Shared
   PostgreSQL/Redis, their data volumes and compatibility clients remain live and

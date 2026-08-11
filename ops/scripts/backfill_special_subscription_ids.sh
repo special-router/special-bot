@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/special_ssh.sh"
+
 usage() {
   echo "Usage: $0 [--apply] <mode-0600-user-vpn-id-file>" >&2
   exit 2
@@ -28,9 +30,12 @@ awk 'NF != 1 || $1 !~ /^[0-9]+$/ {exit 1}' "$IDS_FILE" || {
 BOT_HOST=${SPECIAL_BOT_HOST:-72.56.23.226}
 SERVER_ID=${SPECIAL_SERVER_ID:-1}
 EXPECTED_COMMIT=${SPECIAL_SUBSCRIPTION_COMMIT:-$(git -C "$(dirname "${BASH_SOURCE[0]}")/../.." rev-parse --short HEAD)}
+special_require_commit "$EXPECTED_COMMIT" SPECIAL_EXPECTED_COMMIT
 BATCH_SIZE=${SPECIAL_SUBID_BATCH_SIZE:-5}
 SSH_KEY=${SPECIAL_BOT_SSH_KEY:-$HOME/.ssh/id_ed25519}
-REMOTE_IDS="/root/.special-subid-batch.$$.ids"
+special_ssh_require_tmp_dir
+REMOTE_STAGE_DIR=
+REMOTE_IDS=
 
 SSH_OPTIONS=(
   -i "$SSH_KEY"
@@ -46,14 +51,18 @@ SSH_OPTIONS=(
 if [[ -n "${SPECIAL_BOT_SSH_JUMP:-}" ]]; then
   SSH_OPTIONS+=(-J "$SPECIAL_BOT_SSH_JUMP")
 fi
-TARGET="root@$BOT_HOST"
+TARGET="$(special_ssh_target "$SPECIAL_BOT_SSH_USER" "$BOT_HOST")"
 
 cleanup_remote() {
-  ssh "${SSH_OPTIONS[@]}" "$TARGET" "rm -f -- '$REMOTE_IDS'" >/dev/null 2>&1 || true
+  ssh "${SSH_OPTIONS[@]}" "$TARGET" "sudo -n rm -rf -- '$REMOTE_STAGE_DIR'" >/dev/null 2>&1 || true
 }
 trap cleanup_remote EXIT
+REMOTE_STAGE_DIR=$(ssh "${SSH_OPTIONS[@]}" "$TARGET" "sudo -n mktemp -d -p '$SPECIAL_SSH_TMP_DIR' .special-subid-batch.XXXXXXXX.d")
+[[ $REMOTE_STAGE_DIR == "$SPECIAL_SSH_TMP_DIR"/.special-subid-batch.*.d ]]
+ssh "${SSH_OPTIONS[@]}" "$TARGET" sudo -n chown "$SPECIAL_BOT_SSH_USER:$SPECIAL_BOT_SSH_USER" "$REMOTE_STAGE_DIR"
+REMOTE_IDS="$REMOTE_STAGE_DIR/ids"
 scp "${SSH_OPTIONS[@]}" "$IDS_FILE" "$TARGET:$REMOTE_IDS" >/dev/null
-ssh "${SSH_OPTIONS[@]}" "$TARGET" bash -s -- \
+ssh "${SSH_OPTIONS[@]}" "$TARGET" sudo -n bash -s -- \
   "$REMOTE_IDS" "$SERVER_ID" "$EXPECTED_COMMIT" "$BATCH_SIZE" "$APPLY" <<'REMOTE'
 set -euo pipefail
 ids_file=$1
