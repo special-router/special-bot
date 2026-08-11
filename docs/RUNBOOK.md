@@ -158,7 +158,7 @@ mutating scripts still require the authorization stated above.
   refuses without `SPECIAL_SSH_HARDEN_APPROVED=true`. Before cutover it provisions
   or verifies `specialops`, its single ED25519 key and isolated `NOPASSWD` sudoers
   entry, proves a fresh non-multiplexed key+sudo session, retains a root master,
-  arms an on-host five-minute rollback watchdog, verifies connection-specific
+  arms an on-host fifteen-minute rollback watchdog, verifies effective
   `sshd -T -C` precedence, reloads one host, then proves fresh `specialops` and
   rejects fresh root before disarming rollback. Run BOT fully before NL; do not
   invoke it without an approved retained root/provider recovery channel.

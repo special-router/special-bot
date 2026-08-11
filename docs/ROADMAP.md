@@ -31,14 +31,13 @@ relay/subscription plans are outside this repository.
    Reality parameters or subscription identities.
 2. Keep the completed tracked Redis ownership/credential rotation healthy;
    PostgreSQL remained untouched and old Redis credentials are rejected.
-3. **Next hardening window:** provision and freshly prove the named
-   `specialops` ED25519 account plus `sudo -n` on BOT first, retain root and
-   provider rollback channels, and arm a verified on-host timed rollback
-   watchdog. Then disable SSH password and keyboard-interactive authentication
-   and set `PermitRootLogin no`; prove effective connection-specific policy with
-   `sshd -T -C`, fresh operator key+sudo access, fresh root rejection,
-   application/monitoring health, and rollback readiness before proceeding to
-   NL.
+3. **Completed:** BOT and NL were hardened in separate guarded windows, BOT
+   first. Each window freshly proved the locked-password `specialops` ED25519
+   account and `sudo -n`, retained a root ControlMaster, armed an on-host timed
+   rollback watchdog, set password/keyboard-interactive authentication off and
+   `PermitRootLogin no`, then proved effective policy, fresh operator key+sudo,
+   fresh root rejection and service health before disarming rollback. Keep the
+   provider-console recovery procedure available for future SSH changes.
 4. Stopped legacy application containers/images are retired. Shared
    PostgreSQL/Redis and compatibility identities remain active and excluded from
    cleanup.
