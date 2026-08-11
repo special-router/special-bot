@@ -32,7 +32,8 @@ DERIVED_PUBLIC_KEY=$(SSH_ASKPASS_REQUIRE=never ssh-keygen -y -f "$OPERATOR_KEY" 
   echo 'BLOCK: operator private key must be non-interactively readable' >&2
   exit 15
 }
-[[ $DERIVED_PUBLIC_KEY == "$OPERATOR_PUBLIC_KEY" ]] || {
+read -r DERIVED_PUBLIC_KEY_TYPE DERIVED_PUBLIC_KEY_BODY _ <<<"$DERIVED_PUBLIC_KEY"
+[[ "$DERIVED_PUBLIC_KEY_TYPE $DERIVED_PUBLIC_KEY_BODY" == "$OPERATOR_PUBLIC_KEY" ]] || {
   echo 'BLOCK: operator public key does not match the private key' >&2
   exit 16
 }
