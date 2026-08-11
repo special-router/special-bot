@@ -194,9 +194,10 @@ async def main():
     balance = user.entitlement_balance
     if not (price and price > 0 and balance >= price and int(balance // price) >= 1 and user.enabled and int(server.inbound_id) == 5 and user.sub_id):
         raise RuntimeError("entitlement_or_source_drift")
-    # AsyncApi enforces HTTPS and certificate verification.  If public trust is
-    # unavailable it obtains the protected, mode-0600 runtime CA configured by
-    # Django; no panel URL, path, or certificate data is emitted here.
+    # This operator is disabled until the panel migrates to HTTPS. The explicit
+    # gate below prevents use against the legacy HTTP control-plane endpoint.
+    if not str(server.vpn_url).startswith("https://"):
+        raise RuntimeError("panel_https_required")
     api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password)
     rows = await stable(api, [5, *TARGETS, 12])
     for iid, expected in EXPECTED.items():
@@ -785,7 +786,7 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true", help="perform the owner-authorized one-time operation")
     parser.add_argument("--resume-operation", help="resume only this protected operation journal")
     parser.add_argument("--static-check", action="store_true", help="validate non-mutating safety invariants")
-    parser.add_argument("--tls-check", action="store_true", help="protected read-only HTTPS/certificate verification check")
+    parser.add_argument("--tls-check", action="store_true", help="protected read-only panel HTTPS readiness check")
     args = parser.parse_args()
     if args.static_check:
         validate_static()

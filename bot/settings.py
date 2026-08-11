@@ -347,29 +347,6 @@ SUBSCRIPTION_INTERNAL_ENDPOINTS = _internal_canary_json(
     'SUBSCRIPTION_INTERNAL_ENDPOINTS')
 
 
-# Optional private CA bundle for the privileged 3x-ui panel.  The filename is
-# runtime configuration only; its certificate contents never enter settings,
-# logs, repository, or Docker image.  A configured invalid file causes panel
-# API construction to fail closed rather than silently disabling verification.
-def _panel_ca_from_runtime_file():
-    path = env.str('XUI_PANEL_CA_FILE', '')
-    if not path:
-        return None, False
-    try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(descriptor, 'rb') as certificate:
-            metadata = os.fstat(certificate.fileno())
-            if (not stat.S_ISREG(metadata.st_mode)
-                    or stat.S_IMODE(metadata.st_mode) != 0o600
-                    or not certificate.read(1)):
-                return None, True
-        return path, False
-    except OSError:
-        return None, True
-
-
-XUI_PANEL_CA_CERTIFICATE_PATH, XUI_PANEL_CA_FILE_INVALID = _panel_ca_from_runtime_file()
-
 # Monitoring runs inside the persistent bot Celery worker/beat deployment.
 # It never restarts application or VPN services and emits aggregate metadata only.
 SPECIAL_MONITOR_FAILURE_THRESHOLD = env.int('SPECIAL_MONITOR_FAILURE_THRESHOLD', 2)

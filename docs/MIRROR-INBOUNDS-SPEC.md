@@ -41,6 +41,7 @@ The default-off runtime namespace is:
 
 ```dotenv
 SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=false
+SUBSCRIPTION_INTERNAL_MEMBERSHIP_SYNC_ENABLED=false
 SUBSCRIPTION_INTERNAL_TEST_USER_IDS=[]
 SUBSCRIPTION_INTERNAL_ENDPOINTS=[]
 ```
@@ -61,13 +62,12 @@ these IDs to `MIRROR_INBOUND_IDS`, never creates a target member, and reports
 missing, duplicate, mismatched or partial-panel results as an aggregate
 fail-closed error. It makes no ownership inference.
 
-Panel access requires HTTPS with certificate verification. Before any mutation,
-operators run the protected read-only `probe_special_uservpn801.py --tls-check`;
-it prints only pass/block and never URL, path, certificate, or panel output.
-Deployments whose certificate does not chain to public trust may set `XUI_PANEL_CA_FILE` to a
-regular mode-0600 protected runtime CA file; do not put certificate contents
-or its host path in Git or logs. Invalid/missing configured CA material fails
-closed.
+The current production panel control-plane URL is legacy HTTP. Therefore the
+operator and internal renderer rollout are blocked until the panel is migrated
+to HTTPS with certificate verification. `probe_special_uservpn801.py --tls-check`
+fails closed while the endpoint is HTTP and never prints its URL, path, or
+certificate material. Do not re-enable retained alternate memberships or either
+internal feature flag before that migration is independently verified.
 
 Protected operator backups and journals remain retained through review and
 acceptance. After documented owner acceptance, an owner may use the protected
