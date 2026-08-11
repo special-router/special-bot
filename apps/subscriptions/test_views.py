@@ -1,7 +1,7 @@
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
-from apps.subscriptions.views import _build_vless, _is_mirror_test_user
+from apps.subscriptions.views import _build_vless, _is_backup_test_user, _backup_links
 from django.test import SimpleTestCase, override_settings
 
 
@@ -53,22 +53,61 @@ class BuildVlessNetworkTests(SimpleTestCase):
         self.assertEqual(parse_qs(urlsplit(link).query)['type'], ['grpc'])
 
 
-class MirrorGateTests(SimpleTestCase):
-    @override_settings(SUBSCRIPTION_MIRROR_INBOUNDS_ENABLED=False)
+class BackupGateTests(SimpleTestCase):
+    @override_settings(SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=False)
     def test_flag_off_excludes_everyone(self):
-        self.assertFalse(_is_mirror_test_user(1))
+        self.assertFalse(_is_backup_test_user(1))
 
     @override_settings(
-        SUBSCRIPTION_MIRROR_INBOUNDS_ENABLED=True,
-        SUBSCRIPTION_MIRROR_TEST_USER_IDS=[],
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_TEST_USER_IDS=[],
     )
     def test_empty_allowlist_excludes_everyone(self):
-        self.assertFalse(_is_mirror_test_user(1))
+        self.assertFalse(_is_backup_test_user(1))
 
     @override_settings(
-        SUBSCRIPTION_MIRROR_INBOUNDS_ENABLED=True,
-        SUBSCRIPTION_MIRROR_TEST_USER_IDS=[5, 9],
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_TEST_USER_IDS=[5, 9],
     )
     def test_allowlist_includes_only_listed(self):
-        self.assertTrue(_is_mirror_test_user(5))
-        self.assertFalse(_is_mirror_test_user(6))
+        self.assertTrue(_is_backup_test_user(5))
+        self.assertFalse(_is_backup_test_user(6))
+
+
+class BackupLinksTests(SimpleTestCase):
+    _ep = {
+        'label': 'PL MORI', 'host': 'logarka.ru', 'port': 443,
+        'uuid': 'd3cf9ffc-9faf-4abf-b552-4692085a6378',
+        'type': 'tcp', 'security': 'reality', 'pbk': 'pubkey',
+        'sni': 'api.logarka.ru', 'sid': 'shortid', 'flow': '',
+    }
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=False,
+        SUBSCRIPTION_BACKUP_ENDPOINTS=[_ep],
+    )
+    def test_flag_off_renders_none(self):
+        self.assertIsNone(_backup_links(1, 'uuid'))
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_ENDPOINTS=[],
+    )
+    def test_empty_endpoints_renders_none(self):
+        self.assertIsNone(_backup_links(1, 'uuid'))
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_ENDPOINTS=[_ep],
+    )
+    def test_backup_link_uses_external_uuid_and_host(self):
+        links = _backup_links(1, 'ignored-uuid')
+        self.assertEqual(len(links), 1)
+        parts = urlsplit(links[0])
+        self.assertEqual(parts.hostname, 'logarka.ru')
+        self.assertEqual(parts.port, 443)
+        self.assertEqual(parts.username, 'd3cf9ffc-9faf-4abf-b552-4692085a6378')
+        self.assertEqual(parse_qs(parts.query)['sni'], ['api.logarka.ru'])
+        self.assertEqual(parse_qs(parts.query)['pbk'], ['pubkey'])
+        from urllib.parse import unquote
+        self.assertEqual(unquote(parts.fragment), 'PL MORI')

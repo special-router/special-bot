@@ -253,15 +253,15 @@ SUBSCRIPTION_BASE_URL = env.str('SUBSCRIPTION_BASE_URL', env.str('SUB_URL', ''))
 # Add/remove/enable/disable are propagated to every id listed here.
 MIRROR_INBOUND_IDS = env.json('MIRROR_INBOUND_IDS', default=[])
 
-# Expose mirror inbounds in the per-user subscription payload so clients can
-# switch endpoints without re-importing. Feature-gated and allowlisted for a
-# test group during rollout. See docs/MIRROR-INBOUNDS-SPEC.md.
-SUBSCRIPTION_MIRROR_INBOUNDS_ENABLED = env.bool(
-    'SUBSCRIPTION_MIRROR_INBOUNDS_ENABLED', False)
-SUBSCRIPTION_MIRROR_TEST_USER_IDS = env.json(
-    'SUBSCRIPTION_MIRROR_TEST_USER_IDS', default=[])
-SUBSCRIPTION_MIRROR_INBOUND_IDS = env.json(
-    'SUBSCRIPTION_MIRROR_INBOUND_IDS', default=[])
+# External backup VPN service endpoints for subscription failover.
+# Each entry is a static, operator-provisioned external VLESS Reality endpoint
+# (e.g. MORI VPN). NOT our own 3x-ui ports. See docs/MIRROR-INBOUNDS-SPEC.md.
+SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED = env.bool(
+    'SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED', False)
+SUBSCRIPTION_BACKUP_TEST_USER_IDS = env.json(
+    'SUBSCRIPTION_BACKUP_TEST_USER_IDS', default=[])
+SUBSCRIPTION_BACKUP_ENDPOINTS = env.json(
+    'SUBSCRIPTION_BACKUP_ENDPOINTS', default=[])
 
 # Monitoring runs inside the persistent bot Celery worker/beat deployment.
 # It never restarts application or VPN services and emits aggregate metadata only.

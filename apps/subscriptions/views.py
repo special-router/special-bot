@@ -117,12 +117,12 @@ def subscription_proxy(request, sub_id: str):
     links.append(_build_vless(uuid_str, '127.0.0.1', 1, f'📊 Подписка-{status_label}', params, flow=''))
     # 2) Direct NL primary.
     links.append(_build_vless(uuid_str, direct_host, direct_port, '🇳🇱 NL Direct', params, flow=flow))
-    # 3) Direct NL mirrors (feature-gated test group, Reality/TCP only).
-    mirror_links = _mirror_links(
-        server.id, uuid_str, direct_host, flow,
-    ) if _is_mirror_test_user(user_vpn.id) else None
-    if mirror_links is not None:
-        links.extend(mirror_links)
+    # 3) External backup endpoints (feature-gated test group).
+    backup_links = _backup_links(
+        user_vpn.id, uuid_str,
+    ) if _is_backup_test_user(user_vpn.id) else None
+    if backup_links:
+        links.extend(backup_links)
     # 4) RU relay (only if configured).
     if relay_host:
         links.append(_build_vless(uuid_str, relay_host, relay_port, '🇳🇱 NL Relay', params, flow=flow))
@@ -142,37 +142,41 @@ def _endpoint(client_vpn_host: str, default_port: int) -> tuple[str, int]:
     return client_vpn_host, default_port
 
 
-def _is_mirror_test_user(user_vpn_id: int) -> bool:
+def _is_backup_test_user(user_vpn_id: int) -> bool:
     from django.conf import settings
-    if not getattr(settings, 'SUBSCRIPTION_MIRROR_INBOUNDS_ENABLED', False):
+    if not getattr(settings, 'SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED', False):
         return False
-    test_ids = getattr(settings, 'SUBSCRIPTION_MIRROR_TEST_USER_IDS', []) or []
-    # Empty allowlist during rollout = no one receives mirrors yet.
+    test_ids = getattr(settings, 'SUBSCRIPTION_BACKUP_TEST_USER_IDS', []) or []
+    # Empty allowlist during rollout = no one receives backups yet.
     return bool(test_ids) and user_vpn_id in test_ids
 
 
-def _mirror_links(server_id: int, uuid_str: str, direct_host: str, flow: str) -> list[str] | None:
-    """Render mirror inbound links for the test group, or None when disabled.
+def _backup_links(user_vpn_id: int, uuid_str: str) -> list[str] | None:
+    """Render external backup service VLESS links for the test group.
 
-    Returns None when the feature flag is off or the UserVPN is not in the
-    test allowlist, so the caller preserves the legacy 3-line contract.
+    Backup endpoints are external VPN services (MORI, etc.), NOT our own
+    3x-ui ports. Each entry is a static, operator-provisioned VLESS Reality
+    endpoint. See docs/MIRROR-INBOUNDS-SPEC.md.
     """
     from django.conf import settings
-    if not getattr(settings, 'SUBSCRIPTION_MIRROR_INBOUNDS_ENABLED', False):
+    if not getattr(settings, 'SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED', False):
         return None
-    inbound_ids = getattr(settings, 'SUBSCRIPTION_MIRROR_INBOUND_IDS', []) or []
-    if not inbound_ids:
+    endpoints = getattr(settings, 'SUBSCRIPTION_BACKUP_ENDPOINTS', []) or []
+    if not endpoints:
         return None
     links = []
-    for inbound_id in sorted(inbound_ids):
-        mirror_params = _get_params(server_id, inbound_id)
-        # Phase 1: Reality/TCP only. Skip other transports to avoid emitting
-        # links the current _build_vless query builder cannot represent.
-        if mirror_params.get('network') != 'tcp':
-            continue
+    for ep in endpoints:
+        params = {
+            'public_key': ep['pbk'],
+            'server_name': ep['sni'],
+            'short_ids': [ep['sid']],
+            'port': ep['port'],
+            'network': ep.get('type', 'tcp'),
+            'inbound_id': 0,
+        }
         links.append(_build_vless(
-            uuid_str, direct_host, mirror_params['port'],
-            f"🇳🇱 NL Mirror {mirror_params['port']}", mirror_params, flow=flow,
+            ep['uuid'], ep['host'], ep['port'], ep['label'],
+            params, flow=ep.get('flow', ''),
         ))
     return links
 
