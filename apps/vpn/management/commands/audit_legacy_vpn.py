@@ -1,6 +1,7 @@
 import asyncio
 from decimal import Decimal
 
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db.models import DecimalField, Sum, Value
 from django.db.models.functions import Coalesce
@@ -13,12 +14,13 @@ from utils.py3xui.async_api import AsyncApi
 async def fetch_control_plane_client_ids(server: Server) -> tuple[set[str], set[str]]:
     """Return all and enabled client UUIDs without changing 3x-ui.
 
-    Retries up to 4 times with re-authentication, requiring two consecutive
-    identical reads to confirm consistency. Raises CommandError on persistent
-    inconsistency or failure.
+    Retries with re-authentication, requiring two consecutive identical reads
+    to confirm consistency. Raises on persistent inconsistency or failure.
     """
-    max_attempts = 4
-    backoff_ms = 200
+    max_attempts = settings.XUI_CONTROL_PLANE_READ_ATTEMPTS
+    backoff = settings.XUI_CONTROL_PLANE_READ_BACKOFF
+    if max_attempts < 2:
+        raise RuntimeError('Control plane consistency requires at least two read attempts.')
     prev_result = None
 
     for attempt in range(1, max_attempts + 1):
@@ -40,11 +42,12 @@ async def fetch_control_plane_client_ids(server: Server) -> tuple[set[str], set[
 
             prev_result = current_result
             if attempt < max_attempts:
-                await asyncio.sleep(backoff_ms / 1000.0)
+                await asyncio.sleep(backoff)
         except Exception:
+            prev_result = None
             if attempt == max_attempts:
                 raise
-            await asyncio.sleep(backoff_ms / 1000.0)
+            await asyncio.sleep(backoff)
 
     raise RuntimeError(
         f'Control plane consistency could not be established for server_id={server.id} '
@@ -84,8 +87,10 @@ class Command(BaseCommand):
             except Exception:
                 raise CommandError(f'Legacy VPN audit failed for server_id={server.id}.') from None
 
+            django_owned_ids = {str(user_vpn.vpn_uuid) for user_vpn in UserVPN.objects.filter(server_id=server.id)}
             missing_ids = entitled_ids - enabled_control_plane_ids
             extra_ids = control_plane_ids - entitled_ids
+            compatibility_count = len(control_plane_ids - django_owned_ids)
             missing_total += len(missing_ids)
 
             self.stdout.write(
@@ -98,6 +103,7 @@ class Command(BaseCommand):
                         f'control_plane_enabled={len(enabled_control_plane_ids)}',
                         f'entitled_missing={len(missing_ids)}',
                         f'extras={len(extra_ids)}',
+                        f'compatibility_count={compatibility_count}',
                     )
                 )
             )

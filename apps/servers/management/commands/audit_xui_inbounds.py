@@ -2,6 +2,7 @@ import asyncio
 import json
 from dataclasses import asdict, dataclass
 
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.servers.models import Server
@@ -23,8 +24,8 @@ class InboundSnapshot:
     missing_sub_id: int
 
 
-async def fetch_inbound_snapshots(server: Server) -> list[InboundSnapshot]:
-    """Read every inbound and client count without changing the control plane."""
+async def _fetch_inbound_snapshots_once(server: Server) -> list[InboundSnapshot]:
+    """Read one normalized inbound inventory snapshot without changing 3x-ui."""
     api = AsyncApi(server.vpn_url, server.vpn_username, server.vpn_password, use_tls_verify=False)
     await api.login()
     inbounds = await api.inbound.get_list()
@@ -47,6 +48,37 @@ async def fetch_inbound_snapshots(server: Server) -> list[InboundSnapshot]:
             )
         )
     return sorted(snapshots, key=lambda item: (item.server_id, item.port, item.inbound_id))
+
+
+async def fetch_inbound_snapshots(server: Server) -> list[InboundSnapshot]:
+    """Return a stable normalized inbound inventory snapshot.
+
+    Two consecutive equal reads are required so a briefly incomplete 3x-ui
+    inventory cannot be evaluated as control-plane drift.
+    """
+    max_attempts = settings.XUI_CONTROL_PLANE_READ_ATTEMPTS
+    backoff = settings.XUI_CONTROL_PLANE_READ_BACKOFF
+    if max_attempts < 2:
+        raise RuntimeError('Control plane consistency requires at least two read attempts.')
+
+    previous = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            current = await _fetch_inbound_snapshots_once(server)
+            if previous is not None and current == previous:
+                return current
+            previous = current
+        except Exception:
+            previous = None
+            if attempt == max_attempts:
+                raise
+        if attempt < max_attempts:
+            await asyncio.sleep(backoff)
+
+    raise RuntimeError(
+        f'Control plane inventory consistency could not be established for server_id={server.id} '
+        f'after {max_attempts} attempts.'
+    )
 
 
 class Command(BaseCommand):

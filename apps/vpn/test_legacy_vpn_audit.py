@@ -62,6 +62,7 @@ class LegacyVpnAuditCommandTests(TestCase):
         self.assertIn('control_plane_enabled=1', text)
         self.assertIn('entitled_missing=0', text)
         self.assertIn('extras=0', text)
+        self.assertIn('compatibility_count=0', text)
         self.assertNotIn(str(self.paid_uuid), text)
         self.assertNotIn(str(self.unpaid_uuid), text)
         self.assertNotIn('1001', text)
@@ -120,4 +121,22 @@ class LegacyVpnAuditCommandTests(TestCase):
         text = output.getvalue()
         self.assertIn('entitled_missing=0', text)
         self.assertIn('extras=1', text)
+        self.assertIn('compatibility_count=0', text)
         self.assertNotIn(str(self.unpaid_uuid), text)
+
+    @patch('apps.vpn.management.commands.audit_legacy_vpn.fetch_control_plane_client_ids', new_callable=AsyncMock)
+    def test_control_plane_only_identity_is_counted_without_exposure(self, fetch_clients):
+        compatibility_uuid = '00000000-0000-0000-0000-000000000003'
+        fetch_clients.return_value = (
+            {str(self.paid_uuid), compatibility_uuid},
+            {str(self.paid_uuid), compatibility_uuid},
+        )
+        output = StringIO()
+
+        management.call_command('audit_legacy_vpn', stdout=output)
+
+        text = output.getvalue()
+        self.assertIn('entitled_missing=0', text)
+        self.assertIn('extras=1', text)
+        self.assertIn('compatibility_count=1', text)
+        self.assertNotIn(compatibility_uuid, text)

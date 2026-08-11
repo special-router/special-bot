@@ -154,6 +154,19 @@ class ControlPlaneProbeTests(TestCase):
         self.assertTrue(result.immediate)
         self.assertEqual(result.error_class, 'inbound_inventory_drift')
 
+    @patch('apps.monitoring.probes.fetch_inbound_snapshots', new_callable=AsyncMock)
+    @patch('apps.monitoring.probes.Server.objects.select_related')
+    def test_unstable_inventory_fails_closed_as_control_plane(self, select_related, fetch_inbounds):
+        server = Mock(id=1)
+        select_related.return_value.order_by.return_value = [server]
+        fetch_inbounds.side_effect = RuntimeError('inventory consistency')
+
+        result = run_control_plane_probe()
+
+        self.assertFalse(result.ok)
+        self.assertFalse(result.immediate)
+        self.assertEqual(result.error_class, 'control_plane')
+
 
 class HostCapacityProbeTests(TestCase):
     @override_settings(
