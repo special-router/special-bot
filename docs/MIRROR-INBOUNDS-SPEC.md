@@ -83,7 +83,10 @@ secret file on a host path **outside this repository and Docker build context**.
 For example, create `/etc/special-bot/subscription-backup.json` with mode 0600:
 
 ```json
-{"upstream_urls": ["https://provider.example.invalid/opaque-subscription-SYNTHETIC"]}
+{
+  "upstream_urls": ["https://provider.example.invalid/opaque-subscription-SYNTHETIC"],
+  "allowed_line_sha256": ["0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"]
+}
 ```
 
 Set only the host path and rollout controls in ignored `.environment`:
@@ -103,13 +106,17 @@ The backup secret mount is optional while the feature is disabled: Compose
 binds `/dev/null` when `SUBSCRIPTION_BACKUP_SECRET_HOST_PATH` is unset. The
 application rejects that nonregular device (and any missing or malformed file)
 and accepts only a regular 0600 file whose JSON root is an object containing
-`upstream_urls` as `list[str]`. The renderer fetches each configured
-subscription within bounded time and size
-limits, accepts plain newline-separated or standard-base64 payloads, filters
-only coarse sentinel entries, and appends accepted `vless://` lines unchanged.
-It never parses or rebuilds provider URI query parameters or fragments. Rotate
-or revoke a provider bearer immediately with the provider and replace the host
-secret file; never store provider lines or bearer URLs in Git.
+`upstream_urls` as `list[str]`. The optional `allowed_line_sha256` must be a
+`list[str]` of lowercase 64-hex SHA-256 digests of exact UTF-8 VLESS lines. If
+it is absent, every protocol-validated line remains eligible; if it is present
+but malformed, no external lines are accepted. The renderer fetches each
+configured subscription within bounded time and size limits, accepts plain
+newline-separated or standard-base64 payloads, filters only coarse sentinel
+entries, then applies this digest allowlist before deduplication and appends
+accepted `vless://` lines unchanged. It never parses or rebuilds provider URI
+query parameters or fragments, so hashes cover their exact original bytes.
+Rotate or revoke a provider bearer immediately with the provider and replace
+the host secret file; never store provider lines or bearer URLs in Git.
 
 ### Feature gate
 

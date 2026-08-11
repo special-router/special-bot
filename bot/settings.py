@@ -265,25 +265,45 @@ SUBSCRIPTION_BACKUP_TEST_USER_IDS = env.json(
 # Bearer URLs may be supplied only through an owner-readable JSON mount in the
 # web service. A missing, malformed, symlinked, or overly-permissive file fails
 # open without ever logging its contents.
-def _backup_urls_from_secret_file():
+def _backup_secret_from_secret_file():
     path = env.str('SUBSCRIPTION_BACKUP_SECRET_FILE', '')
     if not path:
-        return []
+        return [], None
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
         with os.fdopen(descriptor, encoding='utf-8') as secret_file:
             metadata = os.fstat(secret_file.fileno())
             if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o600:
-                return []
+                return [], None
             document = json.load(secret_file)
         if not isinstance(document, dict):
-            return []
+            return [], None
         urls = document.get('upstream_urls', [])
-        return urls if isinstance(urls, list) and all(isinstance(url, str) for url in urls) else []
+        if not isinstance(urls, list) or not all(isinstance(url, str) for url in urls):
+            return [], None
+        if 'allowed_line_sha256' not in document:
+            return urls, None
+        allowed_line_sha256 = document['allowed_line_sha256']
+        if not isinstance(allowed_line_sha256, list) or not all(
+            isinstance(digest, str)
+            and len(digest) == 64
+            and all(character in '0123456789abcdef' for character in digest)
+            for digest in allowed_line_sha256
+        ):
+            # A present but malformed allowlist must never expose provider URLs or lines.
+            return [], []
+        return urls, allowed_line_sha256
     except (OSError, ValueError, json.JSONDecodeError):
-        return []
+        return [], None
 
-SUBSCRIPTION_BACKUP_UPSTREAM_URLS = _backup_urls_from_secret_file()
+
+def _backup_urls_from_secret_file():
+    """Compatibility helper for callers that need only secret upstream URLs."""
+    return _backup_secret_from_secret_file()[0]
+
+
+(SUBSCRIPTION_BACKUP_UPSTREAM_URLS,
+ SUBSCRIPTION_BACKUP_ALLOWED_LINE_SHA256) = _backup_secret_from_secret_file()
 # Optional JSON allowlist of exact DNS hostnames for backup URL sources.
 # An absent setting permits a controlled rollout; a present malformed list denies all.
 SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS = env.json(

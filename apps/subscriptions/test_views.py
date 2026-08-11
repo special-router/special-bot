@@ -1,5 +1,6 @@
 import base64
 import copy
+import hashlib
 import io
 import logging
 import logging.config
@@ -426,6 +427,44 @@ class ExternalSubscriptionTests(SimpleTestCase):
         cached.side_effect = [[self.opaque_link, 'vless://synthetic@one.example:443#One'], [self.opaque_link]]
         self.assertEqual(views._backup_links(), [self.opaque_link, 'vless://synthetic@one.example:443#One'])
 
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://subscription.example/one'],
+        SUBSCRIPTION_BACKUP_ALLOWED_LINE_SHA256=None,
+    )
+    @patch('apps.subscriptions.views._cached_upstream_links')
+    def test_absent_line_allowlist_preserves_all_valid_lines(self, cached):
+        additional_link = 'vless://synthetic@other.example:443?type=tcp#Other'
+        cached.return_value = [self.opaque_link, additional_link]
+
+        self.assertEqual(views._backup_links(), [self.opaque_link, additional_link])
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://subscription.example/one'],
+    )
+    @patch('apps.subscriptions.views._cached_upstream_links')
+    def test_line_allowlist_selects_exact_opaque_line_without_normalizing_it(self, cached):
+        same_query_different_bytes = self.opaque_link.replace('spx=%2Fedge', 'spx=%2fedge')
+        same_fragment_different_bytes = self.opaque_link.replace('Synthetic%20Backup', 'Synthetic%20backup')
+        allowed_digest = hashlib.sha256(self.opaque_link.encode('utf-8')).hexdigest()
+        cached.return_value = [same_query_different_bytes, same_fragment_different_bytes, self.opaque_link]
+
+        with self.settings(SUBSCRIPTION_BACKUP_ALLOWED_LINE_SHA256=[allowed_digest]):
+            self.assertEqual(views._backup_links(), [self.opaque_link])
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://subscription.example/one'],
+        SUBSCRIPTION_BACKUP_ALLOWED_LINE_SHA256=['A' * 64],
+    )
+    @patch('apps.subscriptions.views._cached_upstream_links')
+    def test_malformed_line_allowlist_fails_safe(self, cached):
+        cached.return_value = [self.opaque_link]
+
+        self.assertIsNone(views._backup_links())
+        cached.assert_not_called()
+
     @override_settings(SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
                        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://subscription.example/one'],
                        SUBSCRIPTION_BACKUP_MAX_SOURCES=0)
@@ -514,9 +553,12 @@ class SubscriptionResponseCacheTests(SimpleTestCase):
 
 class BackupSecretFileTests(SimpleTestCase):
     def _load(self, path):
+        return self._load_secret(path)[0]
+
+    def _load_secret(self, path):
         from bot import settings as bot_settings
         with patch.object(bot_settings.env, 'str', return_value=str(path)):
-            return bot_settings._backup_urls_from_secret_file()
+            return bot_settings._backup_secret_from_secret_file()
 
     def _secret_file(self, contents, mode=0o600):
         handle = tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8')
@@ -533,6 +575,28 @@ class BackupSecretFileTests(SimpleTestCase):
         self.assertEqual(self._load(self._secret_file('{"upstream_urls": [1]}')), [])
         self.assertEqual(self._load(self._secret_file('{"upstream_urls": ["https://synthetic.example/sub"]}')),
                          ['https://synthetic.example/sub'])
+
+    def test_absent_line_digest_list_preserves_existing_behavior(self):
+        self.assertEqual(
+            self._load_secret(self._secret_file(
+                '{"upstream_urls": ["https://synthetic.example/sub"]}')),
+            (['https://synthetic.example/sub'], None),
+        )
+
+    def test_valid_line_digest_list_is_exposed_without_values(self):
+        digest = '0' * 64
+        self.assertEqual(
+            self._load_secret(self._secret_file(
+                f'{{"upstream_urls": ["https://synthetic.example/sub"], "allowed_line_sha256": ["{digest}"]}}')),
+            (['https://synthetic.example/sub'], [digest]),
+        )
+
+    def test_malformed_line_digest_list_fails_safe(self):
+        self.assertEqual(
+            self._load_secret(self._secret_file(
+                '{"upstream_urls": ["https://synthetic.example/sub"], "allowed_line_sha256": ["A"]}')),
+            ([], []),
+        )
 
     def test_default_compose_device_fails_open(self):
         self.assertEqual(self._load('/dev/null'), [])

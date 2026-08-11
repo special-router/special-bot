@@ -198,16 +198,32 @@ def _backup_links() -> list[str] | None:
     byte_limit = int(_bounded_number(
         getattr(settings, 'SUBSCRIPTION_BACKUP_AGGREGATE_MAX_BYTES', 262144), default=262144,
         lower=1, upper=_BACKUP_RESPONSE_HARD_MAX_BYTES))
+    allowed_line_sha256 = getattr(settings, 'SUBSCRIPTION_BACKUP_ALLOWED_LINE_SHA256', None)
+    if allowed_line_sha256 is not None and not _valid_line_sha256_allowlist(allowed_line_sha256):
+        return None
     links, seen, total_bytes = [], set(), 0
     for url in valid_urls:
         for link in _cached_upstream_links(url):
             encoded = link.encode('utf-8')
+            if (allowed_line_sha256 is not None
+                    and hashlib.sha256(encoded).hexdigest() not in allowed_line_sha256):
+                continue
             if link in seen or len(links) >= line_limit or total_bytes + len(encoded) > byte_limit:
                 continue
             seen.add(link)
             links.append(link)
             total_bytes += len(encoded)
     return links or None
+
+
+def _valid_line_sha256_allowlist(value) -> bool:
+    """Accept only the exact lowercase SHA-256 digest schema from the secret mount."""
+    return isinstance(value, list) and all(
+        isinstance(digest, str)
+        and len(digest) == 64
+        and all(character in '0123456789abcdef' for character in digest)
+        for digest in value
+    )
 
 
 def _backup_cache_key(url: str) -> str:
