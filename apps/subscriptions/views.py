@@ -51,6 +51,8 @@ async def _fetch_params(server_id: int, inbound_id: int) -> dict:
         'server_name': rr.get('serverNames')[0],
         'short_ids': rr.get('shortIds'),
         'port': inbound.port,
+        'network': inbound.stream_settings.network,
+        'inbound_id': inbound_id,
     }
 
 
@@ -64,8 +66,9 @@ def _get_params(server_id: int, inbound_id: int) -> dict:
 
 def _build_vless(uuid: str, host: str, port: int, remark: str, params: dict, flow: str = '') -> str:
     from urllib.parse import quote
+    network = params.get('network', 'tcp')
     query = (
-        f"type=tcp&security=reality&pbk={params['public_key']}"
+        f"type={network}&security=reality&pbk={params['public_key']}"
         f"&fp=chrome&sni={params['server_name']}&sid={params['short_ids'][0]}&spx=%2F"
     )
     if flow:
@@ -112,9 +115,15 @@ def subscription_proxy(request, sub_id: str):
     links = []
     # 1) Status entry (non-working) first, matching the happ UX.
     links.append(_build_vless(uuid_str, '127.0.0.1', 1, f'📊 Подписка-{status_label}', params, flow=''))
-    # 2) Direct NL.
+    # 2) Direct NL primary.
     links.append(_build_vless(uuid_str, direct_host, direct_port, '🇳🇱 NL Direct', params, flow=flow))
-    # 3) RU relay (only if configured).
+    # 3) Direct NL mirrors (feature-gated test group, Reality/TCP only).
+    mirror_links = _mirror_links(
+        server.id, uuid_str, direct_host, flow,
+    ) if _is_mirror_test_user(user_vpn.id) else None
+    if mirror_links is not None:
+        links.extend(mirror_links)
+    # 4) RU relay (only if configured).
     if relay_host:
         links.append(_build_vless(uuid_str, relay_host, relay_port, '🇳🇱 NL Relay', params, flow=flow))
 
@@ -131,6 +140,41 @@ def _endpoint(client_vpn_host: str, default_port: int) -> tuple[str, int]:
     if sep and port.isdigit():
         return host, int(port)
     return client_vpn_host, default_port
+
+
+def _is_mirror_test_user(user_vpn_id: int) -> bool:
+    from django.conf import settings
+    if not getattr(settings, 'SUBSCRIPTION_MIRROR_INBOUNDS_ENABLED', False):
+        return False
+    test_ids = getattr(settings, 'SUBSCRIPTION_MIRROR_TEST_USER_IDS', []) or []
+    # Empty allowlist during rollout = no one receives mirrors yet.
+    return bool(test_ids) and user_vpn_id in test_ids
+
+
+def _mirror_links(server_id: int, uuid_str: str, direct_host: str, flow: str) -> list[str] | None:
+    """Render mirror inbound links for the test group, or None when disabled.
+
+    Returns None when the feature flag is off or the UserVPN is not in the
+    test allowlist, so the caller preserves the legacy 3-line contract.
+    """
+    from django.conf import settings
+    if not getattr(settings, 'SUBSCRIPTION_MIRROR_INBOUNDS_ENABLED', False):
+        return None
+    inbound_ids = getattr(settings, 'SUBSCRIPTION_MIRROR_INBOUND_IDS', []) or []
+    if not inbound_ids:
+        return None
+    links = []
+    for inbound_id in sorted(inbound_ids):
+        mirror_params = _get_params(server_id, inbound_id)
+        # Phase 1: Reality/TCP only. Skip other transports to avoid emitting
+        # links the current _build_vless query builder cannot represent.
+        if mirror_params.get('network') != 'tcp':
+            continue
+        links.append(_build_vless(
+            uuid_str, direct_host, mirror_params['port'],
+            f"🇳🇱 NL Mirror {mirror_params['port']}", mirror_params, flow=flow,
+        ))
+    return links
 
 
 def settings_relays():
