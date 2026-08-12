@@ -134,6 +134,30 @@ class DailyBillingTests(TestCase):
             [((), {'chat_id': 1005, 'text': 'Пополните баланс, денег осталось на 1 день'})],
         )
 
+    def test_account_already_in_debt_is_disabled_without_deepening_the_debt(self):
+        # Состояние, оставленное прежней логикой: баланс уже отрицательный.
+        user = self.make_user(1009, balance='-25.00')
+        user_vpn = self.add_subscription(user, days_ago=1)
+
+        disable, send_message = self.run_billing()
+
+        self.assertEqual(self.charges_for(user_vpn), 0)
+        self.assertEqual(self.balance_of(user), Decimal('-25.00'))
+        self.assertEqual(disable.await_args_list, [((user_vpn,), {})])
+        self.assertEqual(len(send_message.await_args_list), 1)
+
+    def test_account_in_debt_with_already_disabled_subscription_is_left_alone(self):
+        user = self.make_user(1010, balance='-25.00')
+        user_vpn = self.add_subscription(user, days_ago=1)
+        UserVPN.objects.filter(id=user_vpn.id).update(enabled=False)
+
+        disable, send_message = self.run_billing()
+
+        self.assertEqual(self.charges_for(user_vpn), 0)
+        self.assertEqual(self.balance_of(user), Decimal('-25.00'))
+        disable.assert_not_awaited()
+        send_message.assert_not_awaited()
+
     def test_disabled_subscriptions_are_not_charged(self):
         user = self.make_user(1006, balance='21.00')
         user_vpn = self.add_subscription(user, days_ago=1)
