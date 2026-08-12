@@ -17,8 +17,11 @@ from apps.vpn.models import UserVPN
 class DailyBillingTests(TestCase):
     def setUp(self):
         self.tariff = TariffServer.objects.create(name='base', price=Decimal('7.00'))
-        self.server = Server.objects.create(
-            name='test',
+        self.server = self.make_server('test', self.tariff)
+
+    def make_server(self, name: str, tariff: TariffServer) -> Server:
+        return Server.objects.create(
+            name=name,
             ip_address='127.0.0.1',
             ssh_username='unused',
             ssh_password='unused',
@@ -27,7 +30,7 @@ class DailyBillingTests(TestCase):
             vpn_key='unused',
             vpn_url='https://panel.invalid',
             client_vpn_host='127.0.0.1',
-            tariff=self.tariff,
+            tariff=tariff,
         )
 
     def make_user(self, telegram_id: int, balance: str = None) -> TelegramUser:
@@ -41,8 +44,8 @@ class DailyBillingTests(TestCase):
             )
         return user
 
-    def add_subscription(self, user: TelegramUser, days_ago: int) -> UserVPN:
-        user_vpn = UserVPN.objects.create(user=user, server=self.server)
+    def add_subscription(self, user: TelegramUser, days_ago: int, server: Server = None) -> UserVPN:
+        user_vpn = UserVPN.objects.create(user=user, server=server or self.server)
         # created_at заполняется auto_now_add, поэтому возраст подписки задаем отдельно.
         UserVPN.objects.filter(id=user_vpn.id).update(created_at=timezone.now() - datetime.timedelta(days=days_ago))
         return UserVPN.objects.get(id=user_vpn.id)
@@ -57,15 +60,20 @@ class DailyBillingTests(TestCase):
             .count()
         )
 
-    def run_billing(self):
+    def run_billing(self, now: datetime.datetime = None, disable_side_effect=None):
         """Прогоняет задачу, подменяя панель и телеграм. Возвращает (disable, send_message)."""
         with (
             patch('apps.subscriptions.tasks.Bot') as bot_class,
             patch('apps.subscriptions.tasks.disable_vpn_user_from_server', new_callable=AsyncMock) as disable,
             patch('apps.subscriptions.tasks.time.sleep'),
         ):
+            disable.side_effect = disable_side_effect
             bot_class.return_value.send_message = AsyncMock()
-            update_user_vpn()
+            if now is None:
+                update_user_vpn()
+            else:
+                with patch('apps.subscriptions.tasks.timezone.now', return_value=now):
+                    update_user_vpn()
             return disable, bot_class.return_value.send_message
 
     def test_partially_funded_account_keeps_oldest_and_disables_newest(self):
@@ -81,6 +89,101 @@ class DailyBillingTests(TestCase):
         self.assertEqual(self.charges_for(newest), 0)
         self.assertEqual(disable.await_args_list, [((newest,), {})])
         self.assertEqual(self.balance_of(user), Decimal('1.00'))
+
+    def test_mixed_tariffs_disable_everything_after_the_first_unaffordable(self):
+        user = self.make_user(1011, balance='50.00')
+        premium = self.make_server('premium', TariffServer.objects.create(name='premium', price=Decimal('60.00')))
+        older = self.add_subscription(user, days_ago=3, server=premium)
+        newer = self.add_subscription(user, days_ago=1)
+
+        disable, send_message = self.run_billing()
+
+        # Денег хватило бы на дешевую новую подписку, но правило «отключаем самые новые»
+        # запрещает финансировать ее вперед более старой.
+        self.assertEqual(self.charges_for(older), 0)
+        self.assertEqual(self.charges_for(newer), 0)
+        self.assertEqual(disable.await_args_list, [((older,), {}), ((newer,), {})])
+        self.assertEqual(self.balance_of(user), Decimal('50.00'))
+        self.assertEqual(len(send_message.await_args_list), 1)
+
+    def test_one_message_per_account_reflects_the_final_state(self):
+        user = self.make_user(1012, balance='15.00')
+        for days_ago in (3, 2, 1):
+            self.add_subscription(user, days_ago=days_ago)
+
+        _, send_message = self.run_billing()
+
+        # Два списания дают повод предупредить об остатке, третья подписка — отключить.
+        # Клиент должен увидеть только итог прогона, а не оба сообщения подряд.
+        self.assertEqual(
+            send_message.await_args_list,
+            [((), {'chat_id': 1012, 'text': 'Закончились деньги на балансе. Доступ к услугам остановлен'})],
+        )
+
+    def test_a_failure_on_one_subscription_keeps_the_other_charges(self):
+        user = self.make_user(1013, balance='21.00')
+        first = self.add_subscription(user, days_ago=3)
+        doomed = self.add_subscription(user, days_ago=2)
+        last = self.add_subscription(user, days_ago=1)
+        real_create = Transaction.objects.create
+
+        def create_or_fail(**kwargs):
+            # Пользователь удалил подписку прямо во время прогона: внешний ключ больше не проходит.
+            if kwargs.get('user_vpn') == doomed:
+                raise IntegrityError('FOREIGN KEY constraint failed')
+            return real_create(**kwargs)
+
+        with patch.object(Transaction.objects, 'create', side_effect=create_or_fail):
+            disable, _ = self.run_billing()
+
+        self.assertEqual(self.charges_for(first), 1)
+        self.assertEqual(self.charges_for(doomed), 0)
+        self.assertEqual(self.charges_for(last), 1)
+        self.assertEqual(self.balance_of(user), Decimal('7.00'))
+        disable.assert_not_awaited()
+
+    def test_panel_failure_still_notifies_and_leaves_the_subscription_enabled(self):
+        user = self.make_user(1014)
+        user_vpn = self.add_subscription(user, days_ago=1)
+
+        disable, send_message = self.run_billing(disable_side_effect=RuntimeError('panel is down'))
+
+        self.assertEqual(disable.await_args_list, [((user_vpn,), {})])
+        self.assertEqual(self.charges_for(user_vpn), 0)
+        self.assertTrue(UserVPN.objects.get(id=user_vpn.id).enabled)
+        self.assertEqual(
+            send_message.await_args_list,
+            [((), {'chat_id': 1014, 'text': 'Закончились деньги на балансе. Доступ к услугам остановлен'})],
+        )
+
+    def test_second_run_after_a_failed_disable_retries_the_disable(self):
+        user = self.make_user(1015)
+        user_vpn = self.add_subscription(user, days_ago=1)
+
+        self.run_billing(disable_side_effect=RuntimeError('panel is down'))
+        disable, send_message = self.run_billing()
+
+        self.assertEqual(disable.await_args_list, [((user_vpn,), {})])
+        self.assertEqual(self.charges_for(user_vpn), 0)
+        self.assertEqual(len(send_message.await_args_list), 1)
+
+    def test_a_run_started_just_before_midnight_charges_for_the_new_day(self):
+        user = self.make_user(1016, balance='21.00')
+        self.add_subscription(user, days_ago=1)
+
+        self.run_billing(now=datetime.datetime(2026, 3, 5, 23, 59, 59, 900000, tzinfo=datetime.timezone.utc))
+
+        charge = Transaction.objects.filter_by_source(TransactionSourceChoices.EVERYDAY_SYSTEM).get()
+        self.assertEqual(charge.charge_date, datetime.date(2026, 3, 6))
+
+    def test_an_early_and_an_on_time_run_at_the_same_midnight_charge_once(self):
+        user = self.make_user(1017, balance='21.00')
+        user_vpn = self.add_subscription(user, days_ago=1)
+
+        self.run_billing(now=datetime.datetime(2026, 3, 5, 23, 59, 59, 900000, tzinfo=datetime.timezone.utc))
+        self.run_billing(now=datetime.datetime(2026, 3, 6, 0, 0, 0, 500000, tzinfo=datetime.timezone.utc))
+
+        self.assertEqual(self.charges_for(user_vpn), 1)
 
     def test_fully_funded_account_charges_every_subscription(self):
         user = self.make_user(1002, balance='21.00')
