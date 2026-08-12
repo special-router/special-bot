@@ -66,6 +66,10 @@ Shipped-but-inert features are listed together in
 | `SUBSCRIPTION_DIRECT_ADVERTISED_PORT` | int | `0` | ? | Port advertised for NL Direct. Zero advertises the inbound's own port. Exists because xray may bind privately behind the shared SNI-routed `:443`. |
 | `MIRROR_INBOUND_IDS` | json | `[]` | `[14]` | Inbound ids whose client `enable`/`subId` state mirrors the primary inbound. Add/remove/enable/disable propagate to every id listed. |
 | `STATUS_INBOUND_ID` | int | `0` | `1` | Inbound carrying the per-client status label in its `email` field. Working inbounds keep `email` empty so the subscription remark stays clean. Zero disables it. |
+| `SUBSCRIPTION_STATUS_ENTRY_ENABLED` | bool | `True` | ? | Whether the first subscription line stays the non-working `127.0.0.1:1` entry whose remark carries «осталось N дней». True keeps today's three-line contract. Turn it off only after a real client is observed rendering `subscription-userinfo`; for a client that ignores headers this entry is the only place the term appears. |
+| `SUBSCRIPTION_PROFILE_TITLE` | str | `SPECIAL VPN` | ? | Profile name shown inside the client app, sent as `profile-title: base64:<…>`. Empty omits the header. |
+| `SUBSCRIPTION_SUPPORT_URL` | str | `https://t.me/Special_Wifi_Official` | ? | Destination behind the client app's support button (`support-url`). Must be a plain URL; a control character in it drops the header rather than failing the response. |
+| `SUBSCRIPTION_ANNOUNCE_TEXT` | str | empty | ? | Banner the client app shows above the profile, sent as `announce: base64:<…>`. Empty omits the header, so there is no "no news" banner. Bounded at 512 characters. |
 | `SUBSCRIPTION_RELAY_HOST` | str | empty | — | **Dead setting.** Nothing outside `bot/settings.py` reads it; the Relay endpoint comes from `Server.client_vpn_host`. |
 | `SUBSCRIPTION_RELAY_PORT` | int | `443` | — | **Dead setting**, same as above. |
 

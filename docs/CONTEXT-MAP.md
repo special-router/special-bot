@@ -78,9 +78,10 @@ env DJANGO_SETTINGS_MODULE=bot.settings DATABASE_URL='sqlite:///:memory:' \
 - `apps/analytics/models.py` — `MoneyEvent`, `FunnelEvent`; `event_key` is unique.
 - `apps/analytics/recording.py`, `signals.py` — the write path.
 - `apps/analytics/backfill.py`, `reporting.py`, `management/commands/`.
-- `apps/analytics/funnel.py` — the funnel API, deliberately unwired.
+- `apps/analytics/funnel.py` — one function per funnel step, and the list of
+  call sites that now use them.
 - Tests: `apps/analytics/test_taxonomy.py`, `test_recording.py`, `test_backfill.py`,
-  `test_reporting.py`.
+  `test_reporting.py`, `test_funnel_wiring.py`.
 
 **How it behaves today**
 
@@ -91,6 +92,13 @@ exception, so an analytics failure cannot roll back a charge. `backfill_money_ev
 rebuilds the same rows under the same keys, which is what makes losing a write
 harmless. Full reasoning, and the list of questions history cannot answer, is in
 [`ANALYTICS.md`](ANALYTICS.md).
+
+Funnel steps are recorded from the bot handlers themselves. The step functions
+are **synchronous and hit the database**, so every call site wraps them in
+`sync_to_async`; without it Django raises `SynchronousOnlyOperation`, which
+`record_funnel_event` then swallows and the step silently never lands.
+`INVOICE_SENT` and everything after it stay at zero while `YOUMONEY_TOKEN` is
+empty — that is the measurement, not a gap in the wiring.
 
 **Flags** `ANALYTICS_EVENTS_ENABLED`.
 
@@ -132,10 +140,24 @@ env DJANGO_SETTINGS_MODULE=bot.settings DATABASE_URL='sqlite:///:memory:' \
 (`127.0.0.1:1`, remark `📊 Подписка-осталось N дней` or `подписка окончена`),
 `🇳🇱 NL Direct` on the subscription hostname, then — only for allowlisted test
 users — internal canary lines and external backup lines, then `🇳🇱 NL Relay` if
-`server.client_vpn_host` is set. Response headers are
-`Profile-Update-Interval: 12`, `Subscription-Userinfo`, `Cache-Control:
-private, no-store`. `flow` is deliberately empty: forcing Vision breaks the
-deployed client contract.
+`server.client_vpn_host` is set. `flow` is deliberately empty: forcing Vision
+breaks the deployed client contract.
+
+Response headers drive the client app's interface: `Profile-Update-Interval: 12`,
+`subscription-userinfo` (whose `expire` is `days` from now, from the same
+`balance // price` arithmetic as the status remark), `profile-title` and
+`announce` as `base64:<…>`, `support-url`, `profile-web-page-url`,
+`Cache-Control: private, no-store`, and the `x-hwid-*` set. `days` is clamped at
+zero, so an overdrawn account expires now rather than in the past, and never
+`expire=0`, which this format reads as unlimited. A configured value that could
+not survive as a header is dropped, never raised — one bad character in
+`.environment` must not become a 500 on every refresh.
+
+The status entry is the reason `SUBSCRIPTION_STATUS_ENTRY_ENABLED` exists. Now
+that `expire` carries the same term, the dead `127.0.0.1:1` line is redundant
+for any client that reads headers; it stays on by default until a real client is
+observed rendering it, because a client that ignores headers has nowhere else to
+read the term.
 
 `sync_expiry_times` runs at 00:05 UTC, after billing at 00:00 UTC.
 
@@ -143,7 +165,9 @@ deployed client contract.
 
 **Flags** `SUBSCRIPTION_DELIVERY_ENABLED`, `SUBSCRIPTION_CONNECTOR_ENABLED`,
 `SUBSCRIPTION_BASE_URL`, `SUBSCRIPTION_DIRECT_ADVERTISED_PORT`,
-`STATUS_INBOUND_ID`, `MIRROR_INBOUND_IDS`.
+`STATUS_INBOUND_ID`, `MIRROR_INBOUND_IDS`, `SUBSCRIPTION_STATUS_ENTRY_ENABLED`,
+`SUBSCRIPTION_PROFILE_TITLE`, `SUBSCRIPTION_SUPPORT_URL`,
+`SUBSCRIPTION_ANNOUNCE_TEXT`.
 
 **Validation**
 

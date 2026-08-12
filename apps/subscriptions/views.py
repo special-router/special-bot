@@ -348,11 +348,13 @@ def subscription_proxy(request, sub_id: str):
     server = user_vpn.server
     params = _get_params(server.id, server.inbound_id)
 
-    # Balance / remaining days for the status remark.
+    # Balance / remaining days for the status remark and the expiry header.
+    # Negative balances exist (a manual debit can outrun the balance), and they
+    # must not become a term: no entitlement is zero days, never minus two.
     user = TelegramUser.objects.annotate_balance().filter(id=user_vpn.user_id).first()
     price = float(server.tariff.price) if server.tariff else 0.0
     balance = float(getattr(user, 'balance', 0) or 0) if user else 0.0
-    days = int(balance // price) if price > 0 else 0
+    days = max(int(balance // price), 0) if price > 0 else 0
     status_label = f'осталось {days} дней' if days > 0 else 'подписка окончена'
 
     # Client endpoint hosts.
@@ -373,8 +375,12 @@ def subscription_proxy(request, sub_id: str):
     flow = ''
 
     links = []
-    # 1) Status entry (non-working) first, matching the happ UX.
-    links.append(_build_vless(uuid_str, '127.0.0.1', 1, f'📊 Подписка-{status_label}', params, flow=''))
+    # 1) Status entry (non-working) first, matching the happ UX.  It exists only
+    # to show the remaining term to a client that reads no headers; the same
+    # number now also ships in ``subscription-userinfo``, so this is retirable
+    # once a real client is seen rendering that header.
+    if getattr(settings_relays(), 'SUBSCRIPTION_STATUS_ENTRY_ENABLED', True):
+        links.append(_build_vless(uuid_str, '127.0.0.1', 1, f'📊 Подписка-{status_label}', params, flow=''))
     # 2) Direct NL primary.
     links.append(_build_vless(uuid_str, direct_host, direct_port, '🇳🇱 NL Direct', params, flow=flow))
     # 3) Same-origin internal transport canary. Every candidate independently
@@ -393,8 +399,75 @@ def subscription_proxy(request, sub_id: str):
     encoded = base64.b64encode(payload.encode('utf-8'))
     resp = HttpResponse(encoded, content_type='text/plain')
     resp['Profile-Update-Interval'] = '12'
-    resp['Subscription-Userinfo'] = f'upload=0; download=0; total=0; expire=0'
+    _with_headers(resp, _client_ui_headers(days))
     return _no_cache_response(_with_headers(resp, hwid_headers))
+
+
+# Configured header text is bounded so a mistake in the environment cannot grow
+# every subscription response; 512 bytes is far above any real title or notice.
+_HEADER_TEXT_MAX = 512
+
+
+def _client_ui_headers(days: int) -> dict[str, str]:
+    """Headers the client app renders its own interface from.
+
+    ``expire`` uses the same remaining-days arithmetic as the status remark, so
+    a client that reads the header and one that reads the first VLESS line show
+    the same term.  Zero days means "expired now", not "never expires": in this
+    format ``expire=0`` is how unlimited is spelled, and an account with no
+    balance is the opposite of unlimited.  ``days`` is already clamped at zero,
+    which is what keeps an overdrawn account from producing a past timestamp.
+    """
+    settings = settings_relays()
+    headers = {
+        'subscription-userinfo':
+            f'upload=0; download=0; total=0; expire={int(time.time()) + days * 86400}',
+    }
+    title = _header_text(getattr(settings, 'SUBSCRIPTION_PROFILE_TITLE', ''))
+    if title:
+        headers['profile-title'] = _base64_header(title)
+    support_url = _header_url(getattr(settings, 'SUBSCRIPTION_SUPPORT_URL', ''))
+    if support_url:
+        headers['support-url'] = support_url
+    # The bot is the only web destination this deployment has that is safe to
+    # publish: a subscription URL is bearer access data and never leaves here.
+    web_page_url = _header_url(getattr(settings, 'BOT_LINK', ''))
+    if web_page_url:
+        headers['profile-web-page-url'] = web_page_url
+    announce = _header_text(getattr(settings, 'SUBSCRIPTION_ANNOUNCE_TEXT', ''))
+    if announce:
+        headers['announce'] = _base64_header(announce)
+    return headers
+
+
+def _header_text(value) -> str:
+    """Return bounded configured text, or '' for anything unusable."""
+    if not isinstance(value, str):
+        return ''
+    value = value.strip()
+    return value if value and len(value) <= _HEADER_TEXT_MAX else ''
+
+
+def _header_url(value) -> str:
+    """Return a URL safe to place in a header verbatim, or ''.
+
+    Django raises ``BadHeaderError`` on a newline, which would turn one stray
+    character in the environment into a 500 on every subscription refresh.
+    Dropping the header keeps the endpoint serving its actual purpose.
+    """
+    value = _header_text(value)
+    if any(character < ' ' or character == '\x7f' for character in value):
+        return ''
+    return value
+
+
+def _base64_header(text: str) -> str:
+    """Display text travels as ``base64:<...>``.
+
+    A header has no encoding of its own, so Russian copy and line breaks would
+    otherwise be unrepresentable; the client decodes the payload itself.
+    """
+    return 'base64:' + base64.b64encode(text.encode('utf-8')).decode('ascii')
 
 
 def _device_gate(request, user_vpn) -> tuple[bool, dict[str, str]]:

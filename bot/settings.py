@@ -304,6 +304,22 @@ SUBSCRIPTION_BASE_URL = env.str('SUBSCRIPTION_BASE_URL', env.str('SUB_URL', ''))
 # legacy behaviour of advertising the inbound's own port.
 SUBSCRIPTION_DIRECT_ADVERTISED_PORT = env.int('SUBSCRIPTION_DIRECT_ADVERTISED_PORT', 0)
 
+# Branding and environment carried in subscription response headers, which is
+# how the client app builds its own interface. Values reach the wire verbatim,
+# so the view drops any that would not survive as a header rather than raising.
+# An empty announcement is omitted entirely; there is no "no news" banner.
+SUBSCRIPTION_PROFILE_TITLE = env.str('SUBSCRIPTION_PROFILE_TITLE', 'SPECIAL VPN')
+SUBSCRIPTION_SUPPORT_URL = env.str('SUBSCRIPTION_SUPPORT_URL', 'https://t.me/Special_Wifi_Official')
+SUBSCRIPTION_ANNOUNCE_TEXT = env.str('SUBSCRIPTION_ANNOUNCE_TEXT', '')
+
+# The first line of every subscription is a non-working VLESS entry on
+# 127.0.0.1:1 whose remark carries the remaining days — the only way to show a
+# term to a client that reads no headers, at the cost of a dead profile in
+# everyone's app. ``subscription-userinfo`` now carries the same number from the
+# same arithmetic, so the entry can go; keep it until a real client is observed
+# rendering the header, because losing the term is worse than a dead entry.
+SUBSCRIPTION_STATUS_ENTRY_ENABLED = env.bool('SUBSCRIPTION_STATUS_ENTRY_ENABLED', True)
+
 # Additional inbound ids whose client ``enable``/``subId`` state must mirror the
 # primary ``Server.inbound_id``. Used for subscription endpoints that share the
 # same client pool but expose a different address (e.g. a RU relay front).

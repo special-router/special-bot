@@ -1,8 +1,10 @@
 from typing import Final
 
+from asgiref.sync import sync_to_async
 from telegram import InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from apps.analytics.funnel import balance_screen_shown
 from apps.servers.models import TariffServer
 from apps.telegram_bot.inline_buttons.balance import get_reply_markup_balance
 from apps.telegram_bot.ui import render_screen, screen
@@ -39,3 +41,6 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user: TelegramUser = await get_user(update)
     text, keyboard = await build_balance_screen(user)
     await render_screen(update, context, text, keyboard)
+    # Первый шаг воронки записывается после отрисовки: экран не должен ждать
+    # аналитику, а сама запись свои ошибки гасит и вернуть их сюда не может.
+    await sync_to_async(balance_screen_shown)(user.id)
