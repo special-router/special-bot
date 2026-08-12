@@ -1,5 +1,6 @@
 import logging
 from typing import Any
+from urllib.parse import urlsplit
 
 from py3xui import AsyncApi
 from py3xui.async_api import AsyncClientApi, AsyncDatabaseApi, AsyncServerApi
@@ -17,6 +18,15 @@ class AsyncApi(AsyncApi):
         custom_certificate_path: str | None = None,
         logger: Any | None = None,
     ):  # pylint: disable=R0913, R0917
+        # The panel is served over TLS behind nginx with a publicly trusted
+        # certificate. Refuse to talk to it any other way: a silent downgrade
+        # would put panel credentials on the wire in clear text.
+        parsed = urlsplit(host)
+        if parsed.scheme != 'https' or not parsed.netloc:
+            raise ValueError('xui_https_required')
+        if not use_tls_verify:
+            raise ValueError('xui_tls_verification_required')
+
         self.logger = logger or logging.getLogger(__name__)
 
         self.client = AsyncClientApi(host, username, password, use_tls_verify, custom_certificate_path, logger)
