@@ -273,6 +273,9 @@ class LegacySubscriptionTests(SimpleTestCase):
     @override_settings(
         SUBSCRIPTION_BASE_URL='https://direct.example/sub',
         SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=False,
+        # Pinned: production advertises 443, and an ambient value would other-
+        # wise decide what this test asserts about the default inbound port.
+        SUBSCRIPTION_DIRECT_ADVERTISED_PORT=0,
     )
     @patch('apps.subscriptions.views._get_params')
     @patch('apps.subscriptions.views.TelegramUser.objects')
