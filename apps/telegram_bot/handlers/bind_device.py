@@ -3,6 +3,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from apps.subscriptions.devices import open_binding_window
+from apps.telegram_bot.handlers.show_keys import build_keys_screen
+from apps.telegram_bot.ui import render_screen
 from apps.telegram_bot.utils import get_user
 from apps.users.models import TelegramUser
 
@@ -17,16 +19,14 @@ async def bind_device(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     window = await sync_to_async(open_binding_window)(user.id)
 
-    await context.bot.send_message(
-        user.telegram_id,
-        text=(
-            f'Привязка нового устройства открыта на {_humanized(window)}.\n\n'
-            'Откройте приложение на новом устройстве и обновите подписку — '
-            'оно привяжется само.\n\n'
-            'Уже привязанные устройства работают всегда, отдельно открывать '
-            'привязку для них не нужно.'
-        ),
+    notice = (
+        f'Привязка нового устройства открыта на {_humanized(window)}.\n\n'
+        'Откройте приложение на новом устройстве и обновите подписку — оно привяжется само. '
+        'Уже привязанные устройства работают всегда, отдельно открывать привязку для них не нужно.'
     )
+
+    text, keyboard = await build_keys_screen(user, notice=notice)
+    await render_screen(update, context, text, keyboard)
 
 
 def _humanized(window) -> str:

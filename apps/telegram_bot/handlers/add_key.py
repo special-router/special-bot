@@ -6,8 +6,9 @@ from telegram.ext import ContextTypes
 from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
 from apps.payments.models import Transaction
 from apps.servers.models import Server, TariffServer
-from apps.telegram_bot.handlers.balance import show_balance
-from apps.telegram_bot.handlers.show_keys import show_keys
+from apps.telegram_bot.handlers.balance import build_balance_screen
+from apps.telegram_bot.handlers.show_keys import build_keys_screen
+from apps.telegram_bot.ui import render_screen
 from apps.telegram_bot.utils import get_user
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
@@ -29,12 +30,12 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     redis_client.set(redis_key, 1, 15)
 
-    # отправить пользователю сообщение о том, что у него нет баланса (просто инфу о балансе вывести)
+    # Денег не хватает — сразу показываем экран пополнения, а не отдельное
+    # сообщение о балансе: следующий шаг пользователя всё равно там.
     if user.balance < server.tariff.price:
-        await update.callback_query.answer(
-            text='Недостаточно средств. Пополните баланс.',
-        )
-        return await show_balance(update, context)
+        text, keyboard = await build_balance_screen(user, notice='Недостаточно средств для новой подписки.')
+        await render_screen(update, context, text, keyboard)
+        return
 
     active_keys = await UserVPN.objects.filter_by_user(user_id=user.id).filter_by_enabled(True).acount()
     if active_keys >= settings.MAX_KEYS:
@@ -54,4 +55,7 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         source=TransactionSourceChoices.BUY,
     )
 
-    await show_keys(update, context)
+    # Баланс аннотирован до списания, поэтому пользователь перечитывается —
+    # иначе экран показал бы сумму, которой уже нет.
+    text, keyboard = await build_keys_screen(await get_user(update), notice='Подписка добавлена.')
+    await render_screen(update, context, text, keyboard)

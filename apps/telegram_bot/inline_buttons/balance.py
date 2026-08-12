@@ -2,39 +2,24 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from apps.payments.choices import TransactionSourceChoices
 from apps.payments.models import Transaction
+from apps.telegram_bot import icons
+from apps.telegram_bot.ui import back_button, button
 from apps.users.models import TelegramUser
 
 
 async def get_reply_markup_balance(user: TelegramUser) -> InlineKeyboardMarkup:
+    """Сроки пополнения по два в ряд: пять строк подряд читаются как список цен."""
     buttons: list[list[InlineKeyboardButton]] = [
         [
-            InlineKeyboardButton(
-                text='Пополнить на один месяц',
-                callback_data='top_up_balance_one_month',
-            ),
+            button('1 месяц', 'top_up_balance_one_month'),
+            button('2 месяца +5%', 'top_up_balance_two_month'),
         ],
         [
-            InlineKeyboardButton(
-                text='Пополнить на два месяца (+5% к балансу)',
-                callback_data='top_up_balance_two_month',
-            ),
+            button('3 месяца +10%', 'top_up_balance_three_month'),
+            button('Полгода +20%', 'top_up_balance_six_month'),
         ],
         [
-            InlineKeyboardButton(
-                text='Пополнить на три месяца (+10% к балансу)',
-                callback_data='top_up_balance_three_month',
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                text='Пополнить на полгода (+20% к балансу)', callback_data='top_up_balance_six_month'
-            ),
-        ],
-        [
-            InlineKeyboardButton(text='Пополнить на год (+30% к балансу)', callback_data='top_up_balance_year'),
-        ],
-        [
-            InlineKeyboardButton(text='Назад', callback_data='main_menu'),
+            button('Год +30%', 'top_up_balance_year'),
         ],
     ]
 
@@ -47,10 +32,8 @@ async def get_reply_markup_balance(user: TelegramUser) -> InlineKeyboardMarkup:
         )
         .aexists()
     ):
-        buttons += [
-            [
-                InlineKeyboardButton(text='Бесплатно 7 дней', callback_data='top_up_balance_promo'),
-            ]
-        ]
+        buttons.insert(0, [button('Бесплатно 7 дней', 'top_up_balance_promo', icon=icons.CELEBRATION)])
+
+    buttons.append([back_button()])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)

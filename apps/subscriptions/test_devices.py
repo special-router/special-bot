@@ -411,27 +411,33 @@ class DeviceResetHandlerTests(IsolatedAsyncioTestCase):
         self.context = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
         self.update = SimpleNamespace()
 
+    @patch('apps.telegram_bot.handlers.reset_devices.render_screen', new_callable=AsyncMock)
+    @patch('apps.telegram_bot.handlers.reset_devices.build_keys_screen', new_callable=AsyncMock)
     @patch('apps.telegram_bot.handlers.reset_devices.reset_user_devices')
     @patch('apps.telegram_bot.handlers.reset_devices.get_user', new_callable=AsyncMock)
-    async def test_successful_reset_confirms_in_russian(self, get_user, reset):
+    async def test_successful_reset_confirms_in_russian(self, get_user, reset, build_screen, _render):
         get_user.return_value = self.user
         reset.return_value = (True, None)
+        build_screen.return_value = ('экран', None)
 
         await reset_devices_handler(self.update, self.context)
 
-        message = self.context.bot.send_message.await_args.kwargs['text']
+        message = build_screen.await_args.kwargs['notice']
         self.assertIn('Устройства отвязаны', message)
         reset.assert_called_once_with(10)
 
+    @patch('apps.telegram_bot.handlers.reset_devices.render_screen', new_callable=AsyncMock)
+    @patch('apps.telegram_bot.handlers.reset_devices.build_keys_screen', new_callable=AsyncMock)
     @patch('apps.telegram_bot.handlers.reset_devices.reset_user_devices')
     @patch('apps.telegram_bot.handlers.reset_devices.get_user', new_callable=AsyncMock)
-    async def test_refusal_states_when_the_user_may_retry(self, get_user, reset):
+    async def test_refusal_states_when_the_user_may_retry(self, get_user, reset, build_screen, _render):
         get_user.return_value = self.user
         reset.return_value = (False, timedelta(hours=7, minutes=20))
+        build_screen.return_value = ('экран', None)
 
         await reset_devices_handler(self.update, self.context)
 
-        message = self.context.bot.send_message.await_args.kwargs['text']
+        message = build_screen.await_args.kwargs['notice']
         self.assertIn('не так часто', message)
         self.assertIn('7 ч. 20 мин.', message)
         self.assertIn('Привязать устройство', message)
@@ -443,16 +449,21 @@ class BindDeviceHandlerTests(IsolatedAsyncioTestCase):
         self.context = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
         self.update = SimpleNamespace()
 
+    @patch('apps.telegram_bot.handlers.bind_device.render_screen', new_callable=AsyncMock)
+    @patch('apps.telegram_bot.handlers.bind_device.build_keys_screen', new_callable=AsyncMock)
     @patch('apps.telegram_bot.handlers.bind_device.open_binding_window')
     @patch('apps.telegram_bot.handlers.bind_device.get_user', new_callable=AsyncMock)
-    async def test_binding_window_is_opened_for_the_authenticated_user(self, get_user, opener):
+    async def test_binding_window_is_opened_for_the_authenticated_user(
+        self, get_user, opener, build_screen, _render
+    ):
         get_user.return_value = self.user
         opener.return_value = timedelta(minutes=15)
+        build_screen.return_value = ('экран', None)
 
         await bind_device_handler(self.update, self.context)
 
         opener.assert_called_once_with(10)
-        message = self.context.bot.send_message.await_args.kwargs['text']
+        message = build_screen.await_args.kwargs['notice']
         self.assertIn('15 мин.', message)
         self.assertIn('подписк', message)
         self.assertNotIn('ключ', message)

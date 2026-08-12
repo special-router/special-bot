@@ -72,7 +72,7 @@ pydantic-core==2.33.2
     # via pydantic
 python-dateutil==2.9.0.post0
     # via celery
-python-telegram-bot==22.4
+python-telegram-bot==22.8
     # via vpnbot (pyproject.toml)
 Pillow==11.0.0
     # for ImageField image processing
