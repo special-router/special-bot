@@ -250,6 +250,12 @@ SUBSCRIPTION_CONNECTOR_ENABLED = env.bool('SUBSCRIPTION_CONNECTOR_ENABLED', Fals
 SUBSCRIPTION_DELIVERY_ENABLED = env.bool('SUBSCRIPTION_DELIVERY_ENABLED', False)
 SUBSCRIPTION_BASE_URL = env.str('SUBSCRIPTION_BASE_URL', env.str('SUB_URL', ''))
 
+# Port advertised for the direct NL endpoint. The inbound itself may listen on
+# a private port behind the shared SNI-routed 443 listener, so what clients are
+# told to dial is deliberately separate from where xray binds. Zero keeps the
+# legacy behaviour of advertising the inbound's own port.
+SUBSCRIPTION_DIRECT_ADVERTISED_PORT = env.int('SUBSCRIPTION_DIRECT_ADVERTISED_PORT', 0)
+
 # Additional inbound ids whose client ``enable``/``subId`` state must mirror the
 # primary ``Server.inbound_id``. Used for subscription endpoints that share the
 # same client pool but expose a different address (e.g. a RU relay front).

@@ -310,7 +310,39 @@ class LegacySubscriptionTests(SimpleTestCase):
         self.assertNotIn('flow', parse_qs(urlsplit(lines[2]).query))
         self.assertEqual(response['Cache-Control'], 'private, no-store')
         self.assertEqual(response['Pragma'], 'no-cache')
+        self.assertEqual(urlsplit(lines[1]).port, 8443)
 
+    @override_settings(
+        SUBSCRIPTION_BASE_URL='https://direct.example/sub',
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=False,
+        SUBSCRIPTION_DIRECT_ADVERTISED_PORT=443,
+    )
+    @patch('apps.subscriptions.views._get_params')
+    @patch('apps.subscriptions.views.TelegramUser.objects')
+    @patch('apps.subscriptions.views.UserVPN.objects')
+    def test_advertised_direct_port_overrides_private_inbound_port(
+        self, user_vpn_objects, telegram_user_objects, get_params,
+    ):
+        user_vpn_objects.select_related.return_value.get.return_value = SimpleNamespace(
+            id=1, enabled=True,
+            server=SimpleNamespace(id=1, inbound_id=5, client_vpn_host='relay.example:443', tariff=None),
+            user_id=1, vpn_uuid='synthetic-local-id',
+        )
+        telegram_user_objects.annotate_balance.return_value.filter.return_value.first.return_value = None
+        get_params.return_value = {
+            'public_key': 'synthetic-public-key', 'server_name': 'sni.example',
+            'short_ids': ['synthetic-short-id'], 'port': 8443, 'network': 'tcp',
+        }
+
+        response = views.subscription_proxy(RequestFactory().get('/sub/synthetic'), 'synthetic')
+        lines = base64.b64decode(response.content).decode().splitlines()
+
+        self.assertEqual(len(lines), 3)
+        # Only the direct entry moves to the shared listener; relay is untouched.
+        self.assertEqual(urlsplit(lines[1]).hostname, 'direct.example')
+        self.assertEqual(urlsplit(lines[1]).port, 443)
+        self.assertEqual(urlsplit(lines[2]).hostname, 'relay.example')
+        self.assertEqual(urlsplit(lines[2]).port, 443)
 
     @override_settings(
         SUBSCRIPTION_BASE_URL='https://direct.example/sub',

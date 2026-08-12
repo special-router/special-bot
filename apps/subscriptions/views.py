@@ -356,7 +356,9 @@ def subscription_proxy(request, sub_id: str):
     relay_host, relay_port = _endpoint(server.client_vpn_host, params['port'])
     sub_domain = settings_relays().SUBSCRIPTION_BASE_URL.split('/')[2].split(':')[0]  # hostname only
     direct_host = sub_domain
-    direct_port = params['port']
+    # Advertise the shared public listener when configured; xray may then bind
+    # its inbound privately without changing what any client dials.
+    direct_port = getattr(settings_relays(), 'SUBSCRIPTION_DIRECT_ADVERTISED_PORT', 0) or params['port']
 
     uuid_str = str(user_vpn.vpn_uuid)
     # Preserve the deployed legacy client contract. Most existing control-plane
