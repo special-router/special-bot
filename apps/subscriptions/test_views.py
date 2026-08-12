@@ -2,6 +2,7 @@ import base64
 import copy
 import hashlib
 import io
+import json
 import logging
 import logging.config
 import os
@@ -743,6 +744,217 @@ class ExternalSubscriptionTests(SimpleTestCase):
             self.assertFalse(worker.is_alive())
         with views._BACKUP_CACHE_LOCK:
             self.assertEqual(views._BACKUP_CACHE, {})
+
+
+class MirrorIngestTests(SimpleTestCase):
+    """Ingestion of providers that answer with a JSON document per User-Agent."""
+
+    plaintext_outbound = {
+        'type': 'vless',
+        'tag': 'Mirror Plain',
+        'server': 'mirror-one.example',
+        'server_port': 443,
+        'uuid': 'synthetic-plain-id',
+        'tls': {'enabled': False},
+    }
+    reality_outbound = {
+        'type': 'vless',
+        'tag': 'Mirror Reality',
+        'server': 'mirror-two.example',
+        'server_port': 8443,
+        'uuid': 'synthetic-reality-id',
+        'flow': 'xtls-rprx-vision',
+        'tls': {
+            'enabled': True,
+            'server_name': 'sni.example',
+            'utls': {'fingerprint': 'chrome'},
+            'reality': {'enabled': True, 'public_key': 'synthetic-pbk', 'short_id': 'ab01'},
+        },
+        'transport': {'type': 'grpc', 'service_name': 'synthetic-service'},
+    }
+    reality_link = (
+        'vless://synthetic-reality-id@mirror-two.example:8443?'
+        'flow=xtls-rprx-vision&type=grpc&security=reality&pbk=synthetic-pbk&fp=chrome&'
+        'sni=sni.example&sid=ab01&spx=%2F&serviceName=synthetic-service#Mirror%20Reality'
+    )
+
+    def singbox(self, *outbounds):
+        """A sing-box config shaped like the provider's SFI response."""
+        return json.dumps({
+            'dns': {}, 'log': {}, 'route': {}, 'inbounds': [], 'experimental': {},
+            'outbounds': [
+                {'type': 'selector', 'tag': 'select', 'outbounds': ['direct']},
+                *outbounds,
+                {'type': 'direct', 'tag': 'direct'},
+            ],
+        }).encode()
+
+    def v2ray_array(self, *, security='none'):
+        """The array of whole client configs returned to v2rayNG/Happ agents."""
+        stream = {'network': 'tcp', 'security': security}
+        if security == 'tls':
+            stream['tlsSettings'] = {'serverName': 'sni.example', 'fingerprint': 'chrome'}
+        return json.dumps([{
+            'remarks': f'Mirror {index}',
+            'routing': {'rules': []},
+            'outbounds': [
+                {
+                    'protocol': 'vless',
+                    'settings': {'vnext': [{
+                        'address': f'mirror-{index}.example',
+                        'port': 443,
+                        'users': [{'id': f'synthetic-{index}', 'encryption': 'none'}],
+                    }]},
+                    'streamSettings': stream,
+                },
+                {'protocol': 'freedom', 'tag': 'direct'},
+            ],
+        } for index in range(3)]).encode()
+
+    def test_singbox_document_serves_only_secure_endpoints_by_default(self):
+        payload = self.singbox(self.plaintext_outbound, self.reality_outbound)
+
+        self.assertEqual(views._sanitize_upstream_payload(payload), [self.reality_link])
+
+    def test_singbox_reality_link_matches_our_own_field_order(self):
+        payload = self.singbox(self.reality_outbound)
+
+        link = views._sanitize_upstream_payload(payload)[0]
+
+        self.assertEqual(link, self.reality_link)
+        self.assertEqual(parse_qs(urlsplit(link).query)['serviceName'], ['synthetic-service'])
+
+    def test_singbox_tls_without_reality_is_secure_and_omits_reality_fields(self):
+        outbound = copy.deepcopy(self.reality_outbound)
+        del outbound['tls']['reality']
+
+        query = parse_qs(urlsplit(views._sanitize_upstream_payload(
+            self.singbox(outbound))[0]).query)
+
+        self.assertEqual(query['security'], ['tls'])
+        self.assertNotIn('pbk', query)
+        self.assertNotIn('sid', query)
+
+    def test_singbox_reality_without_key_material_is_dropped(self):
+        outbound = copy.deepcopy(self.reality_outbound)
+        outbound['tls']['reality'] = {'enabled': True, 'public_key': ''}
+
+        self.assertEqual(views._sanitize_upstream_payload(self.singbox(outbound)), [])
+
+    def test_v2ray_array_is_parsed_and_gated_like_singbox(self):
+        self.assertEqual(views._sanitize_upstream_payload(self.v2ray_array()), [])
+
+        links = views._sanitize_upstream_payload(self.v2ray_array(security='tls'))
+
+        self.assertEqual(links, [
+            f'vless://synthetic-{index}@mirror-{index}.example:443?'
+            f'type=tcp&security=tls&fp=chrome&sni=sni.example#Mirror%20{index}'
+            for index in range(3)
+        ])
+
+    @override_settings(SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS=True)
+    def test_plaintext_endpoints_are_served_only_when_explicitly_enabled(self):
+        payload = self.singbox(self.plaintext_outbound, self.reality_outbound)
+
+        self.assertEqual(views._sanitize_upstream_payload(payload), [
+            'vless://synthetic-plain-id@mirror-one.example:443?'
+            'type=tcp&security=none#Mirror%20Plain',
+            self.reality_link,
+        ])
+
+    @override_settings(SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS=True)
+    def test_hostile_and_malformed_documents_yield_no_links_and_no_exception(self):
+        loopback = dict(self.plaintext_outbound, server='127.0.0.1')
+        private = dict(self.plaintext_outbound, server='10.0.0.1')
+        named_loopback = dict(self.plaintext_outbound, server='LocalHost')
+        for payload in (
+            b'{',
+            b'{"outbounds": "not-a-list"}',
+            b'[[[' + b'[' * 5000,
+            b'[' * 5000 + b']' * 5000,
+            json.dumps({'outbounds': [{'type': 'vless'}]}).encode(),
+            self.singbox(loopback, private, named_loopback),
+            self.singbox(dict(self.plaintext_outbound, server_port=True)),
+            self.singbox(dict(self.plaintext_outbound, server_port=0)),
+            self.singbox(dict(self.plaintext_outbound, uuid='id\r\nHost: evil')),
+            self.singbox(dict(self.plaintext_outbound, server='host with space')),
+            json.dumps([{'outbounds': 'not-a-list'}, 'not-a-config']).encode(),
+        ):
+            with self.subTest(payload=payload[:40]):
+                self.assertEqual(views._sanitize_upstream_payload(payload), [])
+
+    @override_settings(SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS=True)
+    def test_oversized_document_is_capped_at_the_endpoint_limit(self):
+        outbounds = [dict(self.plaintext_outbound, server=f'mirror-{index}.example',
+                          tag=f'Mirror {index}')
+                     for index in range(views._MIRROR_MAX_ENDPOINTS * 4)]
+
+        links = views._sanitize_upstream_payload(self.singbox(*outbounds))
+
+        self.assertEqual(len(links), views._MIRROR_MAX_ENDPOINTS - 1)
+
+    def test_unexpected_content_types_are_ignored(self):
+        for payload in (
+            b'proxies:\n  - name: mirror\n    type: vless\n    server: mirror.example\n',
+            b'<!DOCTYPE html><html><body>subscription expired</body></html>',
+            b'\x00\xff\xfe binary',
+        ):
+            with self.subTest(payload=payload[:20]):
+                self.assertEqual(views._sanitize_upstream_payload(payload), [])
+
+    @override_settings(SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS=True)
+    def test_provider_strings_cannot_inject_uri_structure(self):
+        outbound = dict(self.plaintext_outbound,
+                        uuid='id@evil.example/x?a=b#frag',
+                        tag='Mirror#injected')
+
+        link = views._sanitize_upstream_payload(self.singbox(outbound))[0]
+
+        self.assertEqual(urlsplit(link).hostname, 'mirror-one.example')
+        self.assertEqual(urlsplit(link).username, 'id%40evil.example%2Fx%3Fa%3Db%23frag')
+        self.assertEqual(urlsplit(link).fragment, 'Mirror%23injected')
+
+    def test_opaque_uri_list_sources_keep_their_byte_for_byte_contract(self):
+        link = 'vless://synthetic@backup.example:443?type=tcp#Other'
+
+        self.assertEqual(views._sanitize_upstream_payload((link + '\n').encode()), [link])
+        self.assertEqual(
+            views._sanitize_upstream_payload(base64.b64encode((link + '\n').encode())), [link])
+
+    def test_user_agent_selects_the_format_and_rejects_header_injection(self):
+        self.assertEqual(views._upstream_user_agent(), 'SPECIAL-subscription-backup/1')
+        with self.settings(SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT='SFI/1.9'):
+            self.assertEqual(views._upstream_user_agent(), 'SFI/1.9')
+        for value in ('', '   ', 'SFI/1.9\r\nX-Injected: 1', 'ага/1.0', 'a' * 129, ['SFI/1.9']):
+            with self.subTest(value=value), self.settings(
+                SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT=value,
+            ):
+                self.assertEqual(views._upstream_user_agent(), 'SPECIAL-subscription-backup/1')
+
+    @override_settings(SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT='SFI/1.9')
+    @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
+    @patch('apps.subscriptions.views.ssl.create_default_context')
+    @patch('apps.subscriptions.views.socket.create_connection')
+    def test_configured_agent_is_sent_to_the_provider(self, create_connection, create_context, resolve):
+        tls_socket = _FakeTLSSocket(b'HTTP/1.1 200 OK\r\n\r\n{}')
+        create_connection.return_value = Mock()
+        create_context.return_value.wrap_socket.return_value = tls_socket
+
+        views._fetch_upstream_payload('https://subscription.example/opaque')
+
+        self.assertIn('User-Agent: SFI/1.9\r\n', b''.join(tls_socket.sent).decode('ascii'))
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://subscription.example/mirror'],
+    )
+    @patch('apps.subscriptions.views._fetch_upstream_payload')
+    def test_plaintext_only_source_aggregates_to_no_links(self, fetch):
+        views._clear_backup_cache()
+        self.addCleanup(views._clear_backup_cache)
+        fetch.return_value = self.singbox(self.plaintext_outbound)
+
+        self.assertIsNone(views._backup_links())
 
 
 class SubscriptionResponseCacheTests(SimpleTestCase):
