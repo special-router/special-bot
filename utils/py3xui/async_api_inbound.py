@@ -34,6 +34,35 @@ class AsyncInboundApi(BaseAsyncInboundApi):
         if remaining:
             raise RuntimeError('xui_scoped_delete_verification')
 
+    async def set_enabled(self, inbound_id: int, enabled: bool) -> bool:
+        """Flip only an inbound's enable flag, preserving its stored config.
+
+        py3xui's update() re-serializes the whole model, which can silently
+        normalize protocol settings. Retiring an inbound must not rewrite the
+        configuration it may later be restored from, so the panel's own encoded
+        strings are sent back untouched and the result is verified.
+        """
+        endpoint = f'panel/api/inbounds/get/{int(inbound_id)}'
+        response = await self._get(self._url(endpoint), {'Accept': 'application/json'})
+        stored = response.json().get(ApiFields.OBJ)
+        if not stored:
+            raise RuntimeError('xui_inbound_missing')
+        if bool(stored.get('enable')) == enabled:
+            return False
+
+        payload = dict(stored)
+        payload['enable'] = enabled
+        await self._post(
+            self._url(f'panel/api/inbounds/update/{int(inbound_id)}'),
+            {'Accept': 'application/json'},
+            payload,
+        )
+
+        verify = await self._get(self._url(endpoint), {'Accept': 'application/json'})
+        if bool(verify.json().get(ApiFields.OBJ, {}).get('enable')) != enabled:
+            raise RuntimeError('xui_inbound_enable_verification')
+        return True
+
     async def get_raw_config_by_id(self, inbound_id: int) -> Inbound:
         endpoint = f"panel/api/inbounds/get/{inbound_id}"
         headers = {'Accept': 'application/json'}
