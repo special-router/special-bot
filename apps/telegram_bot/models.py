@@ -169,6 +169,82 @@ class Broadcast(models.Model):
         return self.status in ['sent', 'failed']
 
 
+class SupportTicket(models.Model):
+    """One support conversation, mirrored as a forum topic in the operators' chat.
+
+    The primary key doubles as the ticket number shown to the customer and
+    written into the topic name, so the row has to exist before the topic can be
+    named.  ``status`` is the only record of whether a conversation is live: the
+    reference implementation kept a second copy of that fact on the user row,
+    the two drifted, and the result was topics in the operators' chat with no
+    row behind them and users unable to open a ticket ever again.
+    """
+
+    STATUS_OPEN = 'open'
+    STATUS_CLOSED = 'closed'
+    STATUS_CHOICES = [
+        (STATUS_OPEN, 'Открыт'),
+        (STATUS_CLOSED, 'Закрыт'),
+    ]
+
+    # Заголовок хранится обрезанным: он нужен оператору для опознания обращения
+    # в списке, а не как копия переписки.
+    SUBJECT_MAX_LENGTH = 200
+
+    user = models.ForeignKey(TelegramUser, on_delete=models.CASCADE, related_name='support_tickets')
+    # Снимок на момент обращения: пользователь может сменить @username, а тема в
+    # чате операторов уже названа старым, и связать одно с другим будет нечем.
+    telegram_username = models.TextField('Telegram Username', blank=True)
+    topic_id = models.BigIntegerField('Идентификатор темы', null=True, blank=True)
+    status = models.CharField('Статус', max_length=16, choices=STATUS_CHOICES, default=STATUS_OPEN)
+    subject = models.CharField('Тема обращения', max_length=SUBJECT_MAX_LENGTH, blank=True)
+    meta = models.JSONField('Служебные данные', default=dict, blank=True)
+    created_at = models.DateTimeField('Создано', auto_now_add=True)
+    closed_at = models.DateTimeField('Закрыто', null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Обращение в поддержку'
+        verbose_name_plural = 'Обращения в поддержку'
+        ordering = ['-created_at']
+        constraints = [
+            # Частичный уникальный индекс, а не проверка в коде: два сообщения
+            # пользователя обрабатываются разными воркерами, и «посмотреть, нет
+            # ли открытого» проигрывает гонку ровно в тот момент, когда это
+            # важно. Значение статуса записано литералом — внутри Meta атрибуты
+            # внешнего класса ещё не видны.
+            models.UniqueConstraint(
+                fields=['user'],
+                condition=models.Q(status='open'),
+                name='unique_open_support_ticket',
+            )
+        ]
+        indexes = [models.Index(fields=['topic_id', 'status'])]
+
+    def __str__(self):
+        return f'Обращение #{self.pk} ({self.get_status_display()})'
+
+
+class SupportPrompt(models.Model):
+    """Пользователь нажал «Поддержка», и его следующее сообщение уйдёт в тикет.
+
+    Живёт в базе, а не в множестве внутри процесса: у бота больше одного
+    воркера, и сообщение легко приходит не в тот процесс, который показал
+    приглашение.  Тот же in-memory набор в референсной реализации и разошёлся
+    с базой.  Ожидание снимается удалением строки — одним оператором, поэтому
+    сообщение потребляет его ровно один раз даже при гонке.
+    """
+
+    user = models.OneToOneField(TelegramUser, on_delete=models.CASCADE, related_name='support_prompt')
+    created_at = models.DateTimeField('Создано', auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Ожидание сообщения в поддержку'
+        verbose_name_plural = 'Ожидания сообщений в поддержку'
+
+    def __str__(self):
+        return f'Ожидание сообщения от {self.user_id}'
+
+
 class BroadcastDelivery(models.Model):
     """One immutable recipient snapshot row and its delivery state."""
 
