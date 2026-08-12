@@ -14,6 +14,12 @@ from apps.telegram_bot.handlers.reset_devices import reset_devices
 from apps.telegram_bot.handlers.show_keys import show_keys
 from apps.telegram_bot.handlers.start import start
 from apps.telegram_bot.handlers.subscription import show_subscription
+from apps.telegram_bot.handlers.support import (
+    support_close,
+    support_message,
+    support_open,
+    support_operator_reply,
+)
 from apps.telegram_bot.handlers.top_up_balance import (
     pre_checkout_callback,
     successful_payment_callback,
@@ -56,6 +62,22 @@ def register_handlers():
         telegram_bot_app.add_handler(CallbackQueryHandler(show_subscription, pattern=r'^show_subscription$'))
 
     telegram_bot_app.add_handler(CallbackQueryHandler(referral, pattern=r'^referral$'))
+
+    # Без чата операторов обращения внутри бота недоступны целиком: меню
+    # оставляет прежнюю внешнюю ссылку, а обработчик текста не регистрируется —
+    # бот не начинает вычитывать личную переписку ради выключенной функции.
+    if settings.SUPPORT_CHAT_ID:
+        telegram_bot_app.add_handler(CallbackQueryHandler(support_open, pattern=r'^support_open$'))
+        telegram_bot_app.add_handler(CallbackQueryHandler(support_close, pattern=r'^support_close:\d+$'))
+        telegram_bot_app.add_handler(
+            MessageHandler(
+                filters.Chat(settings.SUPPORT_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
+                support_operator_reply,
+            )
+        )
+        telegram_bot_app.add_handler(
+            MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, support_message)
+        )
 
     telegram_bot_app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))
     telegram_bot_app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
