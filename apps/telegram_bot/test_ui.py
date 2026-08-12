@@ -33,7 +33,6 @@ from apps.telegram_bot.ui import render_screen
 EXPECTED_CALLBACK_DATA = frozenset(
     {
         'add_key:*',
-        'bind_device',
         'faq',
         'main_menu',
         'profile',
@@ -96,6 +95,10 @@ class ScreenGuaranteesTests(IsolatedAsyncioTestCase):
 
             def patched(target, **kwargs):
                 return stack.enter_context(patch(target, **kwargs))
+
+            # Кнопки сумм есть только при настроенном провайдере; их отсутствие
+            # без него — предмет отдельного теста в test_feedback.py.
+            stack.enter_context(override_settings(YOUMONEY_TOKEN='390540012:TEST:token'))
 
             for module in ('main_menu', 'profile'):
                 objects = patched(f'apps.telegram_bot.handlers.{module}.UserVPN').objects
@@ -230,6 +233,16 @@ class ScreenGuaranteesTests(IsolatedAsyncioTestCase):
         self.assertIn('Подписка добавлена.', text)
         self.assertTrue(keyboard.inline_keyboard)
 
+    @override_settings(TELEGRAM_BUTTON_ICONS_ENABLED=False)
+    async def test_no_screen_offers_binding_as_a_user_chore(self):
+        """Привязка происходит сама; кнопка обещала работу, которой нет."""
+        screens = await self.build_every_screen()
+
+        for name, (_text, keyboard) in screens.items():
+            with self.subTest(screen=name):
+                labels = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+                self.assertNotIn('bind_device', labels)
+
 
 class IconCatalogTests(IsolatedAsyncioTestCase):
     def test_every_fallback_is_an_actual_emoji(self):
@@ -294,6 +307,12 @@ class AnchorMessageTests(IsolatedAsyncioTestCase):
 
         with self.assertRaises(BadRequest):
             await render_screen(self.update, self.context, 'текст')
+
+    async def test_toast_confirms_an_action_the_screen_barely_shows(self):
+        """Успешное действие с почти прежним экраном читается как несработавшее."""
+        await render_screen(self.update, self.context, 'текст', toast='Подписка добавлена.')
+
+        self.query.answer.assert_awaited_once_with(text='Подписка добавлена.')
 
     async def test_double_answer_does_not_break_the_render(self):
         """Обработчик мог ответить своим текстом раньше — второй ответ отклоняется."""

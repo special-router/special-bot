@@ -35,6 +35,7 @@ from apps.telegram_bot.ui import (
     PARSE_MODE,
     STATUS_ACTIVE,
     STATUS_INACTIVE,
+    answer_query,
     back_button,
     button,
     render_screen,
@@ -123,6 +124,9 @@ def _close_keyboard(ticket_id: int) -> InlineKeyboardMarkup:
 async def support_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Кнопка «Поддержка»: включить ожидание и позвать написать."""
     if not _enabled():
+        # Обработчик без чата операторов не регистрируется, так что сюда
+        # попадает только нажатие, пережившее выключение настройки.
+        await answer_query(update, 'Обращения временно недоступны.')
         return
 
     user: TelegramUser = await get_user(update)

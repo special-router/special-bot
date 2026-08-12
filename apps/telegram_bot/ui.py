@@ -93,6 +93,21 @@ def code(value: str) -> str:
     return f'<code>{html.escape(str(value))}</code>'
 
 
+async def answer_query(update: Update, text: str | None = None) -> None:
+    """Снять «часики» с нажатой кнопки, по желанию показав короткий тост.
+
+    Нажатие без ответа Telegram крутит часы до собственного таймаута, поэтому
+    любой выход из обработчика мимо `render_screen` читается как зависший бот.
+    Повторный ответ Bot API отклоняет — обработчик мог ответить раньше.
+    """
+    query = update.callback_query
+    if query is None:
+        return
+
+    with contextlib.suppress(BadRequest):
+        await query.answer(text=text)
+
+
 def screen(title: str, *, state: Iterable[str] | None = None, body: Iterable[str] | None = None) -> str:
     """Собрать текст экрана по единому шаблону.
 
@@ -117,20 +132,21 @@ async def render_screen(
     keyboard: InlineKeyboardMarkup | None = None,
     *,
     force_new: bool = False,
+    toast: str | None = None,
 ) -> None:
     """Показать экран, переписав сообщение с нажатой кнопкой.
 
     Якорь нигде не хранится: следующее нажатие приходит от того сообщения, чью
     кнопку нажали, поэтому после отправки нового сообщения якорь смещается на
     него сам.
+
+    `toast` — подтверждение поверх экрана. Оно нужно там, где действие удалось,
+    а экран после него выглядит почти прежним: без тоста успешное нажатие
+    неотличимо от несработавшего.
     """
     query = update.callback_query
 
-    if query is not None:
-        # Ответ снимает «часики» с кнопки. Обработчик мог ответить своим
-        # текстом раньше — второй ответ Bot API отклонит, и это нормально.
-        with contextlib.suppress(BadRequest):
-            await query.answer()
+    await answer_query(update, toast)
 
     if query is not None and not force_new:
         try:

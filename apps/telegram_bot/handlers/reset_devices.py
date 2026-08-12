@@ -9,28 +9,38 @@ from apps.telegram_bot.utils import get_user
 from apps.users.models import TelegramUser
 
 
+# Названо тем, что происходит: места освобождаются, и занимает их то
+# устройство, которое откроет подписку следующим. Слова «привязка открыта»
+# описывали механику, которой пользователь не управляет.
 RESET_DONE_TEXT = (
-    'Устройства отвязаны от подписки. Привязка открыта — откройте приложение на тех устройствах, '
-    'которыми пользуетесь, и они привяжутся заново.'
+    'Устройства отвязаны от подписки. Места свободны: их займут устройства, которые откроют '
+    'подписку следующими — просто откройте приложение там, где пользуетесь.'
 )
 
 
 async def reset_devices(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Let the user re-bind their devices themselves after changing a phone."""
+    """Release this user's device slots, so a replaced phone can take one.
+
+    Clearing alone would strand the user once the binding window becomes
+    mandatory, so `reset_user_devices` opens that window in the same
+    transaction — the unbind stays a single button either way.
+    """
     user: TelegramUser = await get_user(update)
 
     done, remaining = await sync_to_async(reset_user_devices)(user.id)
     if done:
         notice = RESET_DONE_TEXT
+        toast = 'Устройства отвязаны.'
     else:
         notice = (
-            'Сбрасывать устройства можно не так часто. '
+            'Отвязывать устройства можно не так часто. '
             f'Повторите попытку через {_humanized(remaining)}.\n\n'
-            'Чтобы добавить ещё одно устройство, сбрасывать не нужно — нажмите «Привязать устройство».'
+            'Уже привязанные устройства всё это время работают как обычно.'
         )
+        toast = 'Отвязать пока нельзя.'
 
     text, keyboard = await build_keys_screen(user, notice=notice)
-    await render_screen(update, context, text, keyboard)
+    await render_screen(update, context, text, keyboard, toast=toast)
 
 
 def _humanized(remaining) -> str:
