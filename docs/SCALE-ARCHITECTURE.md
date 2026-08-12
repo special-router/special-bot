@@ -1,5 +1,10 @@
 # Scale-ready architecture
 
+> **This document describes a target, not the deployment.** Nothing here is a
+> claim about what runs today; for that see [STATUS.md](STATUS.md) and
+> [ARCHITECTURE.md](ARCHITECTURE.md). The thresholds below are engineering
+> triggers to re-measure against, not measured capacity.
+
 ## Target state
 
 The target is a subscription-first SPECIAL Bot platform that scales application
@@ -76,6 +81,9 @@ redundancy.
   must not depend on one router vendor.
 
 ## Compatibility ownership and migration
+
+The operational procedure is [COMPATIBILITY-MIGRATION.md](COMPATIBILITY-MIGRATION.md);
+it wins on any detail. The phases below place that procedure in the scale plan.
 
 Compatibility-only clients have no inferred owner. Migration requires an
 explicit mapping record created from private owner verification. Never map by

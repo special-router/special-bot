@@ -8,7 +8,13 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-MARKDOWN = [ROOT / 'README.md', *sorted((ROOT / 'docs').glob('*.md'))]
+MARKDOWN = [
+    ROOT / 'README.md',
+    ROOT / 'CLAUDE.md',
+    *sorted((ROOT / 'docs').rglob('*.md')),
+]
+SETTINGS_FILE = ROOT / 'bot' / 'settings.py'
+FLAGS_DOC = ROOT / 'docs' / 'FLAGS.md'
 SHELL = sorted((ROOT / 'ops' / 'scripts').glob('*.sh'))
 PYTHON_SCRIPTS = sorted((ROOT / 'ops' / 'scripts').glob('*.py'))
 CANONICAL_OPERATOR_SCRIPTS = (
@@ -47,6 +53,11 @@ SECRET_PATTERNS = {
     'vless_uri': re.compile(r'vless://[0-9a-fA-F-]{36}@'),
 }
 LINK_PATTERN = re.compile(r'\[[^\]]+\]\(([^)]+)\)')
+
+# A setting reaches the runtime only through ``env.<type>('NAME'`` or the
+# canary JSON helper; a documented flag is the first cell of a FLAGS.md row.
+ENV_SETTING_PATTERN = re.compile(r"(?:env\.\w+|_internal_canary_json)\(\s*'([A-Z][A-Z0-9_]*)'")
+FLAG_ROW_PATTERN = re.compile(r'^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|', re.MULTILINE)
 
 
 def fail(message: str) -> None:
@@ -106,12 +117,33 @@ def check_scripts() -> None:
             fail(f'ops/scripts/{name}: non-interactive sudo is required')
 
 
+def flag_drift(settings_text: str, flags_text: str) -> tuple[list[str], list[str]]:
+    """Return settings missing a documented row, and rows naming no setting."""
+    configured = set(ENV_SETTING_PATTERN.findall(settings_text))
+    documented = set(FLAG_ROW_PATTERN.findall(flags_text))
+    return sorted(configured - documented), sorted(documented - configured)
+
+
+def check_flags() -> int:
+    """Documentation of a flag must rot loudly, not silently."""
+    settings_text = SETTINGS_FILE.read_text(encoding='utf-8')
+    flags_text = FLAGS_DOC.read_text(encoding='utf-8')
+    undocumented, unknown = flag_drift(settings_text, flags_text)
+    if undocumented:
+        fail(f'docs/FLAGS.md: no row for {", ".join(undocumented)}')
+    if unknown:
+        fail(f'docs/FLAGS.md: {", ".join(unknown)} is documented but absent from bot/settings.py')
+    return len(set(ENV_SETTING_PATTERN.findall(settings_text)))
+
+
 def main() -> None:
     check_markdown()
     check_scripts()
+    documented_flags = check_flags()
     print(
         f'repository_validation=passed markdown={len(MARKDOWN)} '
-        f'shell={len(SHELL)} python_scripts={len(PYTHON_SCRIPTS)}'
+        f'shell={len(SHELL)} python_scripts={len(PYTHON_SCRIPTS)} '
+        f'flags={documented_flags}'
     )
 
 

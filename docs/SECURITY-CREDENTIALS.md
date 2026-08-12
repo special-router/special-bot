@@ -13,6 +13,10 @@ chat transcripts, shell history, or ordinary logs.
   or paste their values into commands or debugging output.
 - Use approved key-based access and verified host identity. Do not use
   password-bearing `curl` commands, `sshpass`, or inline credential arguments.
+  The RU relay host is the single documented exception, through
+  `ops/scripts/relay_ssh.sh`; see
+  [RUNBOOK.md](RUNBOOK.md#ru-relay-administrative-access). It does not extend to
+  BOT or NL, and it is an open item, not a pattern to copy.
 - Treat a subscription URL as bearer access data: private delivery only, never
   admin display, metrics, traces, JSONL, or docs.
 - Monitoring and audits report sanitized aggregates and coarse error classes,

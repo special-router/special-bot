@@ -10,7 +10,13 @@
 > internal relays, not mirrors — they lack per-client UUIDs and are not
 > usable as subscription endpoints.
 
-Status: design — pending provisioning of backup service access.
+**Status (2026-08-12): the ingestion code is implemented, tested and deployed
+default-off.** `apps/subscriptions/views.py` fetches, classifies and renders
+provider endpoints today; what is missing is a provisioned provider. The
+"Design" and "Prerequisites" sections below therefore describe shipped
+behaviour and an external dependency respectively, not future work. Sections
+about the internal canary describe a separately gated feature that is also
+implemented and off.
 
 ## Context
 
@@ -62,12 +68,15 @@ these IDs to `MIRROR_INBOUND_IDS`, never creates a target member, and reports
 missing, duplicate, mismatched or partial-panel results as an aggregate
 fail-closed error. It makes no ownership inference.
 
-The current production panel control-plane URL is legacy HTTP. Therefore the
-operator and internal renderer rollout are blocked until the panel is migrated
-to HTTPS with certificate verification. `probe_special_uservpn801.py --tls-check`
-fails closed while the endpoint is HTTP and never prints its URL, path, or
-certificate material. Do not re-enable retained alternate memberships or either
-internal feature flag before that migration is independently verified.
+**Superseded 2026-08-12:** this section previously said the rollout was blocked
+because the production panel control-plane URL was plaintext HTTP. That blocker
+is gone. The panel is HTTPS-only behind nginx at a secret base path, and
+`utils/py3xui/async_api.py` now refuses anything else at construction time
+(`xui_https_required`, `xui_tls_verification_required`).
+`probe_special_uservpn801.py --tls-check` still fails closed and still never
+prints a URL, path or certificate material. What remains blocking is an owner
+decision, not a transport migration — see
+[OPEN-ITEMS.md](OPEN-ITEMS.md#internal-same-origin-canary).
 
 Protected operator backups and journals remain retained through review and
 acceptance. After documented owner acceptance, an owner may use the protected

@@ -9,9 +9,14 @@ configuration into terminals, tickets, or logs.
 
 ## RU relay administrative access
 
+> This is the **one named exception** to the "no `sshpass`, no password
+> authentication" rule in [SECURITY-CREDENTIALS.md](SECURITY-CREDENTIALS.md).
+> It applies to the RU relay host only, never to BOT or NL, and it is tracked as
+> an open item in [OPEN-ITEMS.md](OPEN-ITEMS.md).
+
 The current verified emergency access path is `root` password authentication
-using `VPN_RELAY_SSH_PASS` from the protected, untracked
-`/home/fsdf1234/Projects/special-router-dev/.env`. Use
+using `VPN_RELAY_SSH_PASS` from a protected, untracked operator `.env` outside
+this repository. Use
 `ops/scripts/relay_ssh.sh`; it passes the secret through `sshpass -e`, keeps
 strict existing host-key verification, and never places the password in argv or
 output. Never paste or log the value. A previous failed check came from an
@@ -119,8 +124,9 @@ rotation audit must fail closed rather than use the dirty historical checkout.
    connectivity, then start web/Celery/beat and the isolated monitoring worker.
    Never declare duplicate `postgres` or `redis` service aliases in another
    Compose project.
-4. Verify Telegram health, `audit_legacy_vpn`, L0/L1/L2, queue isolation and
-   `66/87/21`; use protected backups for rollback if any gate fails.
+4. Verify Telegram health, `audit_legacy_vpn` (`entitled_missing=0` is the
+   gate; the other counts move with user activity), L0/L1/L2 and queue
+   isolation. Use protected backups for rollback if any gate fails.
 
 Never combine credential rotation with subscription pilot, bulk `subId`,
 expiryTime, billing, inbound deletion or transport changes.
@@ -140,7 +146,8 @@ mutating scripts still require the authorization stated above.
 - `ops/scripts/preflight_special_subscription.sh` — read-only host/deployment
   preflight.
 - `ops/scripts/deploy_special_subscription_app.sh` — guarded reproducible app
-  deployment with image/environment rollback.
+  deployment with image/environment rollback. Its gates, migration ownership
+  and rollback behaviour are documented in [DEPLOY.md](DEPLOY.md).
 - `ops/scripts/backfill_special_subscription_ids.sh` — explicit mode-0600 ID
   file, dry-run by default, bounded apply batches.
 - `ops/scripts/rotate_special_xui_credentials.sh` — disruptive atomic NL/BOT

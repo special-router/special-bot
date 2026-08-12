@@ -36,6 +36,18 @@ production state belongs in [STATUS.md](STATUS.md).
   and was fully rolled back; the audited `cubic`/`fq_codel` baseline remains
   active. Future relay tuning must change and benchmark one knob at a time.
 
+- **2026-08-12:** documentation was restructured around one entry point
+  (`CLAUDE.md`) plus a per-task context map, a full settings inventory and an
+  open-items register. `ROADMAP.md` and `SUBSCRIPTION-MIGRATION.md` were removed:
+  the roadmap's live content became `docs/OPEN-ITEMS.md`, and the migration plan
+  described a completed migration whose facts now live in `ARCHITECTURE.md` and
+  `STATUS.md`. `ARCHITECTURE.md` had the subscription request terminating at the
+  3x-ui subscription service on `:2096`; it has terminated at the Django proxy
+  on BOT `:8001` since 2026-08-10. Entitlement counts had been restated in three
+  documents with three different values. `validate_repository.py` now enforces
+  that every environment-backed setting has a row in `docs/FLAGS.md` and vice
+  versa.
+
 Detailed incident transcripts, bearer URLs, client UUIDs, credentials, raw
 environment values and temporary research artifacts are intentionally excluded
 from Git. Use approved private operational records when historical detail is
