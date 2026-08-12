@@ -14,7 +14,7 @@ async def show_keys_for_remove(update: Update, context: ContextTypes.DEFAULT_TYP
 
     await context.bot.send_message(
         user.telegram_id,
-        text='Ключи доступные для удаления:',
+        text='Подписки, доступные для удаления:',
         parse_mode='Markdown',
         reply_markup=await get_reply_markup_remove_keys(user),
     )
@@ -39,7 +39,7 @@ async def remove_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await remove_vpn_user_from_server(user_vpn)
 
     await update.callback_query.answer(
-        text='Ключ успешно удален',
+        text='Подписка успешно удалена',
     )
 
     await show_keys(update, context)

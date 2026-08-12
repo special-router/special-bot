@@ -19,6 +19,7 @@ this command only mirrors state to 3x-ui.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 
 from asgiref.sync import sync_to_async
@@ -30,6 +31,9 @@ from apps.servers.models import Server
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 from utils.py3xui.async_api import AsyncApi
+
+
+logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
@@ -68,6 +72,8 @@ class Command(BaseCommand):
 
         synced = 0
         errors: list[str] = []
+        working_failures: dict[int, int] = {}
+        status_failures = 0
         for row in rows:
             price = row['price']
             if price <= 0:
@@ -86,8 +92,10 @@ class Command(BaseCommand):
             for inbound_id in working_ids:
                 try:
                     await self._sync_one(api, inbound_id, row['vpn_uuid'], expiry_ms, '', enabled)
-                except Exception:
-                    pass
+                except Exception as error:
+                    # Never hide a misconfigured inbound behind a silent pass.
+                    working_failures[inbound_id] = working_failures.get(inbound_id, 0) + 1
+                    logger.warning('Expiry sync failed: inbound=%s reason=%s', inbound_id, type(error).__name__)
             # The canary is intentionally outside MIRROR_INBOUND_IDS.  It can
             # update only existing exact UUID memberships and validates every
             # configured retained target before mutating any of them.
@@ -101,10 +109,20 @@ class Command(BaseCommand):
             if status_inbound_id:
                 try:
                     await self._sync_one(api, status_inbound_id, row['vpn_uuid'], expiry_ms, status_label, enabled)
-                except Exception:
-                    pass
+                except Exception as error:
+                    status_failures += 1
+                    logger.warning(
+                        'Status label sync failed: inbound=%s reason=%s',
+                        status_inbound_id, type(error).__name__)
             synced += 1
         self.stdout.write(f'synced_expiry_times={synced}')
+        # Surface configuration drift: an inbound that fails for every row is
+        # almost always a stale configured id rather than a transient error.
+        for inbound_id, failures in sorted(working_failures.items()):
+            self.stdout.write(f'inbound_sync_failures inbound={inbound_id} rows={failures}')
+        if status_failures:
+            self.stdout.write(
+                f'status_inbound_sync_failures inbound={status_inbound_id} rows={status_failures}')
         if errors:
             # Do not include client or panel details in scheduler-visible output.
             raise CommandError(f'internal_membership_sync_errors={len(errors)}')

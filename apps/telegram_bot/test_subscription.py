@@ -58,5 +58,5 @@ class SubscriptionHandlerTests(IsolatedAsyncioTestCase):
 
         self.context.bot.send_message.assert_awaited_once_with(
             123,
-            text='Подписка ещё не подготовлена. Используйте выданный VLESS-ключ.',
+            text='Подписка ещё не подготовлена. Используйте ранее выданную ссылку подключения.',
         )

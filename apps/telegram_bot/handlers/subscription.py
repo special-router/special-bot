@@ -23,7 +23,7 @@ async def show_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     except (SubscriptionClientMissing, SubscriptionConnectorDisabled):
         await context.bot.send_message(
             user.telegram_id,
-            text='Подписка ещё не подготовлена. Используйте выданный VLESS-ключ.',
+            text='Подписка ещё не подготовлена. Используйте ранее выданную ссылку подключения.',
         )
         return
 

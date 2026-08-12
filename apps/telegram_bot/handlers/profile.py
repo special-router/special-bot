@@ -18,19 +18,19 @@ PROFILE_TEXT_TEMPLATE: Final[
 
 💰 **Баланс:** {balance} руб.
 
-🔑 **VPN ключи:**
+📡 **Мои подписки:**
 {vpn_keys_info}
 
 📊 **Статистика:**
 • Дата регистрации: {registration_date}
-• Всего VPN подключений: {vpn_count}
+• Всего подписок: {vpn_count}
 """
 
 VPN_KEY_INFO_TEMPLATE: Final[
     str
 ] = """
 🔸 **{server_name}**
-   Ссылка подключения (на 2 устройства, цена 7 руб/сутки):
+   Ссылка подписки (на 2 устройства, цена 7 руб/сутки):
    `{access_url}`
    Статус: {status}
 """
@@ -56,7 +56,7 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 server_name=vpn.server.name, access_url=access_url, status=status
             )
     else:
-        vpn_keys_info = '❌ Нет активных VPN ключей'
+        vpn_keys_info = '❌ Нет активных подписок'
 
     # Формируем текст профиля
     profile_text = PROFILE_TEXT_TEMPLATE.format(

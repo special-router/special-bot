@@ -11,7 +11,7 @@ async def get_reply_markup_remove_keys(user: TelegramUser) -> InlineKeyboardMark
         buttons += [
             [
                 InlineKeyboardButton(
-                    text=f'Удалить ключ {vpn_connection.created_at.date()}',
+                    text=f'Удалить подписку от {vpn_connection.created_at.date()}',
                     callback_data=f'remove_key:{vpn_connection.id}',
                 ),
             ]

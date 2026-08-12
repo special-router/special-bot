@@ -1,3 +1,4 @@
+import logging
 from typing import Final
 
 from django.conf import settings
@@ -9,6 +10,8 @@ from apps.servers.models import Server
 from apps.vpn.models import UserVPN
 from utils.py3xui.async_api import AsyncApi
 
+
+logger = logging.getLogger(__name__)
 
 INBOUND_ID: Final[int] = 1
 
@@ -44,9 +47,10 @@ class APIVPNClient:
         for inbound_id in self._mirror_inbound_ids():
             try:
                 await self._api.client.add(inbound_id, [new_client])
-            except Exception:
+            except Exception as error:
                 # Mirror add is best-effort; the primary inbound is authoritative.
-                pass
+                # A misconfigured mirror id must stay visible instead of silent.
+                logger.warning('Mirror add failed: inbound=%s reason=%s', inbound_id, type(error).__name__)
 
     async def remove_user(self, user_vpn: UserVPN):
         await self._api.login()
@@ -57,8 +61,8 @@ class APIVPNClient:
         for inbound_id in self._mirror_inbound_ids():
             try:
                 await self._api.inbound.delete_client_by_uuid(inbound_id, user_vpn.vpn_uuid)
-            except Exception:
-                pass
+            except Exception as error:
+                logger.warning('Mirror delete failed: inbound=%s reason=%s', inbound_id, type(error).__name__)
 
     async def enable_user(self, user_vpn: UserVPN, enabled: bool = True):
         await self._api.login()
@@ -67,8 +71,8 @@ class APIVPNClient:
         for inbound_id in self._mirror_inbound_ids():
             try:
                 await self._sync_enable(inbound_id, user_vpn, enabled, add_if_missing=False)
-            except Exception:
-                pass
+            except Exception as error:
+                logger.warning('Mirror enable sync failed: inbound=%s reason=%s', inbound_id, type(error).__name__)
 
     async def _sync_enable(self, inbound_id: int, user_vpn: UserVPN, enabled: bool, *, add_if_missing: bool):
         inbound = await self._api.inbound.get_by_id(inbound_id)

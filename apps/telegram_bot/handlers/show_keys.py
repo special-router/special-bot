@@ -14,9 +14,9 @@ VPN_KEY_INFO_TEMPLATE: Final[
     str
 ] = """
 🔸 **{server_name}**
-   Ссылка подключения (на 2 устройства, цена 7 руб/сутки):
+   Ссылка подписки (на 2 устройства, цена 7 руб/сутки):
    `{access_url}`
-   Дата создания: {created_date}
+   Подключена: {created_date}
 """
 
 
@@ -25,7 +25,7 @@ async def show_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     vpn_keys_info: str = ''
 
-    # Получаем VPN ключи пользователя
+    # Получаем подписки пользователя
     async for vpn_connection in UserVPN.objects.with_related_server().filter(user=user):
         access_url = await get_user_access_url(vpn_connection)
         vpn_keys_info += VPN_KEY_INFO_TEMPLATE.format(
@@ -36,7 +36,7 @@ async def show_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await context.bot.send_message(
         user.telegram_id,
-        text=vpn_keys_info or 'У вас нет доступных ключей',
+        text=vpn_keys_info or 'У вас нет активных подписок',
         parse_mode='Markdown',
         reply_markup=await get_reply_markup_manage_keys(user),
     )

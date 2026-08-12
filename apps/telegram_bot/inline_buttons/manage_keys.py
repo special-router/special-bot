@@ -9,9 +9,9 @@ async def get_reply_markup_manage_keys(user: TelegramUser) -> InlineKeyboardMark
     buttons: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(
-                text='🔑Добавить ключ', callback_data=f'add_key:{random.randint(10000000, 999999999)}'
+                text='➕Добавить подписку', callback_data=f'add_key:{random.randint(10000000, 999999999)}'
             ),
-            InlineKeyboardButton(text='❌Удалить ключ', callback_data='show_keys_for_remove'),
+            InlineKeyboardButton(text='❌Удалить подписку', callback_data='show_keys_for_remove'),
         ],
         [
             InlineKeyboardButton(text='Назад', callback_data='main_menu'),
