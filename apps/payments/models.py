@@ -61,6 +61,22 @@ class Transaction(models.Model):
         null=True,
     )
 
+    user_vpn = models.ForeignKey(
+        'vpn.UserVPN',
+        on_delete=models.SET_NULL,
+        related_name='transactions',
+        blank=True,
+        null=True,
+    )
+
+    # Отдельное поле, а не выражение над created_at: функциональный индекс по дате из
+    # timestamptz не является IMMUTABLE в PostgreSQL и не может быть проиндексирован.
+    charge_date = models.DateField(
+        'Дата ежедневного списания',
+        blank=True,
+        null=True,
+    )
+
     # todo: добавить тип, комментарий, источник, ссылка на сервер
 
     class Meta:
@@ -71,7 +87,12 @@ class Transaction(models.Model):
                 fields=['user'],
                 condition=models.Q(source='PROMO'),
                 name='unique_promo_transaction_per_user',
-            )
+            ),
+            models.UniqueConstraint(
+                fields=['user_vpn', 'charge_date'],
+                condition=models.Q(source='EVERYDAY_SYSTEM'),
+                name='unique_everyday_charge_per_subscription_day',
+            ),
         ]
 
     def __str__(self):

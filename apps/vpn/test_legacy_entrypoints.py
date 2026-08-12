@@ -1,40 +1,66 @@
+from decimal import Decimal
 from types import SimpleNamespace
-from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from django.test import override_settings
+from django.test import TestCase, override_settings
 
+from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
+from apps.payments.models import Transaction
+from apps.servers.models import Server, TariffServer
 from apps.subscriptions.tasks import update_user_vpn
 from apps.telegram_bot.handlers.add_key import add_key
+from apps.users.models import TelegramUser
+from apps.vpn.models import UserVPN
 
 
 class LegacyBillingTaskTests(TestCase):
+    def make_server(self, price: str) -> Server:
+        return Server.objects.create(
+            name=f'server-{price}',
+            ip_address='127.0.0.1',
+            ssh_username='unused',
+            ssh_password='unused',
+            vpn_username='unused',
+            vpn_password='unused',
+            vpn_key='unused',
+            vpn_url='https://panel.invalid',
+            client_vpn_host='127.0.0.1',
+            tariff=TariffServer.objects.create(name=f'tariff-{price}', price=Decimal(price)),
+        )
+
+    def make_user(self, telegram_id: int, balance: str) -> TelegramUser:
+        user = TelegramUser.objects.create(telegram_id=telegram_id, username=f'user{telegram_id}')
+        Transaction.objects.create(
+            user=user,
+            amount=Decimal(balance),
+            status=TransactionStatusChoices.SUCCESS,
+            source=TransactionSourceChoices.MANUAL,
+        )
+        return user
+
     @patch('apps.subscriptions.tasks.time.sleep')
     @patch('apps.subscriptions.tasks.Bot')
     @patch('apps.subscriptions.tasks.disable_vpn_user_from_server', new_callable=AsyncMock)
-    @patch('apps.subscriptions.tasks.Transaction.objects')
-    @patch('apps.subscriptions.tasks.UserVPN.objects')
     def test_daily_billing_uses_server_tariff_and_disables_without_delete(
         self,
-        user_vpn_objects,
-        transaction_objects,
         disable_user,
         bot_class,
         sleep,
     ):
-        tariff = SimpleNamespace(price=7)
-        user = SimpleNamespace(balance=13, telegram_id=1001)
-        user_vpn = SimpleNamespace(user=user, server=SimpleNamespace(tariff=tariff))
-        related = user_vpn_objects.with_related_user.return_value.with_related_server.return_value
-        enabled_query = related.filter_by_enabled.return_value
-        enabled_query.__iter__.return_value = [user_vpn]
         bot_class.return_value.send_message = AsyncMock()
+        funded = self.make_user(1001, '30.00')
+        funded_vpn = UserVPN.objects.create(user=funded, server=self.make_server('9.00'))
+        broke = self.make_user(1002, '0.00')
+        broke_vpn = UserVPN.objects.create(user=broke, server=self.make_server('11.00'))
 
         update_user_vpn()
 
-        transaction_objects.create.assert_called_once()
-        self.assertEqual(transaction_objects.create.call_args.kwargs['amount'], -tariff.price)
-        disable_user.assert_awaited_once_with(user_vpn)
+        charge = Transaction.objects.filter_by_source(TransactionSourceChoices.EVERYDAY_SYSTEM).get()
+        self.assertEqual(charge.user_vpn_id, funded_vpn.id)
+        self.assertEqual(charge.amount, Decimal('-9.00'))
+        disable_user.assert_awaited_once_with(broke_vpn)
+        self.assertTrue(UserVPN.objects.filter_by_id(broke_vpn.id).exists())
         sleep.assert_called_once_with(1)
 
 
