@@ -17,12 +17,22 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from apps.subscriptions.models import SubscriptionDevice, SubscriptionDeviceReset
+from apps.subscriptions.models import (
+    SubscriptionDevice,
+    SubscriptionDeviceBindingWindow,
+    SubscriptionDeviceRegistrationRate,
+    SubscriptionDeviceReset,
+)
 from apps.vpn.models import UserVPN
 
 
 DEFAULT_DEVICE_LIMIT = 2
-DEFAULT_RESET_COOLDOWN_HOURS = 24
+# The reset is an authenticated action and no longer the only way out of a
+# lockout, so it need not be rationed by the day.
+DEFAULT_RESET_COOLDOWN_HOURS = 1
+DEFAULT_BINDING_WINDOW_MINUTES = 15
+DEFAULT_REGISTRATION_LIMIT = 5
+REGISTRATION_PERIOD = timedelta(hours=1)
 
 # The identifier shape published by Happ.  Anything else is treated as no
 # identifier at all, so a malformed client cannot occupy a device slot.
@@ -67,12 +77,45 @@ def device_limit_for(user_vpn) -> int:
     return _bounded_limit(getattr(settings, 'SUBSCRIPTION_DEVICE_LIMIT', DEFAULT_DEVICE_LIMIT))
 
 
-def register_device(user_vpn, hwid: str, metadata: dict[str, str]) -> bool:
-    """Bind ``hwid`` to the subscription; False once the ceiling is reached.
+def binding_window() -> timedelta:
+    """How long one 'привязать устройство' request keeps registration open."""
+    return timedelta(minutes=_bounded_window_minutes())
 
-    The limit is a hard ceiling rather than an LRU window: a flood of forged
-    identifiers must be refused outright, never evict a device the customer is
-    actually using, and never grow the table past the cap.
+
+def open_binding_window(user_id: int) -> timedelta:
+    """Record the account holder's consent to bind a device, and for how long.
+
+    Only the Telegram side calls this, because only there is the requester's
+    identity authenticated.  Re-opening simply restarts the window.
+    """
+    SubscriptionDeviceBindingWindow.objects.update_or_create(
+        telegram_user_id=user_id, defaults={'opened_at': timezone.now()},
+    )
+    return binding_window()
+
+
+def binding_window_open(user_id: int) -> bool:
+    """Whether that user asked for a new device recently enough."""
+    return SubscriptionDeviceBindingWindow.objects.filter(
+        telegram_user_id=user_id, opened_at__gt=timezone.now() - binding_window(),
+    ).exists()
+
+
+def register_device(user_vpn, hwid: str, metadata: dict[str, str]) -> bool:
+    """Serve ``hwid``; bind it first when this subscription may take a new one.
+
+    A device already bound is always served, so nobody can be pushed off their
+    own subscription.  Binding an *unknown* identifier needs more than a free
+    slot, because ``/sub/<sub_id>`` is unauthenticated and anyone holding a
+    leaked sub_id could otherwise spend the customer's slots on invented
+    identifiers.  It needs, in order: room under the limit, the account holder
+    having opened a binding window from the bot, and registration budget left
+    for the period.  The limit stays a hard ceiling rather than an LRU window —
+    an attacker polls far more often than a real client, so evicting the least
+    recent device would evict the customer.
+
+    The one exception is a subscription with no devices at all: the first
+    identifier binds unattended, so a fresh purchase just works.
     """
     seen = SubscriptionDevice.objects.filter(
         subscription_id=user_vpn.id, hwid=hwid,
@@ -86,7 +129,12 @@ def register_device(user_vpn, hwid: str, metadata: dict[str, str]) -> bool:
             # Locking the subscription row serializes concurrent refreshes, so
             # parallel registrations cannot each observe the same free slot.
             UserVPN.objects.select_for_update().filter(pk=user_vpn.id).exists()
-            if SubscriptionDevice.objects.filter(subscription_id=user_vpn.id).count() >= limit:
+            bound = SubscriptionDevice.objects.filter(subscription_id=user_vpn.id).count()
+            if bound >= limit:
+                return False
+            if bound and not binding_window_open(user_vpn.user_id):
+                return False
+            if not _spend_registration_budget(user_vpn.id):
                 return False
             SubscriptionDevice.objects.create(subscription_id=user_vpn.id, hwid=hwid, **metadata)
     except IntegrityError:
@@ -96,10 +144,11 @@ def register_device(user_vpn, hwid: str, metadata: dict[str, str]) -> bool:
 
 
 def reset_devices(user_id: int) -> tuple[bool, timedelta | None]:
-    """Clear one user's bound devices, at most once per cooldown.
+    """Clear one user's bound devices and open their binding window.
 
     Returns ``(True, None)`` when the devices were cleared, or ``(False, wait)``
-    with the remaining cooldown when the request came too soon.
+    with the remaining cooldown when the request came too soon.  Clearing alone
+    would leave the user unable to re-bind, so the two go together.
     """
     cooldown = timedelta(hours=_bounded_cooldown())
     now = timezone.now()
@@ -114,7 +163,32 @@ def reset_devices(user_id: int) -> tuple[bool, timedelta | None]:
             record.last_reset_at = now
             record.save(update_fields=['last_reset_at'])
         SubscriptionDevice.objects.filter(subscription__user_id=user_id).delete()
+        open_binding_window(user_id)
     return True, None
+
+
+def _spend_registration_budget(subscription_id: int) -> bool:
+    """Consume one registration from this subscription's rolling allowance.
+
+    Freeing slots with a reset must not hand out a fresh flooding budget, so the
+    counter is keyed to the subscription and outlives the rows it counted.
+    """
+    limit = _bounded_registrations()
+    now = timezone.now()
+    record, created = SubscriptionDeviceRegistrationRate.objects.select_for_update().get_or_create(
+        subscription_id=subscription_id, defaults={'period_started_at': now, 'registrations': 1},
+    )
+    if created:
+        return True
+    if now - record.period_started_at >= REGISTRATION_PERIOD:
+        record.period_started_at = now
+        record.registrations = 1
+    elif record.registrations >= limit:
+        return False
+    else:
+        record.registrations += 1
+    record.save(update_fields=['period_started_at', 'registrations'])
+    return True
 
 
 def _bounded_limit(value) -> int:
@@ -123,6 +197,25 @@ def _bounded_limit(value) -> int:
         return min(max(int(value), 1), 32)
     except (TypeError, ValueError):
         return DEFAULT_DEVICE_LIMIT
+
+
+def _bounded_window_minutes() -> int:
+    """A misconfigured window must never become permanently open."""
+    value = getattr(settings, 'SUBSCRIPTION_DEVICE_BINDING_WINDOW_MINUTES',
+                    DEFAULT_BINDING_WINDOW_MINUTES)
+    try:
+        return min(max(int(value), 1), 24 * 60)
+    except (TypeError, ValueError):
+        return DEFAULT_BINDING_WINDOW_MINUTES
+
+
+def _bounded_registrations() -> int:
+    value = getattr(settings, 'SUBSCRIPTION_DEVICE_REGISTRATIONS_PER_HOUR',
+                    DEFAULT_REGISTRATION_LIMIT)
+    try:
+        return min(max(int(value), 1), 64)
+    except (TypeError, ValueError):
+        return DEFAULT_REGISTRATION_LIMIT
 
 
 def _bounded_cooldown(value=None) -> int:

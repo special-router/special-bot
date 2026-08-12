@@ -336,14 +336,14 @@ def subscription_proxy(request, sub_id: str):
     try:
         user_vpn = UserVPN.objects.select_related('server', 'user').get(sub_id=sub_id)
     except UserVPN.DoesNotExist:
-        return _no_cache_response(HttpResponseNotFound())
+        return _refused(request)
 
     if not user_vpn.enabled:
-        return _no_cache_response(HttpResponseNotFound())
+        return _refused(request)
 
     served, hwid_headers = _device_gate(request, user_vpn)
     if not served:
-        return _no_cache_response(_with_headers(HttpResponseNotFound(), hwid_headers))
+        return _refused(request)
 
     server = user_vpn.server
     params = _get_params(server.id, server.inbound_id)
@@ -398,12 +398,7 @@ def subscription_proxy(request, sub_id: str):
 
 
 def _device_gate(request, user_vpn) -> tuple[bool, dict[str, str]]:
-    """Decide whether this device may be served, and how to say so in headers.
-
-    A refusal is a plain 404 carrying only ``x-hwid-*`` flags: the client needs
-    to know *why* it was refused, but nothing here may reveal how many devices
-    exist or that the subscription is valid at all.
-    """
+    """Decide whether this device may be served, and how to say so in headers."""
     headers = {'x-hwid-active': 'true'}
     hwid = client_hwid(request)
     if not hwid:
@@ -411,11 +406,26 @@ def _device_gate(request, user_vpn) -> tuple[bool, dict[str, str]]:
         # upgraded; strict mode is what makes refusing them a deliberate step.
         headers['x-hwid-not-supported'] = 'true'
         return not hwid_strict(), headers
-    if register_device(user_vpn, hwid, client_metadata(request)):
-        return True, headers
-    headers['x-hwid-max-devices-reached'] = 'true'
-    headers['x-hwid-limit'] = 'true'
-    return False, headers
+    return register_device(user_vpn, hwid, client_metadata(request)), headers
+
+
+def _refused(request) -> HttpResponse:
+    """Return the one 404 this endpoint ever produces.
+
+    Status, body and headers are derived from the request alone, so an unknown
+    sub_id, a disabled subscription and a device this subscription will not bind
+    are the same response.  Anything else would let a caller confirm that a
+    guessed sub_id is real, on an endpoint whose id is the only secret.  The
+    ``x-hwid-*`` flags stay because the client still has to render *some*
+    reason, and now they say nothing about the subscription.
+    """
+    headers = {'x-hwid-active': 'true'}
+    if client_hwid(request):
+        headers['x-hwid-max-devices-reached'] = 'true'
+        headers['x-hwid-limit'] = 'true'
+    else:
+        headers['x-hwid-not-supported'] = 'true'
+    return _no_cache_response(_with_headers(HttpResponseNotFound(), headers))
 
 
 def _with_headers(response: HttpResponse, headers: dict[str, str]) -> HttpResponse:

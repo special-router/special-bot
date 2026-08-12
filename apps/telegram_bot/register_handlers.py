@@ -4,6 +4,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler, filters, MessageH
 from apps.telegram_bot.bot_app import telegram_bot_app
 from apps.telegram_bot.handlers.add_key import add_key
 from apps.telegram_bot.handlers.balance import show_balance
+from apps.telegram_bot.handlers.bind_device import bind_device
 from apps.telegram_bot.handlers.faq import faq
 from apps.telegram_bot.handlers.main_menu import main_menu
 from apps.telegram_bot.handlers.profile import show_profile
@@ -48,6 +49,7 @@ def register_handlers():
     telegram_bot_app.add_handler(CallbackQueryHandler(show_keys, pattern=r'^show_keys$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(add_key, pattern=r'^add_key:\d+$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(show_keys_for_remove, pattern=r'^show_keys_for_remove'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(bind_device, pattern=r'^bind_device$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(reset_devices, pattern=r'^reset_devices$'))
     if settings.SUBSCRIPTION_DELIVERY_ENABLED:
         telegram_bot_app.add_handler(CommandHandler('subscription', show_subscription))

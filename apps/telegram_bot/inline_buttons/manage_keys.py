@@ -14,7 +14,10 @@ async def get_reply_markup_manage_keys(user: TelegramUser) -> InlineKeyboardMark
             InlineKeyboardButton(text='❌Удалить подписку', callback_data='show_keys_for_remove'),
         ],
         [
-            InlineKeyboardButton(text='📱Сбросить устройства', callback_data='reset_devices'),
+            InlineKeyboardButton(text='📱Привязать устройство', callback_data='bind_device'),
+        ],
+        [
+            InlineKeyboardButton(text='♻️Сбросить устройства', callback_data='reset_devices'),
         ],
         [
             InlineKeyboardButton(text='Назад', callback_data='main_menu'),

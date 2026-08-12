@@ -1,0 +1,37 @@
+from asgiref.sync import sync_to_async
+from telegram import Update
+from telegram.ext import ContextTypes
+
+from apps.subscriptions.devices import open_binding_window
+from apps.telegram_bot.utils import get_user
+from apps.users.models import TelegramUser
+
+
+async def bind_device(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Open the window in which a new device may attach itself to the подписка.
+
+    The subscription link is a bearer URL, so the request to add a device has to
+    arrive here, where Telegram vouches for who is asking.
+    """
+    user: TelegramUser = await get_user(update)
+
+    window = await sync_to_async(open_binding_window)(user.id)
+
+    await context.bot.send_message(
+        user.telegram_id,
+        text=(
+            f'Привязка нового устройства открыта на {_humanized(window)}.\n\n'
+            'Откройте приложение на новом устройстве и обновите подписку — '
+            'оно привяжется само.\n\n'
+            'Уже привязанные устройства работают всегда, отдельно открывать '
+            'привязку для них не нужно.'
+        ),
+    )
+
+
+def _humanized(window) -> str:
+    minutes = max(int(window.total_seconds()) // 60, 1)
+    hours, minutes = divmod(minutes, 60)
+    if not hours:
+        return f'{minutes} мин.'
+    return f'{hours} ч. {minutes} мин.'
