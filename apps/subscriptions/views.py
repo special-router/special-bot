@@ -30,6 +30,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
 from apps.servers.models import Server
+from apps.subscriptions.devices import client_hwid, client_metadata, hwid_strict, register_device
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 from utils.py3xui.async_api import AsyncApi
@@ -340,6 +341,10 @@ def subscription_proxy(request, sub_id: str):
     if not user_vpn.enabled:
         return _no_cache_response(HttpResponseNotFound())
 
+    served, hwid_headers = _device_gate(request, user_vpn)
+    if not served:
+        return _no_cache_response(_with_headers(HttpResponseNotFound(), hwid_headers))
+
     server = user_vpn.server
     params = _get_params(server.id, server.inbound_id)
 
@@ -389,7 +394,34 @@ def subscription_proxy(request, sub_id: str):
     resp = HttpResponse(encoded, content_type='text/plain')
     resp['Profile-Update-Interval'] = '12'
     resp['Subscription-Userinfo'] = f'upload=0; download=0; total=0; expire=0'
-    return _no_cache_response(resp)
+    return _no_cache_response(_with_headers(resp, hwid_headers))
+
+
+def _device_gate(request, user_vpn) -> tuple[bool, dict[str, str]]:
+    """Decide whether this device may be served, and how to say so in headers.
+
+    A refusal is a plain 404 carrying only ``x-hwid-*`` flags: the client needs
+    to know *why* it was refused, but nothing here may reveal how many devices
+    exist or that the subscription is valid at all.
+    """
+    headers = {'x-hwid-active': 'true'}
+    hwid = client_hwid(request)
+    if not hwid:
+        # Clients that predate the header keep working until the fleet has
+        # upgraded; strict mode is what makes refusing them a deliberate step.
+        headers['x-hwid-not-supported'] = 'true'
+        return not hwid_strict(), headers
+    if register_device(user_vpn, hwid, client_metadata(request)):
+        return True, headers
+    headers['x-hwid-max-devices-reached'] = 'true'
+    headers['x-hwid-limit'] = 'true'
+    return False, headers
+
+
+def _with_headers(response: HttpResponse, headers: dict[str, str]) -> HttpResponse:
+    for name, value in headers.items():
+        response[name] = value
+    return response
 
 
 def _no_cache_response(response: HttpResponse) -> HttpResponse:
