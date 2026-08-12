@@ -2,9 +2,9 @@
 
 > **Deployed and live on the production bot host.** L0, L1, L2 and Host run on
 > schedule; L2/Host are confined to an isolated `monitoring` queue and worker.
-> `SPECIAL_MONITOR_ENABLED` and `SPECIAL_MONITOR_L2_ENABLED` are therefore true
-> in production. Subscription delivery is also enabled, but remains an
-> independent rollout/control surface.
+> `SPECIAL_MONITOR_ENABLED` and `SPECIAL_MONITOR_L2_ENABLED` are false by
+> default in `bot/settings.py` and true in the production environment — those
+> are two different facts, and [`FLAGS.md`](FLAGS.md) keeps both.
 
 Monitoring is observational: it must not restart VPN, nginx, Xray, Docker or
 relay services. State is sanitized: no UUIDs, bearer subscription URLs, VLESS
@@ -26,10 +26,13 @@ runtime privileges; the ordinary worker must not consume that queue.
 
 ## Feature flags and safe configuration
 
-- `SPECIAL_MONITOR_ENABLED=false`, `SPECIAL_MONITOR_L2_ENABLED=false`, and
-  `SUBSCRIPTION_DELIVERY_ENABLED=false` are independent default-off gates.
-  Monitoring and subscription delivery must be enabled separately by reviewed
-  rollout; neither flag authorizes a service restart.
+Values and production state: [`FLAGS.md`](FLAGS.md#monitoring).
+
+- Monitoring and subscription delivery are independent gates enabled by separate
+  reviewed rollouts. Neither flag authorizes a service restart.
+- `SPECIAL_MONITOR_ENABLED` and `SPECIAL_MONITOR_L2_ENABLED` are read at import
+  time to build `CELERY_BEAT_SCHEDULE`, so changing either takes effect only
+  after beat restarts.
 - Enable L0/L1 only with a reviewed endpoint matrix and expected inbound
   inventory. Inputs identify endpoints by non-secret labels, not credentials.
 - Enable L2 only for the approved internal canary and an explicit expected
@@ -52,35 +55,23 @@ Production paging enablement is deliberately deferred, not the adapter itself.
 The adapter reuses sanitized transition records and remains notification-only:
 no automated restart, failover or client mutation.
 
-## Single reproducible image
+## Queue isolation
 
-There is one image for every service. `Dockerfile` builds the application and
-copies a verified Xray binary from a digest-pinned `ghcr.io/xtls/xray-core`
-stage, so no container overlay or `docker commit` is involved. `web`, `celery`,
-`celery_beat` and `monitoring` all run `vpnbot:latest`; only the monitoring
-worker consumes the `monitoring` queue, and Celery routing is what keeps L2 off
-ordinary workers. Xray being present on the other containers is inert: nothing
-there ever invokes it.
+Every service runs the same `vpnbot:latest` image, built and deployed as
+described in [`DEPLOY.md`](DEPLOY.md). The isolation that matters here is Celery
+routing, not the image: only the `monitoring` worker consumes the `monitoring`
+queue, which is what keeps L2 probes off ordinary workers. The Xray binary
+present in the other containers is inert — nothing there ever invokes it.
+
+Verify the binary in a freshly built image:
 
 ```bash
-docker pull python@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6
-docker pull ghcr.io/xtls/xray-core:26.6.1@sha256:16786b44020e8f4c1ff3731c73cb46fe4e1e4e07af87a0daec920e24213bfbfc
-docker build -t vpnbot:latest .
 docker run --rm --entrypoint /usr/local/bin/xray vpnbot:latest version
 ```
 
-`--pull=never` is required, not cosmetic. BuildKit issues an unauthenticated
-`HEAD` against the floating `python:3.13-slim` manifest on every build, and
-Docker Hub answers that request with `429 Too Many Requests` even when the pull
-rate-limit budget is nearly untouched. The authenticated pull path is
-unaffected, so pulling the base image explicitly and then building with
-`--pull=never` avoids the failure entirely. Do not respond to a `429` by
-unpinning bases or by committing a running container to an image.
-
 If the build cannot reach the distribution mirror from the default container
-bridge, that is a host network/firewall condition on the build machine, not a
-registry limit; build with host networking on that machine instead of unpinning
-base images.
+bridge, that is a host network condition on the build machine, not a registry
+limit. Build with host networking there instead of unpinning base images.
 
 ## Production rollout gates
 
