@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'apps.analytics.apps.AnalyticsConfig',
     'apps.payments.apps.PaymentsConfig',
     'apps.monitoring.apps.MonitoringConfig',
     'apps.servers',
@@ -235,6 +236,13 @@ if SPECIAL_MONITOR_ENABLED and SPECIAL_MONITOR_L2_ENABLED:
     }
 
 REFERRAL_PERCENT = env.int('REFERRAL_PERCENT', 30)
+
+# Аварийный выключатель журнала аналитики. Запись событий и так не может уронить
+# денежный путь — она идёт после коммита и гасит исключения, — но выключатель
+# снимает и саму дополнительную вставку, если она когда-нибудь начнёт мешать.
+# Выключение не теряет историю: события восстанавливаются командой
+# ``backfill_money_events`` по тем же ключам идемпотентности.
+ANALYTICS_EVENTS_ENABLED = env.bool('ANALYTICS_EVENTS_ENABLED', True)
 
 # Максимальное количество ключей для одного юзера
 MAX_KEYS = env.int('MAX_KEYS', 3)
