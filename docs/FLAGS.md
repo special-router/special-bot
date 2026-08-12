@@ -51,6 +51,7 @@ Shipped-but-inert features are listed together in
 | Setting | Type | Default | Prod | What it does |
 |---|---|---|---|---|
 | `REFERRAL_PERCENT` | int | `30` | ? | Referral share. |
+| `ANALYTICS_EVENTS_ENABLED` | bool | `True` | ? | Writes the append-only analytics event log. On by default because the log can never fail a money write — it is scheduled with `transaction.on_commit` and swallows its own exceptions. Turning it off loses nothing permanently: `backfill_money_events` reconstructs the same rows under the same idempotency keys. See [`ANALYTICS.md`](ANALYTICS.md). |
 | `MAX_KEYS` | int | `3` | ? | Maximum subscriptions per account. |
 | `LIMIT_IP` | int | `2` | ? | `limit_ip` written into the 3x-ui client. Not enforceable on this deployment — xray sees only the SNI proxy's address — which is exactly why device binding exists. |
 

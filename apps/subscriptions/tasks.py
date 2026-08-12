@@ -11,6 +11,7 @@ from django.db import transaction
 from django.utils import timezone
 from telegram import Bot
 
+from apps.analytics.funnel import subscription_disabled_no_funds
 from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
 from apps.payments.models import Transaction
 from apps.users.models import TelegramUser
@@ -151,6 +152,9 @@ def update_user_vpn():
 
         for user_vpn in to_disable:
             logger.info('Disabling subscription %s: balance below daily price', user_vpn.id)
+            # Отток пишется по решению биллинга, а не по успеху панели: аккаунт
+            # остался без денег независимо от того, доехало ли отключение.
+            subscription_disabled_no_funds(user_id, user_vpn.id, charge_date)
             try:
                 asyncio.run(disable_vpn_user_from_server(user_vpn))
             except Exception:

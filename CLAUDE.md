@@ -71,6 +71,7 @@ caught a failure that the local run could not — see
 | What files/hosts/flags/risks does *my kind of task* touch? | [`docs/CONTEXT-MAP.md`](docs/CONTEXT-MAP.md) |
 | What is every setting, its default and its production value? | [`docs/FLAGS.md`](docs/FLAGS.md) |
 | What is unfinished, and what exactly blocks it? | [`docs/OPEN-ITEMS.md`](docs/OPEN-ITEMS.md) |
+| What does the money actually do, and what can the data not tell me? | [`docs/ANALYTICS.md`](docs/ANALYTICS.md) |
 | How does traffic actually flow? | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | What is live in production right now? | [`docs/STATUS.md`](docs/STATUS.md) |
 | How do I ship it? | [`docs/DEPLOY.md`](docs/DEPLOY.md) |

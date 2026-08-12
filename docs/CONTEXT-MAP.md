@@ -69,6 +69,50 @@ env DJANGO_SETTINGS_MODULE=bot.settings DATABASE_URL='sqlite:///:memory:' \
 
 ---
 
+## Money flow analytics
+
+**Files**
+
+- `apps/analytics/taxonomy.py` — the only place that says what a `source` means
+  economically, and the top-up bonus ladder inversion.
+- `apps/analytics/models.py` — `MoneyEvent`, `FunnelEvent`; `event_key` is unique.
+- `apps/analytics/recording.py`, `signals.py` — the write path.
+- `apps/analytics/backfill.py`, `reporting.py`, `management/commands/`.
+- `apps/analytics/funnel.py` — the funnel API, deliberately unwired.
+- Tests: `apps/analytics/test_taxonomy.py`, `test_recording.py`, `test_backfill.py`,
+  `test_reporting.py`.
+
+**How it behaves today**
+
+Additive only. Balance still comes from `annotate_balance()` over `Transaction`;
+nothing here filters or reinterprets it. A `post_save` receiver on `Transaction`
+schedules one `MoneyEvent` through `transaction.on_commit` and swallows every
+exception, so an analytics failure cannot roll back a charge. `backfill_money_events`
+rebuilds the same rows under the same keys, which is what makes losing a write
+harmless. Full reasoning, and the list of questions history cannot answer, is in
+[`ANALYTICS.md`](ANALYTICS.md).
+
+**Flags** `ANALYTICS_EVENTS_ENABLED`.
+
+**Validation**
+
+```bash
+env DJANGO_SETTINGS_MODULE=bot.settings DATABASE_URL='sqlite:///:memory:' \
+  CELERY_ALWAYS_EAGER=true <venv>/python -m pytest apps/analytics -q
+```
+
+**Risks**
+
+- Credit granted by hand (191k) is larger than money taken through the payment
+  provider (126k). Adding the two produces a revenue number that is confidently
+  wrong; `MANUAL` positive carries `cash_basis=UNKNOWN` for exactly that reason.
+- A `YOUMONEY` amount is the payment *plus* a volume bonus of up to 30%. Treating
+  it as cash overstates income by the size of the discount.
+- The receiver fires for every `Transaction` insert, including the ~800 daily
+  charges. It adds one row per money row; the kill switch removes even that.
+
+---
+
 ## Subscription rendering and delivery
 
 **Files**
