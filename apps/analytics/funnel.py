@@ -1,41 +1,38 @@
 """API воронки: по одной функции на шаг, с указанием места вызова.
 
-Ни одна из этих функций сейчас не вызывается. Обработчики бота правит другая
-работа, поэтому здесь только готовый интерфейс: подключение каждого шага — одна
-строка в указанном месте, и ни одна из них не может уронить обработчик.
-
 Ключи идемпотентности строятся из того, что уже есть в месте вызова, чтобы
 повторный апдейт Telegram не удваивал шаг. Ничего секретного в них не попадает:
 только внутренние идентификаторы, шаг и дата.
 
-Где вызывать (файл → функция → строка):
+Все функции синхронные и ходят в базу, а обработчики бота асинхронные: место
+вызова обязано обернуть их в ``sync_to_async``, иначе Django поднимет
+``SynchronousOnlyOperation``, а перехват внутри ``record_funnel_event`` молча
+его проглотит — шаг не запишется, и никто этого не заметит.
+
+Где вызывается (файл → функция → шаг):
 
 ``apps/telegram_bot/handlers/balance.py``
-    ``show_balance`` → ``balance_screen_shown(user.id)``
+    ``show_balance`` после отрисовки → ``balance_screen_shown``
 ``apps/telegram_bot/handlers/top_up_balance.py``
-    ``top_up_balance_promo`` после ``Transaction.objects.acreate`` →
-        ``promo_claimed(user.id)``
-    ``top_up_balance_days`` до ``send_invoice`` →
-        ``topup_plan_chosen(user.id, amount=tariff.price * count_days, days=count_days)``
-    ``top_up_balance_days`` после ``send_invoice`` →
-        ``invoice_sent(user.id, amount=tariff.price * count_days, days=count_days)``
+    ``top_up_balance_promo`` после создания начисления → ``promo_claimed``
+    ``top_up_balance_days`` до ``send_invoice`` → ``topup_plan_chosen``
+    ``top_up_balance_days`` после ``send_invoice`` → ``invoice_sent``
     ``pre_checkout_callback`` после ``query.answer(ok=True)`` →
-        ``pre_checkout_approved(user.id, amount=query.total_amount / 100)``
+        ``pre_checkout_approved``
     ``successful_payment_callback`` после создания строки пополнения →
-        ``payment_completed(user.id, amount=payment.total_amount / 100,
-        charge_id=payment.telegram_payment_charge_id)`` и
-        ``record_topup(transaction, cash_amount=payment.total_amount / 100)``
-        из ``apps.analytics.recording`` — второй вызов уточняет выведенную из
-        лестницы бонусов сумму до измеренной.
+        ``payment_completed`` и ``record_topup`` из ``apps.analytics.recording``:
+        второй уточняет выведенную из лестницы бонусов сумму до измеренной.
 ``apps/telegram_bot/handlers/add_key.py``
-    ``add_key`` в ветке нехватки баланса →
-        ``subscription_refused_no_funds(user.id, amount=server.tariff.price)``
-    ``add_key`` после ``add_vpn_to_user`` → ``subscription_created(user.id, user_vpn.id)``
+    ``add_key`` в ветке нехватки баланса → ``subscription_refused_no_funds``
+    ``add_key`` после ``add_vpn_to_user`` → ``subscription_created``
 ``apps/telegram_bot/handlers/remove_key.py``
-    после удаления → ``subscription_removed(user.id, user_vpn_id)``
+    ``remove_key`` после удаления → ``subscription_removed``
+``apps/subscriptions/tasks.py``
+    ``SUBSCRIPTION_DISABLED_NO_FUNDS``: он рождается не в кнопке, а в биллинге.
 
-Шаг ``SUBSCRIPTION_DISABLED_NO_FUNDS`` уже подключён в
-``apps/subscriptions/tasks.py``: он рождается не в кнопке, а в биллинге.
+Счёт и всё, что за ним, остаются нулевыми, пока не задан ``YOUMONEY_TOKEN``:
+кнопки сумм при пустом токене скрыты. Это не пропуск в подключении, а сам
+предмет измерения — до провайдера доходят, дальше не идут.
 """
 from __future__ import annotations
 

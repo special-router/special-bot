@@ -15,7 +15,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
@@ -276,6 +276,9 @@ class LegacySubscriptionTests(SimpleTestCase):
         # Pinned: production advertises 443, and an ambient value would other-
         # wise decide what this test asserts about the default inbound port.
         SUBSCRIPTION_DIRECT_ADVERTISED_PORT=0,
+        # Pinned for the same reason: this test *is* the three-line contract,
+        # so the setting that retires the status entry must not be ambient.
+        SUBSCRIPTION_STATUS_ENTRY_ENABLED=True,
     )
     @patch('apps.subscriptions.views._get_params')
     @patch('apps.subscriptions.views.TelegramUser.objects')
@@ -320,6 +323,7 @@ class LegacySubscriptionTests(SimpleTestCase):
         SUBSCRIPTION_BASE_URL='https://direct.example/sub',
         SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=False,
         SUBSCRIPTION_DIRECT_ADVERTISED_PORT=443,
+        SUBSCRIPTION_STATUS_ENTRY_ENABLED=True,
     )
     @patch('apps.subscriptions.views._get_params')
     @patch('apps.subscriptions.views.TelegramUser.objects')
@@ -353,6 +357,7 @@ class LegacySubscriptionTests(SimpleTestCase):
         SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
         SUBSCRIPTION_BACKUP_TEST_USER_IDS=[1],
         SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://subscription.example/unavailable'],
+        SUBSCRIPTION_STATUS_ENTRY_ENABLED=True,
     )
     @patch('apps.subscriptions.views._fetch_upstream_payload', side_effect=OSError())
     @patch('apps.subscriptions.views._get_params')
@@ -378,6 +383,162 @@ class LegacySubscriptionTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(lines), 3)
         fetch.assert_called_once_with('https://subscription.example/unavailable')
+
+
+@override_settings(
+    SUBSCRIPTION_BASE_URL='https://direct.example/sub',
+    SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=False,
+    SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=False,
+    SUBSCRIPTION_DIRECT_ADVERTISED_PORT=0,
+    SUBSCRIPTION_PROFILE_TITLE='SPECIAL VPN',
+    SUBSCRIPTION_SUPPORT_URL='https://support.example/help',
+    SUBSCRIPTION_ANNOUNCE_TEXT='',
+    BOT_LINK='https://t.me/synthetic_bot',
+)
+@patch('apps.subscriptions.views._get_params', return_value={
+    'public_key': 'synthetic-public-key', 'server_name': 'sni.example',
+    'short_ids': ['synthetic-short-id'], 'port': 8443, 'network': 'tcp',
+})
+class ClientUiHeaderTests(SimpleTestCase):
+    """The headers the client app builds its interface from.
+
+    ``expire`` is the valuable one: it is what lets the dead 127.0.0.1 status
+    entry be retired, so every boundary that could produce a nonsensical term
+    is asserted here rather than left to the client to interpret.
+    """
+
+    def _response(self, balance, price='7.00'):
+        tariff = SimpleNamespace(price=price) if price is not None else None
+        subscription = SimpleNamespace(
+            id=1, enabled=True,
+            server=SimpleNamespace(id=1, inbound_id=5, client_vpn_host='relay.example:443', tariff=tariff),
+            user_id=1, vpn_uuid='synthetic-local-id',
+        )
+        user = SimpleNamespace(balance=balance) if balance is not None else None
+        with patch('apps.subscriptions.views.UserVPN.objects') as user_vpn_objects, \
+                patch('apps.subscriptions.views.TelegramUser.objects') as telegram_user_objects:
+            user_vpn_objects.select_related.return_value.get.return_value = subscription
+            telegram_user_objects.annotate_balance.return_value.filter.return_value.first.return_value = user
+            return views.subscription_proxy(RequestFactory().get('/sub/synthetic'), 'synthetic')
+
+    def _expire(self, response):
+        fields = dict(
+            field.strip().split('=', 1)
+            for field in response['subscription-userinfo'].split(';')
+        )
+        return int(fields['expire'])
+
+    def test_expire_carries_the_same_remaining_days_as_the_status_remark(self, _params):
+        response = self._response(balance='70.00')
+
+        remaining = self._expire(response) - int(time.time())
+
+        # Ten funded days, allowing for the second the request itself took.
+        self.assertLessEqual(abs(remaining - 10 * 86400), 5)
+        status_line = base64.b64decode(response.content).decode().splitlines()[0]
+        self.assertIn('осталось 10 дней', unquote(urlsplit(status_line).fragment))
+
+    def test_an_empty_balance_expires_now_rather_than_never(self, _params):
+        # expire=0 is how this format spells "unlimited", which is the opposite
+        # of what an account with no money should tell the client.
+        response = self._response(balance='0.00')
+
+        self.assertNotEqual(self._expire(response), 0)
+        self.assertLessEqual(abs(self._expire(response) - int(time.time())), 5)
+
+    def test_an_overdrawn_balance_never_produces_a_term_in_the_past(self, _params):
+        response = self._response(balance='-50.00')
+
+        self.assertGreaterEqual(self._expire(response), int(time.time()) - 5)
+
+    def test_a_subscription_without_a_tariff_still_gets_a_usable_expiry(self, _params):
+        response = self._response(balance='70.00', price=None)
+
+        self.assertLessEqual(abs(self._expire(response) - int(time.time())), 5)
+
+    def test_an_unknown_user_gets_headers_and_not_an_error(self, _params):
+        response = self._response(balance=None)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLessEqual(abs(self._expire(response) - int(time.time())), 5)
+
+    def test_display_text_travels_base64_encoded(self, _params):
+        response = self._response(balance='70.00')
+
+        self.assertEqual(
+            base64.b64decode(response['profile-title'].removeprefix('base64:')).decode(),
+            'SPECIAL VPN',
+        )
+        self.assertEqual(response['support-url'], 'https://support.example/help')
+        self.assertEqual(response['profile-web-page-url'], 'https://t.me/synthetic_bot')
+
+    def test_an_unset_announcement_sends_no_banner_header(self, _params):
+        self.assertNotIn('announce', self._response(balance='70.00').headers)
+
+    @override_settings(SUBSCRIPTION_ANNOUNCE_TEXT='Профилактика 14 августа с 03:00 до 05:00 МСК.')
+    def test_a_configured_announcement_survives_cyrillic(self, _params):
+        response = self._response(balance='70.00')
+
+        self.assertEqual(
+            base64.b64decode(response['announce'].removeprefix('base64:')).decode(),
+            'Профилактика 14 августа с 03:00 до 05:00 МСК.',
+        )
+
+    @override_settings(SUBSCRIPTION_SUPPORT_URL='https://support.example/\r\nX-Injected: 1')
+    def test_an_unusable_configured_url_drops_its_header_instead_of_the_response(self, _params):
+        # Django turns a newline in a header value into BadHeaderError, which
+        # would be a 500 on every refresh for one bad environment value.
+        response = self._response(balance='70.00')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('support-url', response.headers)
+
+
+@override_settings(
+    SUBSCRIPTION_BASE_URL='https://direct.example/sub',
+    SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=False,
+    SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=False,
+    SUBSCRIPTION_DIRECT_ADVERTISED_PORT=0,
+    SUBSCRIPTION_STATUS_ENTRY_ENABLED=False,
+)
+@patch('apps.subscriptions.views._get_params', return_value={
+    'public_key': 'synthetic-public-key', 'server_name': 'sni.example',
+    'short_ids': ['synthetic-short-id'], 'port': 8443, 'network': 'tcp',
+})
+class RetiredStatusEntryTests(SimpleTestCase):
+    """What a served subscription looks like once the dead entry is switched off."""
+
+    def _response(self):
+        with patch('apps.subscriptions.views.UserVPN.objects') as user_vpn_objects, \
+                patch('apps.subscriptions.views.TelegramUser.objects') as telegram_user_objects:
+            user_vpn_objects.select_related.return_value.get.return_value = SimpleNamespace(
+                id=1, enabled=True,
+                server=SimpleNamespace(id=1, inbound_id=5, client_vpn_host='relay.example:443',
+                                       tariff=SimpleNamespace(price='7.00')),
+                user_id=1, vpn_uuid='synthetic-local-id',
+            )
+            telegram_user_objects.annotate_balance.return_value.filter.return_value.first.return_value = (
+                SimpleNamespace(balance='70.00'))
+            return views.subscription_proxy(RequestFactory().get('/sub/synthetic'), 'synthetic')
+
+    def test_only_the_working_endpoints_remain_and_keep_their_bytes(self, _params):
+        response = self._response()
+        lines = base64.b64decode(response.content).decode().splitlines()
+
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(urlsplit(lines[0]).hostname, 'direct.example')
+        self.assertEqual(urlsplit(lines[1]).hostname, 'relay.example')
+        self.assertNotIn('127.0.0.1', base64.b64decode(response.content).decode())
+
+    def test_the_remaining_term_is_still_served_by_the_header(self, _params):
+        response = self._response()
+
+        expire = int(dict(
+            field.strip().split('=', 1)
+            for field in response['subscription-userinfo'].split(';')
+        )['expire'])
+
+        self.assertLessEqual(abs(expire - int(time.time()) - 10 * 86400), 5)
 
 
 class _FakeTLSSocket:

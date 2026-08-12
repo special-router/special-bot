@@ -44,6 +44,9 @@ PARAMS = {
     SUBSCRIPTION_DEVICE_BINDING_WINDOW_MINUTES=15,
     SUBSCRIPTION_DEVICE_BINDING_WINDOW_REQUIRED=True,
     SUBSCRIPTION_DEVICE_REGISTRATIONS_PER_HOUR=5,
+    # Two tests here assert the three-line response contract; the status entry
+    # must be pinned on rather than inherited from whatever the default is.
+    SUBSCRIPTION_STATUS_ENTRY_ENABLED=True,
 )
 @patch('apps.subscriptions.views._get_params', return_value=PARAMS)
 class DeviceBindingTests(TestCase):

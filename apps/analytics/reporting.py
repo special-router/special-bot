@@ -389,7 +389,7 @@ def format_report(data: dict) -> str:
         'FUNNEL',
     ]
     if not any(data['funnel'].values()):
-        lines.append('  # места вызова описаны в apps/analytics/funnel.py и ещё не подключены')
+        lines.append('  # за период не записан ни один шаг: либо не было нажатий, либо выключен журнал')
     for step, count in data['funnel'].items():
         lines.append(f'  {step.lower()}={count}')
     lines += ['', 'COHORTS (signup month, lifetime to period end)']

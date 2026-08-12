@@ -1,6 +1,8 @@
+from asgiref.sync import sync_to_async
 from telegram import InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from apps.analytics.funnel import subscription_removed
 from apps.telegram_bot.handlers.show_keys import build_keys_screen
 from apps.telegram_bot.inline_buttons.remove_keys import get_reply_markup_remove_keys
 from apps.telegram_bot.ui import answer_query, render_screen, screen
@@ -48,6 +50,7 @@ async def remove_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     await remove_vpn_user_from_server(user_vpn)
+    await sync_to_async(subscription_removed)(user.id, user_vpn_id)
 
     text, keyboard = await build_keys_screen(user, notice='Подписка удалена.')
     await render_screen(update, context, text, keyboard, toast='Подписка удалена.')

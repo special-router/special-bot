@@ -1,8 +1,10 @@
 import redis
+from asgiref.sync import sync_to_async
 from django.conf import settings
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from apps.analytics.funnel import subscription_created, subscription_refused_no_funds
 from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
 from apps.payments.models import Transaction
 from apps.servers.models import Server, TariffServer
@@ -38,6 +40,7 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if user.balance < server.tariff.price:
         text, keyboard = await build_balance_screen(user, notice='Недостаточно средств для новой подписки.')
         await render_screen(update, context, text, keyboard)
+        await sync_to_async(subscription_refused_no_funds)(user.id, amount=server.tariff.price)
         return
 
     active_keys = await UserVPN.objects.filter_by_user(user_id=user.id).filter_by_enabled(True).acount()
@@ -48,7 +51,8 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    await add_vpn_to_user(user, server)
+    user_vpn = await add_vpn_to_user(user, server)
+    await sync_to_async(subscription_created)(user.id, user_vpn.id)
 
     tariff: TariffServer = await TariffServer.objects.aget()
 
