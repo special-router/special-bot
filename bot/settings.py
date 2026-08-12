@@ -249,8 +249,17 @@ SUBSCRIPTION_DEVICE_LIMIT = env.int('SUBSCRIPTION_DEVICE_LIMIT', 2)
 # Clients that send no usable identifier are served until the fleet has caught
 # up; enabling strict mode refuses them like an unknown device.
 SUBSCRIPTION_HWID_STRICT = env.bool('SUBSCRIPTION_HWID_STRICT', False)
-# Self-serve device reset, so buying a new phone does not need support.
-SUBSCRIPTION_DEVICE_RESET_COOLDOWN_HOURS = env.int('SUBSCRIPTION_DEVICE_RESET_COOLDOWN_HOURS', 24)
+# The subscription endpoint is unauthenticated, so a *new* identifier is bound
+# only while the account holder has asked for it from the bot, where Telegram
+# signs who is asking. Outside that window an unknown identifier is refused even
+# with slots free — that is what stops a leaked sub_id from spending them.
+SUBSCRIPTION_DEVICE_BINDING_WINDOW_MINUTES = env.int('SUBSCRIPTION_DEVICE_BINDING_WINDOW_MINUTES', 15)
+# Ceiling on new bindings per subscription per hour, applied even inside a
+# window, so freeing slots never doubles as a flooding budget.
+SUBSCRIPTION_DEVICE_REGISTRATIONS_PER_HOUR = env.int('SUBSCRIPTION_DEVICE_REGISTRATIONS_PER_HOUR', 5)
+# Self-serve device reset, so buying a new phone does not need support. It is an
+# authenticated action and no longer the sole recovery path, hence hourly.
+SUBSCRIPTION_DEVICE_RESET_COOLDOWN_HOURS = env.int('SUBSCRIPTION_DEVICE_RESET_COOLDOWN_HOURS', 1)
 
 BOT_LINK = env.str('BOT_LINK', 'https://t.me/SpecialVPNbot')
 

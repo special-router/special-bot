@@ -119,3 +119,63 @@ class SubscriptionDeviceReset(models.Model):
 
     def __str__(self):
         return f"{self.telegram_user} {str(self.last_reset_at)}"
+
+
+class SubscriptionDeviceBindingWindow(models.Model):
+    """When a user last asked, from the bot, to bind another device.
+
+    The subscription endpoint is public, so the moment a new device may be
+    registered has to come from the authenticated side.  This row is that
+    consent: it is written only by a Telegram callback, whose sender identity
+    is signed by Telegram, and it expires on its own.
+    """
+
+    telegram_user = models.OneToOneField(
+        'users.TelegramUser',
+        on_delete=models.CASCADE,
+        related_name='device_binding_window',
+    )
+
+    opened_at = models.DateTimeField(
+        'Окно привязки открыто',
+        default=timezone.now,
+    )
+
+    class Meta:
+        verbose_name = 'Окно привязки устройств'
+        verbose_name_plural = 'Окна привязки устройств'
+
+    def __str__(self):
+        return f"{self.telegram_user} {str(self.opened_at)}"
+
+
+class SubscriptionDeviceRegistrationRate(models.Model):
+    """Rolling count of new device registrations for one subscription.
+
+    Slots freed by a reset must not become a fresh flooding budget, so this
+    counter survives the devices it counted and bounds registrations even while
+    a binding window is legitimately open.
+    """
+
+    subscription = models.OneToOneField(
+        'vpn.UserVPN',
+        on_delete=models.CASCADE,
+        related_name='device_registration_rate',
+    )
+
+    period_started_at = models.DateTimeField(
+        'Начало периода',
+        default=timezone.now,
+    )
+
+    registrations = models.PositiveIntegerField(
+        'Регистраций за период',
+        default=0,
+    )
+
+    class Meta:
+        verbose_name = 'Частота привязок подписки'
+        verbose_name_plural = 'Частоты привязок подписок'
+
+    def __str__(self):
+        return f"{self.subscription_id} {self.registrations}"
