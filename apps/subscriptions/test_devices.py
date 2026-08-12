@@ -42,6 +42,7 @@ PARAMS = {
     SUBSCRIPTION_DEVICE_LIMIT=2,
     SUBSCRIPTION_HWID_STRICT=False,
     SUBSCRIPTION_DEVICE_BINDING_WINDOW_MINUTES=15,
+    SUBSCRIPTION_DEVICE_BINDING_WINDOW_REQUIRED=True,
     SUBSCRIPTION_DEVICE_REGISTRATIONS_PER_HOUR=5,
 )
 @patch('apps.subscriptions.views._get_params', return_value=PARAMS)
@@ -234,6 +235,48 @@ class DeviceBindingTests(TestCase):
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(SubscriptionDevice.objects.filter(subscription=self.user_vpn).count(), 1)
+
+    @override_settings(SUBSCRIPTION_DEVICE_BINDING_WINDOW_REQUIRED=False)
+    def test_rollout_switch_binds_a_second_device_without_a_window(self, _params):
+        self._request({'x-hwid': DEVICE_A})
+
+        response = self._request({'x-hwid': DEVICE_B})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(SubscriptionDeviceBindingWindow.objects.exists())
+        self.assertEqual(SubscriptionDevice.objects.filter(subscription=self.user_vpn).count(), 2)
+
+    def test_the_same_request_is_refused_once_the_window_is_required(self, _params):
+        self._request({'x-hwid': DEVICE_A})
+
+        response = self._request({'x-hwid': DEVICE_B})
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(SubscriptionDevice.objects.filter(subscription=self.user_vpn).count(), 1)
+
+    @override_settings(SUBSCRIPTION_DEVICE_BINDING_WINDOW_REQUIRED=False)
+    def test_rollout_switch_does_not_lift_the_device_limit(self, _params):
+        self._request({'x-hwid': DEVICE_A})
+        self._request({'x-hwid': DEVICE_B})
+
+        response = self._request({'x-hwid': DEVICE_C})
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(SubscriptionDevice.objects.filter(subscription=self.user_vpn).count(), 2)
+
+    @override_settings(
+        SUBSCRIPTION_DEVICE_BINDING_WINDOW_REQUIRED=False,
+        SUBSCRIPTION_DEVICE_REGISTRATIONS_PER_HOUR=2,
+    )
+    def test_rollout_switch_still_obeys_the_registration_budget(self, _params):
+        UserVPN.objects.filter(pk=self.user_vpn.pk).update(device_limit=5)
+
+        self._request({'x-hwid': DEVICE_A})
+        self._request({'x-hwid': DEVICE_B})
+        response = self._request({'x-hwid': DEVICE_C})
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(SubscriptionDevice.objects.filter(subscription=self.user_vpn).count(), 2)
 
     @override_settings(SUBSCRIPTION_DEVICE_REGISTRATIONS_PER_HOUR=2)
     def test_registration_rate_limit_bounds_an_open_window(self, _params):
