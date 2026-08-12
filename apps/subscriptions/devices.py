@@ -101,6 +101,16 @@ def binding_window_open(user_id: int) -> bool:
     ).exists()
 
 
+def binding_window_required() -> bool:
+    """Whether a *new* identifier needs the account holder's open window.
+
+    False is the launch state only: on the first deploy no subscription has any
+    bound device, so requiring a window immediately would refuse the second
+    device of every existing customer before anyone knows a window exists.
+    """
+    return bool(getattr(settings, 'SUBSCRIPTION_DEVICE_BINDING_WINDOW_REQUIRED', True))
+
+
 def register_device(user_vpn, hwid: str, metadata: dict[str, str]) -> bool:
     """Serve ``hwid``; bind it first when this subscription may take a new one.
 
@@ -115,7 +125,9 @@ def register_device(user_vpn, hwid: str, metadata: dict[str, str]) -> bool:
     recent device would evict the customer.
 
     The one exception is a subscription with no devices at all: the first
-    identifier binds unattended, so a fresh purchase just works.
+    identifier binds unattended, so a fresh purchase just works.  During the
+    rollout ``SUBSCRIPTION_DEVICE_BINDING_WINDOW_REQUIRED=false`` drops the
+    window step for every device; the limit and the budget still apply.
     """
     seen = SubscriptionDevice.objects.filter(
         subscription_id=user_vpn.id, hwid=hwid,
@@ -132,7 +144,7 @@ def register_device(user_vpn, hwid: str, metadata: dict[str, str]) -> bool:
             bound = SubscriptionDevice.objects.filter(subscription_id=user_vpn.id).count()
             if bound >= limit:
                 return False
-            if bound and not binding_window_open(user_vpn.user_id):
+            if bound and binding_window_required() and not binding_window_open(user_vpn.user_id):
                 return False
             if not _spend_registration_budget(user_vpn.id):
                 return False

@@ -254,6 +254,13 @@ SUBSCRIPTION_HWID_STRICT = env.bool('SUBSCRIPTION_HWID_STRICT', False)
 # signs who is asking. Outside that window an unknown identifier is refused even
 # with slots free — that is what stops a leaked sub_id from spending them.
 SUBSCRIPTION_DEVICE_BINDING_WINDOW_MINUTES = env.int('SUBSCRIPTION_DEVICE_BINDING_WINDOW_MINUTES', 15)
+# Two-phase rollout switch, and the only reason it exists. On the first deploy
+# no subscription has any bound device yet, so requiring a window at once would
+# refuse the second device of every existing customer before anyone has been
+# told that windows exist. Ship as false, let real fleets bind their real
+# devices for about 48 hours, then flip to true to close the attacker path.
+# False is a temporary launch state, never the steady state.
+SUBSCRIPTION_DEVICE_BINDING_WINDOW_REQUIRED = env.bool('SUBSCRIPTION_DEVICE_BINDING_WINDOW_REQUIRED', True)
 # Ceiling on new bindings per subscription per hour, applied even inside a
 # window, so freeing slots never doubles as a flooding budget.
 SUBSCRIPTION_DEVICE_REGISTRATIONS_PER_HOUR = env.int('SUBSCRIPTION_DEVICE_REGISTRATIONS_PER_HOUR', 5)
