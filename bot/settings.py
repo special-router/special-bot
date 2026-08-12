@@ -352,6 +352,15 @@ SUBSCRIPTION_BACKUP_MAX_SOURCES = env.int('SUBSCRIPTION_BACKUP_MAX_SOURCES', 8)
 SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES = env.int('SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES', 128)
 SUBSCRIPTION_BACKUP_AGGREGATE_MAX_BYTES = env.int('SUBSCRIPTION_BACKUP_AGGREGATE_MAX_BYTES', 262144)
 SUBSCRIPTION_BACKUP_FETCH_DEADLINE_SECONDS = env.float('SUBSCRIPTION_BACKUP_FETCH_DEADLINE_SECONDS', 8)
+# Some providers serve a different document per client User-Agent and reject
+# unknown ones. An empty value keeps the neutral agent used before format-aware
+# ingestion existed, so configured sources do not change format on upgrade.
+SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT = env.str('SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT', '')
+# Plain VLESS carries the client UUID on the wire and is trivially
+# fingerprinted and blocked. Endpoints a provider offers without TLS or Reality
+# stay out of subscriptions until an operator accepts that specific trade-off.
+SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS = env.bool(
+    'SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS', False)
 
 # Internal 3x-ui alternate-inbound canary. Endpoint records deliberately carry
 # only routing metadata; live 3x-ui remains the authority for client and

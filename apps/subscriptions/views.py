@@ -700,7 +700,7 @@ def _fetch_upstream_payload(url: str) -> bytes:
         request = (
             f'GET {target} HTTP/1.1\r\n'
             f'Host: {_host_header(host, port)}\r\n'
-            'User-Agent: SPECIAL-subscription-backup/1\r\n'
+            f'User-Agent: {_upstream_user_agent()}\r\n'
             'Accept-Encoding: identity\r\n'
             'Connection: close\r\n\r\n'
         ).encode('ascii')
@@ -780,8 +780,39 @@ def _read_upstream_response(socket_, deadline: float, read_timeout: float,
     return int(status), headers, body
 
 
+_DEFAULT_UPSTREAM_USER_AGENT = 'SPECIAL-subscription-backup/1'
+# Only transports that keep the client UUID off the wire may be advertised by
+# default. Plain VLESS exposes it on every handshake and is trivially
+# fingerprinted, which is why our own plaintext inbounds were withdrawn.
+_MIRROR_SECURE_TRANSPORTS = ('reality', 'tls')
+# A provider document is attacker-controlled input; parsing it must cost a
+# bounded amount of work regardless of how many entries it declares.
+_MIRROR_MAX_ENDPOINTS = 64
+
+
+def _upstream_user_agent() -> str:
+    """Return the agent this deployment presents to providers.
+
+    Some providers serve a different document per client User-Agent and refuse
+    unknown ones, so the agent is what selects the machine-readable format. An
+    unset, oversized or non-printable value keeps the neutral default rather
+    than letting configuration write arbitrary bytes into a request header.
+    """
+    from django.conf import settings
+    value = getattr(settings, 'SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT', '')
+    if not isinstance(value, str):
+        return _DEFAULT_UPSTREAM_USER_AGENT
+    value = value.strip()
+    if not value or len(value) > 128 or not all(' ' <= character <= '~' for character in value):
+        return _DEFAULT_UPSTREAM_USER_AGENT
+    return value
+
+
 def _sanitize_upstream_payload(payload: bytes) -> list[str]:
     """Decode payload framing while retaining accepted VLESS line bytes exactly."""
+    structured = _structured_upstream_links(payload)
+    if structured is not None:
+        return structured
     decoded = _decode_subscription_payload(payload)
     links = []
     for raw_line in decoded.splitlines():
@@ -799,6 +830,237 @@ def _decode_subscription_payload(payload: bytes) -> bytes:
         return base64.b64decode(compact, validate=True)
     except (binascii.Error, ValueError):
         return payload
+
+
+def _structured_upstream_links(payload: bytes) -> list[str] | None:
+    """Render links from a JSON provider document, or decline the payload.
+
+    ``None`` means "not a document I parse" and hands the bytes back to the
+    opaque URI-list path unchanged; an empty list means the document parsed and
+    offered nothing servable. Callers must keep that distinction, otherwise a
+    provider that answers YAML would silently look like a provider with no
+    endpoints.
+    """
+    document = _load_upstream_json(payload)
+    if document is None:
+        return None
+    raw_endpoints = []
+    if isinstance(document, dict):
+        raw_endpoints = _singbox_endpoints(document)
+    else:
+        # v2rayNG/Happ answer with an array of whole client configs rather than
+        # one config holding every outbound.
+        for element in document[:_MIRROR_MAX_ENDPOINTS]:
+            if isinstance(element, dict):
+                raw_endpoints.extend(_v2ray_endpoints(element))
+    allow_plaintext = _plaintext_endpoints_allowed()
+    links = []
+    for raw_endpoint in raw_endpoints[:_MIRROR_MAX_ENDPOINTS]:
+        endpoint = _normalized_mirror_endpoint(raw_endpoint)
+        if endpoint is None:
+            continue
+        if endpoint['security'] not in _MIRROR_SECURE_TRANSPORTS and not allow_plaintext:
+            continue
+        links.append(_build_mirror_vless(endpoint))
+    return links
+
+
+def _load_upstream_json(payload: bytes):
+    """Return a parsed JSON container, or None for any other payload shape."""
+    stripped = payload.lstrip()
+    if stripped[:1] not in (b'{', b'['):
+        return None
+    try:
+        document = json.loads(stripped.decode('utf-8'))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        # Deeply nested input makes recursive-descent json raise RecursionError,
+        # which is not a ValueError and would otherwise escape the caller's
+        # payload error handling on interpreters whose parser still recurses.
+        return None
+    return document if isinstance(document, (dict, list)) else None
+
+
+def _plaintext_endpoints_allowed() -> bool:
+    from django.conf import settings
+    return getattr(settings, 'SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS', False) is True
+
+
+def _dict_field(container: dict, name: str) -> dict:
+    value = container.get(name)
+    return value if isinstance(value, dict) else {}
+
+
+def _singbox_endpoints(document: dict) -> list[dict]:
+    """Extract VLESS outbounds from a sing-box config."""
+    outbounds = document.get('outbounds')
+    if not isinstance(outbounds, list):
+        return []
+    endpoints = []
+    for outbound in outbounds[:_MIRROR_MAX_ENDPOINTS]:
+        if not isinstance(outbound, dict) or str(outbound.get('type', '')).lower() != 'vless':
+            continue
+        tls = _dict_field(outbound, 'tls')
+        reality = _dict_field(tls, 'reality')
+        transport = _dict_field(outbound, 'transport')
+        endpoints.append({
+            'host': outbound.get('server'),
+            'port': outbound.get('server_port'),
+            'uuid': outbound.get('uuid'),
+            'remark': outbound.get('tag'),
+            'flow': outbound.get('flow'),
+            'security': _singbox_security(tls, reality),
+            'public_key': reality.get('public_key'),
+            'short_id': reality.get('short_id'),
+            'server_name': tls.get('server_name'),
+            'fingerprint': _dict_field(tls, 'utls').get('fingerprint'),
+            'network': transport.get('type') or 'tcp',
+            'service_name': transport.get('service_name'),
+            'path': transport.get('path'),
+        })
+    return endpoints
+
+
+def _singbox_security(tls: dict, reality: dict) -> str:
+    """Classify a sing-box outbound by what actually protects the handshake."""
+    if reality.get('enabled') is True:
+        return 'reality'
+    return 'tls' if tls.get('enabled') is True else 'none'
+
+
+def _v2ray_endpoints(config: dict) -> list[dict]:
+    """Extract VLESS servers from one v2ray client config."""
+    outbounds = config.get('outbounds')
+    if not isinstance(outbounds, list):
+        return []
+    endpoints = []
+    for outbound in outbounds[:_MIRROR_MAX_ENDPOINTS]:
+        if not isinstance(outbound, dict) or str(outbound.get('protocol', '')).lower() != 'vless':
+            continue
+        vnext = _dict_field(outbound, 'settings').get('vnext')
+        if not isinstance(vnext, list):
+            continue
+        stream = _dict_field(outbound, 'streamSettings')
+        security = str(stream.get('security') or 'none').lower()
+        reality_settings = _dict_field(stream, 'realitySettings')
+        # Reality and TLS keep their server name and fingerprint in different
+        # blocks; reading the wrong one would advertise an empty SNI.
+        secure = reality_settings if security == 'reality' else _dict_field(stream, 'tlsSettings')
+        for server in vnext[:_MIRROR_MAX_ENDPOINTS]:
+            if not isinstance(server, dict):
+                continue
+            users = server.get('users')
+            user = users[0] if isinstance(users, list) and users and isinstance(users[0], dict) else {}
+            endpoints.append({
+                'host': server.get('address'),
+                'port': server.get('port'),
+                'uuid': user.get('id'),
+                'remark': config.get('remarks'),
+                'flow': user.get('flow'),
+                'security': security,
+                'public_key': reality_settings.get('publicKey'),
+                'short_id': reality_settings.get('shortId'),
+                'server_name': secure.get('serverName'),
+                'fingerprint': secure.get('fingerprint'),
+                'network': stream.get('network') or 'tcp',
+                'service_name': _dict_field(stream, 'grpcSettings').get('serviceName'),
+                'path': _dict_field(stream, 'wsSettings').get('path'),
+            })
+    return endpoints
+
+
+def _normalized_mirror_endpoint(raw: dict) -> dict | None:
+    """Normalize one parsed outbound, or drop it.
+
+    Every value here came from a third party, so each one is length-bounded and
+    stripped of control characters before it can reach a rendered URI.
+    """
+    host = _mirror_field(raw.get('host'), limit=253)
+    port = _mirror_port(raw.get('port'))
+    uuid = _mirror_field(raw.get('uuid'))
+    security = raw.get('security')
+    if (not host or not _safe_endpoint_host(host) or port is None or not uuid
+            or security not in (*_MIRROR_SECURE_TRANSPORTS, 'none')):
+        return None
+    endpoint = {
+        'host': host,
+        'port': port,
+        # Our own UUIDs are quote-invariant, so quoting costs nothing here and
+        # stops a provider from writing URI structure into the userinfo field.
+        'uuid': quote(uuid, safe=''),
+        'remark': _mirror_field(raw.get('remark')) or host,
+        'flow': _mirror_field(raw.get('flow'), limit=64),
+        'security': security,
+        'public_key': _mirror_field(raw.get('public_key')),
+        'short_id': _mirror_field(raw.get('short_id'), limit=64),
+        'server_name': _mirror_field(raw.get('server_name'), limit=253),
+        'fingerprint': _mirror_field(raw.get('fingerprint'), limit=64),
+        'network': _mirror_field(raw.get('network'), limit=32).lower() or 'tcp',
+        'service_name': _mirror_field(raw.get('service_name')),
+        'path': _mirror_field(raw.get('path')),
+    }
+    # Reality without its key material is not a usable endpoint, and rendering
+    # it would advertise a Reality link that no client can complete.
+    if security == 'reality' and not (endpoint['public_key'] and endpoint['short_id']):
+        return None
+    return endpoint
+
+
+def _mirror_field(value, *, limit: int = 256) -> str:
+    """Return a bounded, control-character-free string, or '' for anything else."""
+    if not isinstance(value, str) or not value or len(value) > limit:
+        return ''
+    if any(character < ' ' or character == '\x7f' for character in value):
+        return ''
+    return value
+
+
+def _mirror_port(value) -> int | None:
+    # ``type(...) is int`` deliberately rejects booleans, which JSON allows here.
+    if type(value) is int and 0 < value < 65536:
+        return value
+    if isinstance(value, str) and value.isdigit() and 0 < int(value) < 65536:
+        return int(value)
+    return None
+
+
+def _safe_endpoint_host(host: str) -> bool:
+    """Reject hosts that would aim a client at this deployment's own network."""
+    if any(character in host for character in ' \t/@?#') or host.casefold() == 'localhost':
+        return False
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return _is_public_unicast(str(literal))
+
+
+def _build_mirror_vless(endpoint: dict) -> str:
+    """Render a normalized third-party endpoint in the URI shape we emit.
+
+    ``_build_vless`` cannot be reused: it hardcodes ``security=reality`` and
+    dereferences Reality-only fields, while a mirrored endpoint may carry plain
+    TLS or nothing at all. Shared fields keep its ordering so an aggregated
+    subscription reads as one document.
+    """
+    reality = endpoint['security'] == 'reality'
+    query_fields = [('type', endpoint['network']), ('security', endpoint['security'])]
+    if endpoint['flow']:
+        query_fields.insert(0, ('flow', endpoint['flow']))
+    if reality:
+        query_fields.append(('pbk', endpoint['public_key']))
+    if endpoint['fingerprint']:
+        query_fields.append(('fp', endpoint['fingerprint']))
+    if endpoint['server_name']:
+        query_fields.append(('sni', endpoint['server_name']))
+    if reality:
+        query_fields.extend((('sid', endpoint['short_id']), ('spx', '/')))
+    if endpoint['network'] == 'grpc' and endpoint['service_name']:
+        query_fields.append(('serviceName', endpoint['service_name']))
+    if endpoint['network'] == 'ws' and endpoint['path']:
+        query_fields.append(('path', endpoint['path']))
+    query = urlencode(query_fields, quote_via=quote)
+    return (f"vless://{endpoint['uuid']}@{endpoint['host']}:{endpoint['port']}"
+            f"?{query}#{quote(endpoint['remark'])}")
 
 
 def _is_sentinel_vless_line(raw_line: bytes) -> bool:
