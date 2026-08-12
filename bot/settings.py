@@ -270,6 +270,13 @@ SUBSCRIPTION_DEVICE_RESET_COOLDOWN_HOURS = env.int('SUBSCRIPTION_DEVICE_RESET_CO
 
 BOT_LINK = env.str('BOT_LINK', 'https://t.me/SpecialVPNbot')
 
+# Премиум-иконки на кнопках (`icon_custom_emoji_id`). Bot API принимает это поле
+# только у бота, чей владелец держит Telegram Premium, а статус владельца из
+# кода не виден. Включённые без Premium иконки отклоняются вместе со всей
+# клавиатурой, поэтому выключено — единственное безопасное значение по
+# умолчанию; включать только после проверки на живом боте.
+TELEGRAM_BUTTON_ICONS_ENABLED = env.bool('TELEGRAM_BUTTON_ICONS_ENABLED', False)
+
 # Built-in 3x-ui subscriptions are staged only. Legacy VLESS issuance remains
 # the production path until DNS/TLS and an explicit migration rollout complete.
 SUBSCRIPTION_CONNECTOR_ENABLED = env.bool('SUBSCRIPTION_CONNECTOR_ENABLED', False)

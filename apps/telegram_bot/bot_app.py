@@ -6,8 +6,8 @@ from telegram.ext import Application, ApplicationBuilder
 async def post_init_handler(application: Application) -> None:
     await application.bot.set_my_commands(
         [
-            BotCommand('start', 'Показать список серверов'),
-            BotCommand('balance', 'Показать баланс'),
+            BotCommand('start', 'Главное меню'),
+            BotCommand('balance', 'Баланс и пополнение'),
         ]
     )
 

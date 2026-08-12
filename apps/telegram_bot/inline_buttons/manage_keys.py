@@ -2,25 +2,24 @@ import random
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from apps.telegram_bot import icons
+from apps.telegram_bot.ui import back_button, button
 from apps.users.models import TelegramUser
 
 
 async def get_reply_markup_manage_keys(user: TelegramUser) -> InlineKeyboardMarkup:
+    """Одноразовое число в `add_key` — защита от повторного нажатия, см. handlers/add_key.py."""
     buttons: list[list[InlineKeyboardButton]] = [
         [
-            InlineKeyboardButton(
-                text='➕Добавить подписку', callback_data=f'add_key:{random.randint(10000000, 999999999)}'
-            ),
-            InlineKeyboardButton(text='❌Удалить подписку', callback_data='show_keys_for_remove'),
+            button('Добавить', f'add_key:{random.randint(10000000, 999999999)}', icon=icons.KEY),
+            button('Удалить', 'show_keys_for_remove', icon=icons.TRASH),
         ],
         [
-            InlineKeyboardButton(text='📱Привязать устройство', callback_data='bind_device'),
+            button('Привязать устройство', 'bind_device', icon=icons.LINK),
+            button('Сбросить', 'reset_devices', icon=icons.REFRESH),
         ],
         [
-            InlineKeyboardButton(text='♻️Сбросить устройства', callback_data='reset_devices'),
-        ],
-        [
-            InlineKeyboardButton(text='Назад', callback_data='main_menu'),
+            back_button(),
         ],
     ]
 

@@ -1,11 +1,18 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from apps.telegram_bot import icons
+from apps.telegram_bot.ui import back_button, button
+
 
 async def get_reply_markup_profile() -> InlineKeyboardMarkup:
-    """Создает клавиатуру для профиля пользователя"""
+    """Профиль — витрина счёта, поэтому оба действия по нему ведут отсюда."""
     buttons: list[list[InlineKeyboardButton]] = [
         [
-            InlineKeyboardButton(text='Назад', callback_data='main_menu'),
+            button('Пополнить', 'show_balance', icon=icons.WALLET),
+            button('Подписки', 'show_keys', icon=icons.KEY),
+        ],
+        [
+            back_button(),
         ],
     ]
 

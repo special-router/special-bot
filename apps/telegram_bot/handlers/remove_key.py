@@ -1,23 +1,31 @@
-from telegram import Update
+from telegram import InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from apps.telegram_bot.handlers.show_keys import show_keys
+from apps.telegram_bot.handlers.show_keys import build_keys_screen
 from apps.telegram_bot.inline_buttons.remove_keys import get_reply_markup_remove_keys
+from apps.telegram_bot.ui import render_screen, screen
 from apps.telegram_bot.utils import get_user
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 from apps.vpn.services.remove_vpn_user_from_server import remove_vpn_user_from_server
 
 
+async def build_remove_keys_screen(user: TelegramUser) -> tuple[str, InlineKeyboardMarkup]:
+    """Отдельный экран под удаление остаётся подтверждением: сама кнопка удаляет
+    подписку сразу и без второго вопроса."""
+    text = screen(
+        'Удаление подписки',
+        state=['Подписка удаляется сразу, вернуть её нельзя. Остаток баланса сохраняется.'],
+        body=['Выберите, какую подписку удалить.'],
+    )
+
+    return text, await get_reply_markup_remove_keys(user)
+
+
 async def show_keys_for_remove(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user: TelegramUser = await get_user(update)
-
-    await context.bot.send_message(
-        user.telegram_id,
-        text='Подписки, доступные для удаления:',
-        parse_mode='Markdown',
-        reply_markup=await get_reply_markup_remove_keys(user),
-    )
+    text, keyboard = await build_remove_keys_screen(user)
+    await render_screen(update, context, text, keyboard)
 
 
 async def remove_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -38,8 +46,5 @@ async def remove_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     await remove_vpn_user_from_server(user_vpn)
 
-    await update.callback_query.answer(
-        text='Подписка успешно удалена',
-    )
-
-    await show_keys(update, context)
+    text, keyboard = await build_keys_screen(user, notice='Подписка удалена.')
+    await render_screen(update, context, text, keyboard)

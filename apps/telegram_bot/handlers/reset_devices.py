@@ -3,14 +3,15 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from apps.subscriptions.devices import reset_devices as reset_user_devices
+from apps.telegram_bot.handlers.show_keys import build_keys_screen
+from apps.telegram_bot.ui import render_screen
 from apps.telegram_bot.utils import get_user
 from apps.users.models import TelegramUser
 
 
 RESET_DONE_TEXT = (
-    'Устройства отвязаны от подписки.\n\n'
-    'Привязка открыта — откройте приложение на тех устройствах, которыми '
-    'пользуетесь, и они привяжутся заново.'
+    'Устройства отвязаны от подписки. Привязка открыта — откройте приложение на тех устройствах, '
+    'которыми пользуетесь, и они привяжутся заново.'
 )
 
 
@@ -19,19 +20,17 @@ async def reset_devices(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user: TelegramUser = await get_user(update)
 
     done, remaining = await sync_to_async(reset_user_devices)(user.id)
-    if not done:
-        await context.bot.send_message(
-            user.telegram_id,
-            text=(
-                'Сбрасывать устройства можно не так часто.\n\n'
-                f'Повторите попытку через {_humanized(remaining)}.\n\n'
-                'Чтобы добавить ещё одно устройство, сбрасывать не нужно — '
-                'нажмите «Привязать устройство».'
-            ),
+    if done:
+        notice = RESET_DONE_TEXT
+    else:
+        notice = (
+            'Сбрасывать устройства можно не так часто. '
+            f'Повторите попытку через {_humanized(remaining)}.\n\n'
+            'Чтобы добавить ещё одно устройство, сбрасывать не нужно — нажмите «Привязать устройство».'
         )
-        return
 
-    await context.bot.send_message(user.telegram_id, text=RESET_DONE_TEXT)
+    text, keyboard = await build_keys_screen(user, notice=notice)
+    await render_screen(update, context, text, keyboard)
 
 
 def _humanized(remaining) -> str:

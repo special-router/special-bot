@@ -6,7 +6,8 @@ from apps.payments.choices import TransactionSourceChoices, TransactionStatusCho
 from apps.payments.constants import PROMO_AMOUNT
 from apps.payments.models import Transaction
 from apps.servers.models import TariffServer
-from apps.telegram_bot.handlers.balance import show_balance
+from apps.telegram_bot.handlers.balance import build_balance_screen, show_balance
+from apps.telegram_bot.ui import render_screen
 from apps.telegram_bot.utils import get_user
 from apps.users.models import TelegramUser
 
@@ -30,11 +31,13 @@ async def top_up_balance_promo(update: Update, context: ContextTypes.DEFAULT_TYP
             status=TransactionStatusChoices.SUCCESS,
         )
 
-        await update.callback_query.answer(
-            text=f"Как новому пользователю - вам начислено {int(PROMO_AMOUNT)} рублей",
+        # Пользователь перечитывается: начисление только что создано, и в
+        # аннотированном ранее балансе его ещё нет.
+        text, keyboard = await build_balance_screen(
+            await get_user(update),
+            notice=f'Как новому пользователю вам начислено {int(PROMO_AMOUNT)} руб.',
         )
-
-        await show_balance(update, context)
+        await render_screen(update, context, text, keyboard)
 
 
 async def top_up_balance_one_month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
