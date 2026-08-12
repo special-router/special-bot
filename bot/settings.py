@@ -60,6 +60,9 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # Сразу за security и до всего остального — так рекомендует WhiteNoise:
+    # файл отдаётся, не доходя до сессий, аутентификации и URLconf.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -135,6 +138,17 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Статику отдаёт само приложение. nginx проксирует `/static/` сюда и не имеет
+# доступа к файлам внутри контейнера, а `runserver` с `DEBUG=False` не отдаёт
+# ничего — из-за этого админка рендерилась без единого стиля.
+# `CompressedStaticFilesStorage`, а не манифестная версия: манифест обязателен
+# для каждого `{% static %}`, и потерянный `collectstatic` превращает админку в
+# 500 вместо страницы без картинки.
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage'},
+}
 
 # Media files
 MEDIA_URL = '/media/'
@@ -289,6 +303,12 @@ BOT_LINK = env.str('BOT_LINK', 'https://t.me/SpecialVPNbot')
 # заведена и бот добавлен в неё администратором с правом управлять темами —
 # иначе первое же обращение упрётся в отказ на создании темы.
 SUPPORT_CHAT_ID = env.int('SUPPORT_CHAT_ID', 0)
+
+# Внешний адрес админки — только схема и хост что-то значат: путь к карточке
+# клиента собирается через `reverse()`, поэтому переезд админки на другой префикс
+# не превратит кнопку в битую ссылку. Пустое значение убирает кнопку из темы:
+# Bot API отклоняет клавиатуру целиком, если хоть один URL в ней невалиден.
+ADMIN_BASE_URL = env.str('ADMIN_BASE_URL', 'https://sub.special-wifi.ru/admin/')
 
 # Премиум-иконки на кнопках (`icon_custom_emoji_id`). Bot API принимает это поле
 # только у бота, чей владелец держит Telegram Premium, а статус владельца из

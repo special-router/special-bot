@@ -2,9 +2,10 @@
 
 Проверяется не разметка экранов, а то, что ломает работу молча: второй открытый
 тикет у одного пользователя, черновик, переживший отказ Telegram, ответ
-оператора в закрытую тему и включённая машинерия при выключенной настройке.
-Bot API подменяется целиком, база — настоящая: единственный открытый тикет
-держит индекс, а не код, и проверять это на моках было бы нечего.
+оператора в закрытую тему, потерянное вложение и включённая машинерия при
+выключенной настройке. Bot API подменяется целиком, база — настоящая:
+единственный открытый тикет держит индекс, а не код, и проверять это на моках
+было бы нечего.
 """
 
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from django.test import TestCase, override_settings
 from telegram.error import TelegramError
 
 from apps.telegram_bot.handlers.support import (
+    MEDIA_KINDS,
     support_close,
     support_message,
     support_open,
@@ -29,10 +31,27 @@ from apps.users.models import TelegramUser
 SUPPORT_CHAT = -1001234567890
 TOPIC_ID = 42
 CLIENT_ID = 1001
+ADMIN_BASE_URL = 'https://sub.example.test/admin/'
+FILE_ID = 'file-42'
 
 
-def _telegram_user(telegram_id=CLIENT_ID, username='client', is_bot=False):
-    return SimpleNamespace(id=telegram_id, username=username, is_bot=is_bot)
+def _telegram_user(telegram_id=CLIENT_ID, username='client', is_bot=False, first_name='', last_name=''):
+    return SimpleNamespace(
+        id=telegram_id, username=username, is_bot=is_bot, first_name=first_name, last_name=last_name
+    )
+
+
+def _operator(telegram_id=5005, username='operator', first_name='Иван', last_name='Петров'):
+    return _telegram_user(
+        telegram_id=telegram_id, username=username, first_name=first_name, last_name=last_name
+    )
+
+
+def _attachment(kind, file_id=FILE_ID):
+    """Так вложение выглядит в `Message`: у фотографии — лестница размеров."""
+    if kind == 'photo':
+        return [SimpleNamespace(file_id='file-thumbnail'), SimpleNamespace(file_id=file_id)]
+    return SimpleNamespace(file_id=file_id)
 
 
 def _callback_update(data, from_user=None):
@@ -48,23 +67,30 @@ def _callback_update(data, from_user=None):
     )
 
 
-def _private_update(text, from_user=None):
+def _message(text, from_user, thread_id, message_id, caption, media):
+    message = SimpleNamespace(
+        text=text, caption=caption, from_user=from_user, message_thread_id=thread_id, message_id=message_id
+    )
+    if media is not None:
+        setattr(message, media, _attachment(media))
+    return message
+
+
+def _private_update(text=None, from_user=None, *, caption=None, media=None):
     from_user = from_user or _telegram_user()
-    message = SimpleNamespace(text=text, from_user=from_user, message_thread_id=None, message_id=1)
     return SimpleNamespace(
         callback_query=None,
-        message=message,
+        message=_message(text, from_user, None, 1, caption, media),
         effective_chat=SimpleNamespace(id=from_user.id),
         effective_user=from_user,
     )
 
 
-def _topic_update(text, thread_id, from_user=None):
-    from_user = from_user or _telegram_user(telegram_id=5005, username='operator')
-    message = SimpleNamespace(text=text, from_user=from_user, message_thread_id=thread_id, message_id=2)
+def _topic_update(text, thread_id, from_user=None, *, caption=None, media=None):
+    from_user = from_user or _operator()
     return SimpleNamespace(
         callback_query=None,
-        message=message,
+        message=_message(text, from_user, thread_id, 2, caption, media),
         effective_chat=SimpleNamespace(id=SUPPORT_CHAT),
         effective_user=from_user,
     )
@@ -76,11 +102,18 @@ def _context():
         create_forum_topic=AsyncMock(return_value=SimpleNamespace(message_thread_id=TOPIC_ID)),
         edit_forum_topic=AsyncMock(),
     )
+    for kind in MEDIA_KINDS:
+        setattr(bot, f'send_{kind}', AsyncMock())
     return SimpleNamespace(bot=bot)
 
 
 def _sent_to(bot, chat_id):
     return [call.kwargs for call in bot.send_message.await_args_list if call.kwargs.get('chat_id') == chat_id]
+
+
+def _buttons(message_kwargs):
+    markup = message_kwargs.get('reply_markup')
+    return [button for row in markup.inline_keyboard for button in row] if markup is not None else []
 
 
 @override_settings(SUPPORT_CHAT_ID=SUPPORT_CHAT)
@@ -249,6 +282,222 @@ class SupportFlowTests(TestCase):
 
         self.assertEqual(await SupportTicket.objects.acount(), 0)
         self.context.bot.create_forum_topic.assert_not_awaited()
+
+
+@override_settings(SUPPORT_CHAT_ID=SUPPORT_CHAT)
+class SupportMediaTests(TestCase):
+    """Вложения в обе стороны.
+
+    Проверяется не то, что вызван нужный метод Bot API, а то, ради чего вся
+    затея: подпись доходит вместе с файлом, файл без подписи всё равно доходит,
+    а потерянный файл не уносит с собой текст и не остаётся незамеченным.
+    """
+
+    def setUp(self):
+        self.context = _context()
+
+    async def _open_and_send(self, *, text=None, caption=None, media=None, from_user=None):
+        from_user = from_user or _telegram_user()
+        await support_open(_callback_update('support_open', from_user=from_user), self.context)
+        await support_message(
+            _private_update(text, from_user, caption=caption, media=media), self.context
+        )
+
+    async def test_every_attachment_kind_reaches_the_topic_with_its_caption(self):
+        for index, (kind, label) in enumerate(MEDIA_KINDS.items()):
+            with self.subTest(kind=kind):
+                # Свой клиент на каждый вид: у одного пользователя открытое
+                # обращение только одно, и вложения легли бы в тот же тикет.
+                client = _telegram_user(telegram_id=CLIENT_ID + index, username=f'client{index}')
+                await self._open_and_send(caption='вот скриншот', media=kind, from_user=client)
+
+                sender = getattr(self.context.bot, f'send_{kind}')
+                self.assertEqual(sender.await_args.kwargs[kind], FILE_ID)
+                self.assertEqual(sender.await_args.kwargs['chat_id'], SUPPORT_CHAT)
+                self.assertEqual(sender.await_args.kwargs['message_thread_id'], TOPIC_ID)
+
+                posted = _sent_to(self.context.bot, SUPPORT_CHAT)[-1]
+                self.assertIn('вот скриншот', posted['text'])
+                self.assertIn(label, posted['text'])
+
+    async def test_an_attachment_without_a_caption_still_reaches_the_topic(self):
+        await self._open_and_send(media='photo')
+
+        self.context.bot.send_photo.assert_awaited_once()
+        posted = _sent_to(self.context.bot, SUPPORT_CHAT)
+        self.assertEqual(len(posted), 1)
+        self.assertIn('фотография', posted[0]['text'])
+
+        ticket = await SupportTicket.objects.aget()
+        self.assertEqual(ticket.subject, '[фотография]')
+
+    async def test_an_unsupported_attachment_is_refused_instead_of_dropped(self):
+        """Стикер до оператора не дойдёт, и человек обязан узнать об этом сразу."""
+        await self._open_and_send()
+
+        self.assertEqual(await SupportTicket.objects.acount(), 0)
+        self.context.bot.create_forum_topic.assert_not_awaited()
+
+        refused = _sent_to(self.context.bot, CLIENT_ID)
+        self.assertEqual(len(refused), 1)
+        self.assertIn('Вложение не отправлено', refused[0]['text'])
+
+    async def test_a_failed_attachment_keeps_the_text_and_tells_both_sides(self):
+        self.context.bot.send_document.side_effect = TelegramError('file is too big')
+
+        await self._open_and_send(caption='логи приложения', media='document')
+
+        posted = _sent_to(self.context.bot, SUPPORT_CHAT)
+        self.assertIn('логи приложения', posted[0]['text'])
+        self.assertIn('не дошло', posted[-1]['text'])
+
+        delivered = _sent_to(self.context.bot, CLIENT_ID)
+        self.assertIn('не дошло', delivered[-1]['text'])
+
+    async def test_every_attachment_kind_reaches_the_client(self):
+        await self._open_and_send(text='интернет не работает')
+
+        for kind, label in MEDIA_KINDS.items():
+            with self.subTest(kind=kind):
+                await support_operator_reply(
+                    _topic_update(None, TOPIC_ID, caption='смотрите инструкцию', media=kind), self.context
+                )
+
+                sender = getattr(self.context.bot, f'send_{kind}')
+                self.assertEqual(sender.await_args.kwargs[kind], FILE_ID)
+                self.assertEqual(sender.await_args.kwargs['chat_id'], CLIENT_ID)
+                self.assertIsNone(sender.await_args.kwargs['message_thread_id'])
+
+                delivered = _sent_to(self.context.bot, CLIENT_ID)[-1]
+                self.assertIn('смотрите инструкцию', delivered['text'])
+                self.assertIn(label, delivered['text'])
+
+    async def test_an_attachment_lost_on_the_way_to_the_client_is_reported_in_the_topic(self):
+        await self._open_and_send(text='интернет не работает')
+        self.context.bot.send_video.side_effect = TelegramError('bot was blocked by the user')
+        self.context.bot.send_message.reset_mock()
+
+        await support_operator_reply(_topic_update('смотрите видео', TOPIC_ID, media='video'), self.context)
+
+        self.assertIn('смотрите видео', _sent_to(self.context.bot, CLIENT_ID)[0]['text'])
+        self.assertIn('не дошло', _sent_to(self.context.bot, SUPPORT_CHAT)[-1]['text'])
+
+    async def test_an_unsupported_operator_attachment_is_refused_in_the_topic(self):
+        await self._open_and_send(text='интернет не работает')
+        self.context.bot.send_message.reset_mock()
+
+        await support_operator_reply(_topic_update(None, TOPIC_ID), self.context)
+
+        self.assertEqual(_sent_to(self.context.bot, CLIENT_ID), [])
+        self.assertIn('не уйдёт', _sent_to(self.context.bot, SUPPORT_CHAT)[-1]['text'])
+
+    async def test_an_attachment_in_a_closed_topic_never_reaches_the_client(self):
+        await self._open_and_send(text='интернет не работает')
+        ticket = await SupportTicket.objects.aget()
+        await support_close(_callback_update(f'support_close:{ticket.id}'), self.context)
+        self.context.bot.send_message.reset_mock()
+
+        await support_operator_reply(
+            _topic_update(None, TOPIC_ID, caption='инструкция', media='photo'), self.context
+        )
+
+        self.assertEqual(_sent_to(self.context.bot, CLIENT_ID), [])
+        self.context.bot.send_photo.assert_not_awaited()
+
+
+@override_settings(SUPPORT_CHAT_ID=SUPPORT_CHAT, ADMIN_BASE_URL=ADMIN_BASE_URL)
+class SupportOperatorTests(TestCase):
+    """Кто отвечает клиенту и что с этим видно в теме."""
+
+    def setUp(self):
+        self.context = _context()
+
+    async def _ticket(self):
+        await support_open(_callback_update('support_open'), self.context)
+        await support_message(_private_update('интернет не работает'), self.context)
+        return await SupportTicket.objects.aget()
+
+    async def test_the_first_operator_to_reply_takes_the_ticket(self):
+        ticket = await self._ticket()
+
+        await support_operator_reply(_topic_update('смотрю', TOPIC_ID), self.context)
+
+        ticket = await SupportTicket.objects.aget()
+        self.assertEqual(ticket.operator_telegram_id, 5005)
+        self.assertEqual(ticket.operator_name, 'Иван Петров')
+
+        renamed = self.context.bot.edit_forum_topic.await_args.kwargs
+        self.assertEqual(renamed['name'], f'✅ Ticket #{ticket.id} | @client · Иван Петров')
+
+    async def test_the_client_sees_the_name_of_the_operator_who_answered(self):
+        await self._ticket()
+        self.context.bot.send_message.reset_mock()
+
+        await support_operator_reply(_topic_update('перезагрузите роутер', TOPIC_ID), self.context)
+
+        delivered = _sent_to(self.context.bot, CLIENT_ID)[-1]
+        self.assertIn('Иван Петров', delivered['text'])
+        self.assertNotIn('5005', delivered['text'])
+
+    async def test_a_second_operator_answers_without_taking_the_ticket_over(self):
+        """Обращение остаётся за первым, но клиент видит того, кто пишет."""
+        ticket = await self._ticket()
+        await support_operator_reply(_topic_update('смотрю', TOPIC_ID), self.context)
+        self.context.bot.edit_forum_topic.reset_mock()
+
+        colleague = _operator(telegram_id=6006, username='maria_op', first_name='Мария', last_name='Сидорова')
+        await support_operator_reply(
+            _topic_update('перезагрузите роутер', TOPIC_ID, from_user=colleague), self.context
+        )
+
+        ticket = await SupportTicket.objects.aget()
+        self.assertEqual(ticket.operator_telegram_id, 5005)
+        self.assertEqual(ticket.operator_name, 'Иван Петров')
+        self.context.bot.edit_forum_topic.assert_not_awaited()
+
+        delivered = _sent_to(self.context.bot, CLIENT_ID)[-1]
+        self.assertIn('Мария Сидорова', delivered['text'])
+
+    async def test_an_operator_without_a_name_is_never_signed_with_an_account_id(self):
+        await self._ticket()
+        self.context.bot.send_message.reset_mock()
+
+        anonymous = _operator(telegram_id=7007, username=None, first_name='', last_name='')
+        await support_operator_reply(_topic_update('ответ', TOPIC_ID, from_user=anonymous), self.context)
+
+        delivered = _sent_to(self.context.bot, CLIENT_ID)[-1]
+        self.assertIn('Оператор', delivered['text'])
+        self.assertNotIn('7007', delivered['text'])
+
+    async def test_a_closed_topic_keeps_the_operator_in_its_name(self):
+        ticket = await self._ticket()
+        await support_operator_reply(_topic_update('смотрю', TOPIC_ID), self.context)
+
+        await support_close(_callback_update(f'support_close:{ticket.id}'), self.context)
+
+        renamed = self.context.bot.edit_forum_topic.await_args.kwargs
+        self.assertEqual(renamed['name'], f'❌ Ticket #{ticket.id} | @client · Иван Петров')
+
+    async def test_the_topic_links_to_that_customer_in_the_admin(self):
+        await self._ticket()
+        user = await TelegramUser.objects.aget(telegram_id=CLIENT_ID)
+
+        posted = _sent_to(self.context.bot, SUPPORT_CHAT)[0]
+        links = [button for button in _buttons(posted) if button.url]
+
+        self.assertEqual(len(links), 1)
+        self.assertEqual(links[0].url, f'{ADMIN_BASE_URL}users/telegramuser/{user.id}/change/')
+
+    @override_settings(ADMIN_BASE_URL='')
+    async def test_without_an_admin_url_the_topic_keeps_the_close_button(self):
+        """Битая ссылка отправила бы Bot API отклонить всю клавиатуру целиком."""
+        ticket = await self._ticket()
+
+        posted = _sent_to(self.context.bot, SUPPORT_CHAT)[0]
+        buttons = _buttons(posted)
+
+        self.assertEqual(len(buttons), 1)
+        self.assertEqual(buttons[0].callback_data, f'support_close:{ticket.id}')
 
 
 class SupportDisabledTests(TestCase):

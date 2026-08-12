@@ -33,6 +33,7 @@ Shipped-but-inert features are listed together in
 | `YOUMONEY_TOKEN` | str | empty | set | Payment provider token. |
 | `BOT_LINK` | str | `https://t.me/SpecialVPNbot` | ? | Referral link base. |
 | `SUPPORT_CHAT_ID` | int | `0` | `0` | Operators' forum supergroup. **Zero registers no support handler at all** — the menu button stays a plain link and the bot does not read private text messages. Enabling requires two manual Telegram steps first; see [`OPEN-ITEMS.md`](OPEN-ITEMS.md#support-tickets). |
+| `ADMIN_BASE_URL` | str | `https://sub.special-wifi.ru/admin/` | ? | Where the «Карточка клиента» button in a support topic points. Only the scheme and host are used: the path comes from `reverse('admin:users_telegramuser_change')`, so moving the admin off `/admin/` does not break the button. Empty removes the button entirely — Bot API rejects a whole keyboard over one invalid URL, and that would take the close button with it. |
 | `TELEGRAM_BUTTON_ICONS_ENABLED` | bool | `False` | `false` | Premium `icon_custom_emoji_id` on inline buttons. Bot API accepts the field only for a bot whose owner holds Telegram Premium; without it the whole keyboard is rejected, so off is the only safe default. |
 
 ## Redis and Celery

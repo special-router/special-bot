@@ -316,15 +316,70 @@ in settings.
 
 **Files** `apps/telegram_bot/support.py` (database only, no Bot API calls),
 `apps/telegram_bot/handlers/support.py`, `SupportPrompt`/`SupportTicket` in
-`apps/telegram_bot/models.py`, tests in `test_support.py`.
+`apps/telegram_bot/models.py`, the operator's landing page in
+`apps/users/admin.py`, tests in `test_support.py` and `apps/users/test_admin.py`.
 
-**State** implemented and inert. `register_handlers.py` registers no support
-handler while `SUPPORT_CHAT_ID` is 0, so the menu button stays a plain link and
-the bot does not start reading private text messages for a disabled feature.
-Enabling needs a human: see [`OPEN-ITEMS.md`](OPEN-ITEMS.md#support-tickets).
+**State** implemented and inert in this repository's defaults.
+`register_handlers.py` registers no support handler while `SUPPORT_CHAT_ID` is 0,
+so the menu button stays a plain link and the bot does not start reading private
+messages for a disabled feature. Enabling needs a human: see
+[`OPEN-ITEMS.md`](OPEN-ITEMS.md#support-tickets).
 
-**Risk** one open ticket per user is held by a partial unique index, and the
-code has to be able to lose that race and pick up the other row.
+**How it behaves once the chat is set.** Photos, videos, documents, voice
+messages and video notes cross in both directions, relayed by `file_id` — no
+file content is read or stored. Text and attachment go as two separate Bot API
+calls, text first, so a refused file cannot take the message with it; both the
+customer's screen and the topic say so when a file does not arrive. Anything
+else — stickers, GIFs, audio, contacts, locations, polls — is matched by the
+handler's own filter purely so it can be refused out loud instead of reaching no
+handler at all.
+
+A ticket is claimed by the **first operator who replies**: `operator_telegram_id`
+and `operator_name` land on the ticket row, and the topic is renamed to
+`✅ Ticket #N | @user · Имя`. A second operator answering does not take it over —
+their message is still signed with their own name for the customer, and who
+wrote what inside the topic is Telegram's own display. The customer never sees a
+numeric account id; an operator with neither name nor `@username` signs as
+«Оператор».
+
+The topic header carries a second button into `ADMIN_BASE_URL` —
+`apps/users/admin.py` puts balance with the real/bonus split, subscriptions with
+device counts, and the last ten transactions on one page. `telegram_id` is
+read-only on an existing row and the transaction inline cannot rewrite or delete
+an existing entry: balance is the sum of every row.
+
+**Risks**
+
+- One open ticket per user is held by a partial unique index, and the code has
+  to be able to lose that race and pick up the other row. The operator claim
+  uses the same trick — the `isnull` condition lives in the `UPDATE`.
+- The support message filter is registered **before** the successful-payment
+  handler. Widening it further without excluding service messages would swallow
+  payment confirmations.
+- An empty `ADMIN_BASE_URL` must drop the admin button rather than emit a broken
+  URL: Bot API rejects an entire keyboard over one invalid link, which would
+  take «Закрыть обращение» with it.
+
+---
+
+## Django admin and its static files
+
+**Files** `apps/users/admin.py` (the customer page), `apps/vpn/admin.py`,
+`apps/payments/admin.py`, the `STORAGES`/`MIDDLEWARE` block in `bot/settings.py`,
+the `collectstatic` step in `Dockerfile`.
+
+**How it behaves today** `DEBUG=False`, so Django serves no static itself and
+nginx proxies `/static/` into the container rather than reading the files. The
+application therefore serves its own assets: WhiteNoise sits directly behind
+`SecurityMiddleware`, and `collectstatic` runs **at image build**, not only in
+`entrypoint.sh` where it is wrapped in `|| true` and can fail silently. Storage
+is `CompressedStaticFilesStorage`, deliberately not the manifest variant: a
+missing manifest entry turns every admin page into a 500 instead of a page
+without one icon.
+
+**Risk** client UUIDs and subscription URLs are bearer data and must not appear
+in any changelist. Admin lists are screenshotted and shared far more often than
+detail pages.
 
 ---
 

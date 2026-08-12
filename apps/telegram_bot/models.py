@@ -190,6 +190,9 @@ class SupportTicket(models.Model):
     # Заголовок хранится обрезанным: он нужен оператору для опознания обращения
     # в списке, а не как копия переписки.
     SUBJECT_MAX_LENGTH = 200
+    # Имя оператора попадает и в название темы, у которого предел 128 символов
+    # на всё вместе с номером обращения и упоминанием клиента.
+    OPERATOR_NAME_MAX_LENGTH = 64
 
     user = models.ForeignKey(TelegramUser, on_delete=models.CASCADE, related_name='support_tickets')
     # Снимок на момент обращения: пользователь может сменить @username, а тема в
@@ -198,6 +201,12 @@ class SupportTicket(models.Model):
     topic_id = models.BigIntegerField('Идентификатор темы', null=True, blank=True)
     status = models.CharField('Статус', max_length=16, choices=STATUS_CHOICES, default=STATUS_OPEN)
     subject = models.CharField('Тема обращения', max_length=SUBJECT_MAX_LENGTH, blank=True)
+    # Кто ведёт обращение. Заполняется один раз — первым ответившим оператором;
+    # `null` читается как «никто ещё не отвечал» и это же условие делает захват
+    # атомарным. Имя хранится снимком по той же причине, что и `@username`
+    # клиента: оператор может его сменить, а тема уже названа старым.
+    operator_telegram_id = models.BigIntegerField('Оператор', null=True, blank=True)
+    operator_name = models.CharField('Имя оператора', max_length=OPERATOR_NAME_MAX_LENGTH, blank=True)
     meta = models.JSONField('Служебные данные', default=dict, blank=True)
     created_at = models.DateTimeField('Создано', auto_now_add=True)
     closed_at = models.DateTimeField('Закрыто', null=True, blank=True)

@@ -105,6 +105,22 @@ def ticket_by_topic(topic_id: int) -> SupportTicket | None:
     )
 
 
+def claim_ticket(ticket_id: int, operator_id: int, operator_name: str) -> bool:
+    """Закрепить обращение за оператором, если оно ещё ничьё.
+
+    ``True`` — закрепление произошло именно сейчас, и об этом стоит сказать в
+    теме. Условие по ``operator_telegram_id__isnull`` живёт в самом ``UPDATE``,
+    а не в предварительной проверке: два оператора, ответившие одновременно,
+    обновляют строку по очереди, и второй получает ноль изменённых строк вместо
+    молчаливой перезаписи чужого захвата.
+    """
+    claimed = SupportTicket.objects.filter(pk=ticket_id, operator_telegram_id__isnull=True).update(
+        operator_telegram_id=operator_id,
+        operator_name=truncate(operator_name, SupportTicket.OPERATOR_NAME_MAX_LENGTH),
+    )
+    return bool(claimed)
+
+
 def close_ticket(ticket_id: int, closed_by: str) -> SupportTicket | None:
     """Закрыть тикет. ``None``, если его уже закрыли — второе нажатие не событие."""
     closed = SupportTicket.objects.filter(pk=ticket_id, status=SupportTicket.STATUS_OPEN).update(

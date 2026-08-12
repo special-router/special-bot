@@ -6,7 +6,10 @@ from .models import UserVPN
 
 @admin.register(UserVPN)
 class UserVPNAdmin(admin.ModelAdmin):
-    list_display = ['user_info', 'server_name', 'enabled_status', 'vpn_uuid_short', 'created_at']
+    # UUID клиента в списке не показывается: список открывается чаще карточки и
+    # переживает и скриншоты, и демонстрацию экрана. Искать по нему по-прежнему
+    # можно — `search_fields` принимает его целиком.
+    list_display = ['user_info', 'server_name', 'enabled_status', 'created_at']
     list_filter = ['enabled', 'server', 'created_at']
     search_fields = ['user__username', 'user__telegram_id', 'server__name', 'vpn_uuid']
     readonly_fields = ['vpn_uuid', 'created_at', 'updated_at']
@@ -38,12 +41,6 @@ class UserVPNAdmin(admin.ModelAdmin):
             return format_html('<span style="color: red; font-weight: bold;">✗ Отключено</span>')
 
     enabled_status.short_description = 'Статус'
-
-    def vpn_uuid_short(self, obj):
-        """Короткий UUID"""
-        return str(obj.vpn_uuid)[:8] + '...'
-
-    vpn_uuid_short.short_description = 'UUID'
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('user', 'server')
