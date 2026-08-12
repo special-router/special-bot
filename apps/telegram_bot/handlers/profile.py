@@ -4,7 +4,7 @@ from telegram.ext import ContextTypes
 
 from apps.telegram_bot.inline_buttons.profile import get_reply_markup_profile
 from apps.telegram_bot.ui import code, render_screen, screen
-from apps.telegram_bot.utils import get_user
+from apps.telegram_bot.utils import balance_state_lines, get_user
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 
@@ -23,7 +23,7 @@ async def build_profile_screen(user: TelegramUser) -> tuple[str, InlineKeyboardM
     text = screen(
         'Профиль',
         state=[
-            f'Баланс: {user_with_balance.balance} руб.',
+            *await balance_state_lines(user_with_balance),
             f'Активных подписок: {active_keys} из {settings.MAX_KEYS}',
             f'ID: {code(user.telegram_id)}',
         ],

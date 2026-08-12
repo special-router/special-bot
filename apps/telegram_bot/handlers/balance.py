@@ -8,7 +8,7 @@ from apps.analytics.funnel import balance_screen_shown
 from apps.servers.models import TariffServer
 from apps.telegram_bot.inline_buttons.balance import get_reply_markup_balance
 from apps.telegram_bot.ui import render_screen, screen
-from apps.telegram_bot.utils import get_user, payments_enabled
+from apps.telegram_bot.utils import balance_state_lines, get_user, payments_enabled
 from apps.users.models import TelegramUser
 
 
@@ -27,7 +27,7 @@ async def build_balance_screen(user: TelegramUser, *, notice: str | None = None)
     в два шаблона и расходилось бы с тарифом при первой же его правке."""
     tariff: TariffServer | None = await TariffServer.objects.afirst()
 
-    state = [f'Баланс: {user.balance} руб.']
+    state = await balance_state_lines(user)
     if tariff is not None:
         state.append(f'Подписка: {tariff.price} руб. в сутки')
 

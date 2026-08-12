@@ -244,6 +244,11 @@ REFERRAL_PERCENT = env.int('REFERRAL_PERCENT', 30)
 # ``backfill_money_events`` по тем же ключам идемпотентности.
 ANALYTICS_EVENTS_ENABLED = env.bool('ANALYTICS_EVENTS_ENABLED', True)
 
+# Показывать ли пользователю, какая часть баланса подарена. Итоговое число от
+# флага не зависит — выключение убирает только строку расшифровки и лишний
+# проход по журналу транзакций на отрисовке экрана.
+BALANCE_SPLIT_UI_ENABLED = env.bool('BALANCE_SPLIT_UI_ENABLED', True)
+
 # Максимальное количество ключей для одного юзера
 MAX_KEYS = env.int('MAX_KEYS', 3)
 

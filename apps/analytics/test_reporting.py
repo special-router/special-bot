@@ -197,8 +197,26 @@ class MoneyReportTests(TestCase):
         self.assertEqual(cohorts['2026-07']['revenue_per_user'], Decimal('10.50'))
         self.assertEqual(cohorts['2026-07']['subscription_days_per_user'], 1.0)
 
+    def test_balance_split_reconciles_the_standing_balances_with_the_ledger(self):
+        """Остаток на конец периода, разложенный на деньги и подарки.
+
+        u1: 420 деньгами и 62 подарком, u2: 210 и 35, u3: 0 и 523 — сумма 1250,
+        ровно столько же даёт ``annotate_balance`` по всем троим.
+        """
+        split = self.report['balance_split']
+
+        self.assertEqual(split['accounts'], 3)
+        self.assertEqual(split['real_total'], Decimal('630.00'))
+        self.assertEqual(split['bonus_total'], Decimal('620.00'))
+        self.assertEqual(split['ledger_total'], Decimal('1250.00'))
+        self.assertEqual(split['mismatched_accounts'], 0)
+        self.assertEqual(split['accounts_overdrawn'], 0)
+        self.assertEqual(split['unclassified_total'], Decimal('0.00'))
+
     def test_text_output_carries_the_numbers_an_operator_reads(self):
         text = format_report(self.report)
+        self.assertIn('real_total=630.00 bonus_total=620.00', text)
+        self.assertIn('mismatched_accounts=0', text)
         self.assertIn('money_report period=2026-07-01..2026-07-31', text)
         self.assertIn('received_total=630.00', text)
         self.assertIn('daily_charge=35.00 subscription_days=5', text)

@@ -14,6 +14,7 @@ from decimal import Decimal
 
 from django.db.models import Count, Min, Q, Sum
 
+from apps.analytics.balance_split import aggregate_split
 from apps.analytics.choices import EconomicClassChoices, FunnelStepChoices, MoneyEventKindChoices
 from apps.analytics.models import FunnelEvent, MoneyEvent
 from apps.payments.choices import TransactionStatusChoices
@@ -100,6 +101,9 @@ def build_report(start: datetime.date, end: datetime.date, *, cohorts: int = 12)
         'churn': _churn_section(start, end),
         'funnel': _funnel_section(start, end),
         'cohorts': _cohort_section(lifetime_by_user, end, cohorts),
+        # Остаток, а не поток: единственный раздел, который считается не по
+        # журналу событий, а по самим транзакциям — как и баланс.
+        'balance_split': aggregate_split(as_of=end),
     }
 
 
@@ -392,7 +396,23 @@ def format_report(data: dict) -> str:
         lines.append('  # за период не записан ни один шаг: либо не было нажатий, либо выключен журнал')
     for step, count in data['funnel'].items():
         lines.append(f'  {step.lower()}={count}')
-    lines += ['', 'COHORTS (signup month, lifetime to period end)']
+    split = data['balance_split']
+    lines += [
+        '',
+        'BALANCE SPLIT (остаток на конец периода)',
+        f"  accounts={split['accounts']} ledger_total={split['ledger_total']}",
+        f"  real_total={split['real_total']} bonus_total={split['bonus_total']}"
+        '  # бонус тратится первым; ручные начисления целиком в бонусе',
+        f"  accounts_with_bonus={split['accounts_with_bonus']}",
+        f"  accounts_overdrawn={split['accounts_overdrawn']} overdraft_total={split['overdraft_total']}"
+        '  # минус целиком на реальном счёте',
+        f"  unclassified_total={split['unclassified_total']}"
+        '  # источник вне таксономии, засчитан реальными деньгами',
+        f"  mismatched_accounts={split['mismatched_accounts']}"
+        '  # сколько аккаунтов, где сумма счетов разошлась с балансом; должен быть 0',
+        '',
+        'COHORTS (signup month, lifetime to period end)',
+    ]
     if not data['cohorts']:
         lines.append('  none')
     for cohort in data['cohorts']:

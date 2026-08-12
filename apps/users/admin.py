@@ -3,6 +3,7 @@ import asyncio
 from django.contrib import admin, messages
 from django.utils.html import format_html
 
+from apps.analytics.balance_split import split_balance
 from apps.servers.models import Server
 from apps.vpn.models import UserVPN
 from apps.vpn.services.add_vpn_to_user import add_vpn_to_user
@@ -15,10 +16,11 @@ class TelegramUserAdmin(admin.ModelAdmin):
     list_display = ['telegram_id', 'username', 'is_active_promo', 'vpn_count', 'created_at']
     list_filter = ['is_active_promo', 'created_at']
     search_fields = ['telegram_id', 'username']
-    readonly_fields = ['created_at', 'updated_at', 'vpn_connections']
+    readonly_fields = ['created_at', 'updated_at', 'vpn_connections', 'balance_split']
 
     fieldsets = (
         ('Основная информация', {'fields': ('telegram_id', 'username')}),
+        ('Баланс', {'fields': ('balance_split',)}),
         ('Реферальная система', {'fields': ('referral_user', 'is_active_promo')}),
         ('VPN подключения', {'fields': ('vpn_connections',), 'classes': ('collapse',)}),
         ('Системная информация', {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
@@ -34,6 +36,24 @@ class TelegramUserAdmin(admin.ModelAdmin):
         return format_html('<span style="color: gray;">{}</span>', count)
 
     vpn_count.short_description = 'VPN подключений'
+
+    def balance_split(self, obj):
+        """Итог, реальные деньги и подаренный баланс одного аккаунта.
+
+        Итог — то же число, что показывает бот и по которому идёт списание;
+        слагаемые считаются по журналу таксономией, отдельного хранилища у них
+        нет. Начисления руками попадают в бонус целиком: заплатил ли человек
+        мимо провайдера, история не хранит.
+        """
+        split = split_balance(obj.id)
+        return format_html(
+            'Итого: <b>{}</b> руб.<br>Реальные деньги: {} руб.<br>Бонусные: {} руб.',
+            split.total,
+            split.real,
+            split.bonus,
+        )
+
+    balance_split.short_description = 'Баланс: всего / деньги / бонусы'
 
     def vpn_connections(self, obj):
         """Отображение VPN подключений пользователя"""

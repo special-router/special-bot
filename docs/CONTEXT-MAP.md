@@ -75,13 +75,16 @@ env DJANGO_SETTINGS_MODULE=bot.settings DATABASE_URL='sqlite:///:memory:' \
 
 - `apps/analytics/taxonomy.py` — the only place that says what a `source` means
   economically, and the top-up bonus ladder inversion.
+- `apps/analytics/balance_split.py` — real vs bonus pots derived from the same
+  ledger, bonus consumed first. No new columns; `real + bonus` is always
+  `annotate_balance()`.
 - `apps/analytics/models.py` — `MoneyEvent`, `FunnelEvent`; `event_key` is unique.
 - `apps/analytics/recording.py`, `signals.py` — the write path.
 - `apps/analytics/backfill.py`, `reporting.py`, `management/commands/`.
 - `apps/analytics/funnel.py` — one function per funnel step, and the list of
   call sites that now use them.
 - Tests: `apps/analytics/test_taxonomy.py`, `test_recording.py`, `test_backfill.py`,
-  `test_reporting.py`, `test_funnel_wiring.py`.
+  `test_reporting.py`, `test_funnel_wiring.py`, `test_balance_split.py`.
 
 **How it behaves today**
 
@@ -100,7 +103,13 @@ are **synchronous and hit the database**, so every call site wraps them in
 `INVOICE_SENT` and everything after it stay at zero while `YOUMONEY_TOKEN` is
 empty — that is the measurement, not a gap in the wiring.
 
-**Flags** `ANALYTICS_EVENTS_ENABLED`.
+The balance split is additive in the same sense: it recomputes both pots from
+`Transaction` on every call and never writes. Bonus is consumed before real
+money, an account with no grants is unchanged, and `real + bonus` equals
+`annotate_balance()` by construction — `money_report` prints
+`mismatched_accounts` so a divergence is loud rather than theoretical.
+
+**Flags** `ANALYTICS_EVENTS_ENABLED`, `BALANCE_SPLIT_UI_ENABLED`.
 
 **Validation**
 
