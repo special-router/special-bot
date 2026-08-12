@@ -1,8 +1,21 @@
 import contextlib
 
+from django.conf import settings
 from telegram import Update
 
 from apps.users.models import TelegramUser
+
+
+def payments_enabled() -> bool:
+    """Есть ли платёжный провайдер, к которому можно отправить счёт.
+
+    Живёт здесь, а не рядом с пополнением: экран оплаты и его клавиатура оба
+    спрашивают об этом, а импорт друг друга замкнул бы их в цикл.
+
+    На пустом токене Bot API отвечает `Payment_provider_invalid`, то есть
+    кнопка суммы обещает то, чего бот сделать не может.
+    """
+    return bool(getattr(settings, 'YOUMONEY_TOKEN', ''))
 
 
 async def get_referral_user(update: Update) -> TelegramUser | None:

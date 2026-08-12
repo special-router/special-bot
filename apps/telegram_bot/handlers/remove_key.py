@@ -3,7 +3,7 @@ from telegram.ext import ContextTypes
 
 from apps.telegram_bot.handlers.show_keys import build_keys_screen
 from apps.telegram_bot.inline_buttons.remove_keys import get_reply_markup_remove_keys
-from apps.telegram_bot.ui import render_screen, screen
+from apps.telegram_bot.ui import answer_query, render_screen, screen
 from apps.telegram_bot.utils import get_user
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
@@ -42,9 +42,12 @@ async def remove_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
     if not user_vpn:
+        # Экран удаления мог устареть — подписки уже нет. Молчание здесь
+        # неотличимо от отказа удалять.
+        await answer_query(update, 'Подписка не найдена.')
         return
 
     await remove_vpn_user_from_server(user_vpn)
 
     text, keyboard = await build_keys_screen(user, notice='Подписка удалена.')
-    await render_screen(update, context, text, keyboard)
+    await render_screen(update, context, text, keyboard, toast='Подписка удалена.')

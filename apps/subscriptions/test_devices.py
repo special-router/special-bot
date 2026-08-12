@@ -440,7 +440,10 @@ class DeviceResetHandlerTests(IsolatedAsyncioTestCase):
         message = build_screen.await_args.kwargs['notice']
         self.assertIn('не так часто', message)
         self.assertIn('7 ч. 20 мин.', message)
-        self.assertIn('Привязать устройство', message)
+        # Раньше отказ отправлял к кнопке «Привязать устройство»; её больше нет,
+        # и совет обязан говорить о том, что происходит без неё.
+        self.assertNotIn('Привязать устройство', message)
+        self.assertIn('привязанные устройства', message)
 
 
 class BindDeviceHandlerTests(IsolatedAsyncioTestCase):

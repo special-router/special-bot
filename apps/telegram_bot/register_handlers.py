@@ -2,6 +2,7 @@ from django.conf import settings
 from telegram.ext import CallbackQueryHandler, CommandHandler, filters, MessageHandler, PreCheckoutQueryHandler
 
 from apps.telegram_bot.bot_app import telegram_bot_app
+from apps.telegram_bot.error_handler import on_error
 from apps.telegram_bot.handlers.add_key import add_key
 from apps.telegram_bot.handlers.balance import show_balance
 from apps.telegram_bot.handlers.bind_device import bind_device
@@ -33,6 +34,10 @@ from apps.telegram_bot.handlers.top_up_balance import (
 
 
 def register_handlers():
+    # Первым: без него любое исключение в любом обработчике ниже остаётся
+    # только в логе, а пользователь видит бесконечные «часики» на кнопке.
+    telegram_bot_app.add_error_handler(on_error)
+
     # commands
     telegram_bot_app.add_handler(CommandHandler('start', start))
     telegram_bot_app.add_handler(CommandHandler('balance', show_balance))
@@ -55,6 +60,8 @@ def register_handlers():
     telegram_bot_app.add_handler(CallbackQueryHandler(show_keys, pattern=r'^show_keys$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(add_key, pattern=r'^add_key:\d+$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(show_keys_for_remove, pattern=r'^show_keys_for_remove'))
+    # Кнопки привязки в клавиатуре больше нет, но она осталась в сообщениях,
+    # разосланных раньше: без обработчика такое нажатие уходит в никуда.
     telegram_bot_app.add_handler(CallbackQueryHandler(bind_device, pattern=r'^bind_device$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(reset_devices, pattern=r'^reset_devices$'))
     if settings.SUBSCRIPTION_DELIVERY_ENABLED:

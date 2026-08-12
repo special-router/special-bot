@@ -14,6 +14,11 @@ async def bind_device(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     The subscription link is a bearer URL, so the request to add a device has to
     arrive here, where Telegram vouches for who is asking.
+
+    No keyboard offers this any more — binding happens by itself when a client
+    fetches the subscription.  The handler stays because screens already sent to
+    users still carry the `bind_device` callback, and an unhandled press is a
+    button that spins forever.
     """
     user: TelegramUser = await get_user(update)
 

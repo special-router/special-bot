@@ -8,7 +8,7 @@ from apps.payments.models import Transaction
 from apps.servers.models import Server, TariffServer
 from apps.telegram_bot.handlers.balance import build_balance_screen
 from apps.telegram_bot.handlers.show_keys import build_keys_screen
-from apps.telegram_bot.ui import render_screen
+from apps.telegram_bot.ui import answer_query, render_screen
 from apps.telegram_bot.utils import get_user
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
@@ -26,6 +26,9 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     redis_key = f'{random_key}.{user.id}'
 
     if redis_client.get(redis_key):
+        # Второе нажатие за 15 секунд списание не повторяет, но и молчать
+        # нельзя: без ответа оно выглядит ровно как несработавшее первое.
+        await answer_query(update, 'Подписка уже добавляется.')
         return
 
     redis_client.set(redis_key, 1, 15)
@@ -39,8 +42,9 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     active_keys = await UserVPN.objects.filter_by_user(user_id=user.id).filter_by_enabled(True).acount()
     if active_keys >= settings.MAX_KEYS:
-        await update.callback_query.answer(
-            text=f"Зарегистрировано максимальное количество подписок на аккаунт ({settings.MAX_KEYS}).",
+        await answer_query(
+            update,
+            f"Зарегистрировано максимальное количество подписок на аккаунт ({settings.MAX_KEYS}).",
         )
         return
 
@@ -58,4 +62,4 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Баланс аннотирован до списания, поэтому пользователь перечитывается —
     # иначе экран показал бы сумму, которой уже нет.
     text, keyboard = await build_keys_screen(await get_user(update), notice='Подписка добавлена.')
-    await render_screen(update, context, text, keyboard)
+    await render_screen(update, context, text, keyboard, toast='Подписка добавлена.')
