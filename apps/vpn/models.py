@@ -43,6 +43,14 @@ class UserVPN(models.Model):
         default=True,
     )
 
+    # Support raises this for a single customer without a deploy; empty means
+    # the SUBSCRIPTION_DEVICE_LIMIT default applies.
+    device_limit = models.PositiveSmallIntegerField(
+        'Лимит устройств',
+        null=True,
+        blank=True,
+    )
+
     created_at = models.DateTimeField(
         'Время создания записи',
         auto_now_add=True,

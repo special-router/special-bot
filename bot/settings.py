@@ -242,6 +242,16 @@ MAX_KEYS = env.int('MAX_KEYS', 3)
 # Количество IP для одного клиента
 LIMIT_IP = env.int('LIMIT_IP', 2)
 
+# Per-subscription device binding. The panel's own limit_ip cannot be enforced
+# here (xray sees only the SNI stream proxy and keeps no access log), so the
+# subscription endpoint counts distinct client ``x-hwid`` values instead.
+SUBSCRIPTION_DEVICE_LIMIT = env.int('SUBSCRIPTION_DEVICE_LIMIT', 2)
+# Clients that send no usable identifier are served until the fleet has caught
+# up; enabling strict mode refuses them like an unknown device.
+SUBSCRIPTION_HWID_STRICT = env.bool('SUBSCRIPTION_HWID_STRICT', False)
+# Self-serve device reset, so buying a new phone does not need support.
+SUBSCRIPTION_DEVICE_RESET_COOLDOWN_HOURS = env.int('SUBSCRIPTION_DEVICE_RESET_COOLDOWN_HOURS', 24)
+
 BOT_LINK = env.str('BOT_LINK', 'https://t.me/SpecialVPNbot')
 
 # Built-in 3x-ui subscriptions are staged only. Legacy VLESS issuance remains
