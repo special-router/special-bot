@@ -77,6 +77,66 @@ its cash basis is `UNKNOWN`, and the report prints it on a line of its own next
 to real cash. **It is not added to cash in.** With 191k in this bucket, guessing
 either way would be the single largest error the model could make.
 
+## Реальные деньги и бонусы
+
+`apps/analytics/balance_split.py` answers the one question the ledger could not:
+of the balance standing on an account right now, how much did the customer pay
+for and how much was given away. It is a **derived view, not a second store** —
+both pots are recomputed from `Transaction` on every call, so they cannot drift
+from the balance. There is no migration and no new money column.
+
+`split_balance(user_id, as_of=None)` returns `BalanceSplit(real, bonus,
+unclassified)`; `split_balances`, `attach_balance_split` and `aggregate_split`
+are the bulk forms. `as_of` accepts a datetime or a date (meaning end of that
+day). A true SQL annotation is impossible here: allocation is sequential and the
+meaning of a row comes from the taxonomy in Python. Reimplementing that in a
+window function would recreate exactly the second source of truth this avoids.
+
+**The invariant.** `real + bonus == annotate_balance()` for every account at
+every moment. It holds by construction — each ledger row moves the pair by
+exactly its own amount — and is asserted per account in
+`apps/analytics/test_balance_split.py`, plus reported live as
+`mismatched_accounts` in `money_report`. Billing, entitlement and the `expire`
+header keep reading the single balance and are untouched.
+
+**The allocation rule, stated once.** A charge consumes **bonus first**, real
+money only after the bonus is exhausted. A gift that outlives the money paid for
+it would be a bonus the customer never reaches, so the screen would promise
+something that never gets spent. Consequences:
+
+- An account that was never granted anything has `bonus == 0` forever and
+  `real == balance` — byte-identical behaviour to before this existed.
+- Grants are held as one fungible number, not as dated lots. With no expiry on a
+  grant, "oldest grant first" and any other order inside the bonus produce the
+  same two numbers. Add expiry and lots belong here.
+- A negative balance sits entirely on the real pot, and bonus is never negative.
+  The sum invariant is non-negotiable, so for the 37 overdrawn accounts the
+  deficit has to land somewhere; treating a debt as real money owed is the only
+  reading that keeps «бонус» a spendable number.
+- An inflow into an overdrawn account clears the debt before it shows up as
+  bonus. Otherwise the screen would offer bonus to an account whose total is
+  below zero.
+- A reversal (a positive row where the source normally goes negative) returns to
+  the bonus pot up to what earlier charges took from it, then to real — the
+  mirror image of the consumption rule.
+- A source the taxonomy does not know credits the **real** pot and is counted in
+  `unclassified`. Calling an unknown inflow a gift would tell a paying customer
+  their money was a present; the reverse error is invisible to them.
+
+**A ladder top-up lands in both pots**, split by `taxonomy.split_topup` — the
+same function `money_report` uses, so `real_total` in the split section and
+`received_total` in the cash section are the same money by construction.
+
+**What is still not knowable.** `MANUAL` positive — 191 386 ₽ — goes to bonus in
+full, because nothing records whether cash changed hands off-platform. Some of
+that pot is very probably real money, and no query can say whose. The split makes
+the ambiguity a visible number instead of an assumption; it does not resolve it.
+
+In the bot, the combined total is unchanged on every screen. The breakdown line
+appears under the total on the balance and profile screens, and only when the
+bonus is above zero; `BALANCE_SPLIT_UI_ENABLED=false` removes it. Django admin
+shows all three numbers for one account.
+
 ## Event log
 
 Two append-only tables in `apps/analytics/models.py`:
@@ -147,8 +207,14 @@ python manage.py money_report --since 2026-07-01 --until 2026-07-31 [--cohorts 1
 
 Sections: cash in, recognised revenue and how it was funded, credit granted by
 promotion, payouts, adjustments, customers and ARPU, promo conversion, referral
-programme margin, churn, funnel, and signup cohorts. `--json` prints the same
-data machine-readably.
+programme margin, churn, funnel, the standing balance split, and signup cohorts.
+`--json` prints the same data machine-readably.
+
+`BALANCE SPLIT` is the only section that is a *stock* rather than a flow: it is
+the balance standing at the period end, split into money and gifts by the rule
+above, and it is computed from `Transaction` rather than from the event log.
+`mismatched_accounts` must read `0` — anything else means the split and the
+balance have parted company on live data.
 
 Two lines are estimates and are labelled as such in the output:
 

@@ -8,6 +8,7 @@
 
 import re
 from contextlib import ExitStack
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
@@ -15,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 from django.test import override_settings
 from telegram.error import BadRequest
 
+from apps.analytics.balance_split import BalanceSplit
 from apps.telegram_bot import icons
 from apps.telegram_bot.handlers.balance import build_balance_screen
 from apps.telegram_bot.handlers.faq import build_faq_screen
@@ -76,6 +78,9 @@ class ScreenGuaranteesTests(IsolatedAsyncioTestCase):
             balance=100,
             created_at=SimpleNamespace(strftime=lambda _fmt: '01.01.2026'),
         )
+        # Разложение баланса ходит в журнал транзакций; здесь оно задаётся, а не
+        # считается — проверяется, что экран из него делает, а не арифметика.
+        self.split = BalanceSplit(real=Decimal('100.00'), bonus=Decimal('0.00'))
         self.connection = SimpleNamespace(
             id=7,
             server=SimpleNamespace(name='SPECIAL'),
@@ -99,6 +104,8 @@ class ScreenGuaranteesTests(IsolatedAsyncioTestCase):
             # Кнопки сумм есть только при настроенном провайдере; их отсутствие
             # без него — предмет отдельного теста в test_feedback.py.
             stack.enter_context(override_settings(YOUMONEY_TOKEN='390540012:TEST:token'))
+
+            patched('apps.telegram_bot.utils.split_balance', return_value=self.split)
 
             for module in ('main_menu', 'profile'):
                 objects = patched(f'apps.telegram_bot.handlers.{module}.UserVPN').objects
@@ -232,6 +239,45 @@ class ScreenGuaranteesTests(IsolatedAsyncioTestCase):
 
         self.assertIn('Подписка добавлена.', text)
         self.assertTrue(keyboard.inline_keyboard)
+
+    @override_settings(TELEGRAM_BUTTON_ICONS_ENABLED=False)
+    async def test_every_screen_still_shows_one_combined_balance(self):
+        """Владелец просил разделить учёт, а не число: итог на экранах прежний."""
+        self.split = BalanceSplit(real=Decimal('30.00'), bonus=Decimal('70.00'))
+        screens = await self.build_every_screen()
+
+        for name in ('profile', 'balance', 'keys'):
+            with self.subTest(screen=name):
+                self.assertIn('Баланс: 100 руб.', screens[name][0])
+                self.assertNotIn('Баланс: 30', screens[name][0])
+
+    @override_settings(TELEGRAM_BUTTON_ICONS_ENABLED=False)
+    async def test_the_bonus_line_appears_only_where_it_answers_something(self):
+        self.split = BalanceSplit(real=Decimal('30.00'), bonus=Decimal('70.00'))
+        screens = await self.build_every_screen()
+
+        self.assertIn('В том числе бонусных: 70.00 руб.', screens['profile'][0])
+        self.assertIn('В том числе бонусных: 70.00 руб.', screens['balance'][0])
+        # Экран подписок — про ссылки и действия над ними; денежная расшифровка
+        # там не помогает ни одному решению пользователя.
+        self.assertNotIn('бонусных', screens['keys'][0])
+
+    @override_settings(TELEGRAM_BUTTON_ICONS_ENABLED=False)
+    async def test_an_account_without_bonus_sees_no_extra_line(self):
+        """Пустая строка «бонусов 0» — шум для того, кому ничего не дарили."""
+        screens = await self.build_every_screen()
+
+        for name in ('profile', 'balance'):
+            with self.subTest(screen=name):
+                self.assertNotIn('бонусных', screens[name][0])
+
+    @override_settings(TELEGRAM_BUTTON_ICONS_ENABLED=False, BALANCE_SPLIT_UI_ENABLED=False)
+    async def test_the_flag_removes_the_breakdown_and_leaves_the_total(self):
+        self.split = BalanceSplit(real=Decimal('30.00'), bonus=Decimal('70.00'))
+        screens = await self.build_every_screen()
+
+        self.assertIn('Баланс: 100 руб.', screens['profile'][0])
+        self.assertNotIn('бонусных', screens['profile'][0])
 
     @override_settings(TELEGRAM_BUTTON_ICONS_ENABLED=False)
     async def test_no_screen_offers_binding_as_a_user_chore(self):
