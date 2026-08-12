@@ -109,4 +109,6 @@ vine==5.1.0
     #   kombu
 wcwidth==0.2.13
     # via prompt-toolkit
+whitenoise==6.11.0
+    # via vpnbot (pyproject.toml)
 gunicorn==23.0.0

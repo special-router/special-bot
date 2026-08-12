@@ -1,14 +1,55 @@
+"""Карточка клиента — то, что оператор поддержки открывает из темы обращения.
+
+Страница собрана под один вопрос: «что происходит у этого человека и что можно
+поправить прямо сейчас». Поэтому баланс, подписки с числом привязанных
+устройств и последние движения по счёту лежат на ней, а не в трёх соседних
+разделах. Ключей доступа здесь нет: ни UUID клиента, ни ссылки на подписку —
+они предъявительские, и админка не то место, где их показывают мимоходом.
+
+Правится только то, где ошибка стоит дёшево и обратима. `enabled` у подписки не
+правится: строка в базе и клиент в 3x-ui расходятся молча, а обратно их сводит
+только суточная задача.
+"""
+
 import asyncio
 
 from django.contrib import admin, messages
-from django.utils.html import format_html
+from django.utils.html import format_html, format_html_join
 
 from apps.analytics.balance_split import split_balance
+from apps.payments.models import Transaction
 from apps.servers.models import Server
+from apps.subscriptions.devices import device_limit_for
 from apps.vpn.models import UserVPN
 from apps.vpn.services.add_vpn_to_user import add_vpn_to_user
 
 from .models import TelegramUser
+
+
+# Хватает, чтобы увидеть последнее пополнение и несколько суточных списаний.
+RECENT_TRANSACTIONS = 10
+
+
+class TransactionInline(admin.TabularInline):
+    """Журнал операций: дописывать можно, переписывать — нет.
+
+    Баланс считается суммой всех строк, поэтому правка старой суммы меняет и
+    сегодняшний баланс, и всю историю, которая на него ссылается. Начисление
+    оформляется новой строкой — так же, как это делает бот.
+    """
+
+    model = Transaction
+    fk_name = 'user'
+    extra = 0
+    can_delete = False
+    ordering = ['-created_at']
+    fields = ['created_at', 'amount', 'status', 'source', 'from_referral_user']
+    readonly_fields = ['created_at']
+    verbose_name = 'Операция'
+    verbose_name_plural = 'Операции по счёту'
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).order_by('-created_at')
 
 
 @admin.register(TelegramUser)
@@ -16,17 +57,35 @@ class TelegramUserAdmin(admin.ModelAdmin):
     list_display = ['telegram_id', 'username', 'is_active_promo', 'vpn_count', 'created_at']
     list_filter = ['is_active_promo', 'created_at']
     search_fields = ['telegram_id', 'username']
-    readonly_fields = ['created_at', 'updated_at', 'vpn_connections', 'balance_split']
+    readonly_fields = [
+        'created_at',
+        'updated_at',
+        'subscriptions_overview',
+        'balance_split',
+        'recent_transactions',
+    ]
+    inlines = [TransactionInline]
 
     fieldsets = (
         ('Основная информация', {'fields': ('telegram_id', 'username')}),
-        ('Баланс', {'fields': ('balance_split',)}),
+        ('Баланс', {'fields': ('balance_split', 'recent_transactions')}),
         ('Реферальная система', {'fields': ('referral_user', 'is_active_promo')}),
-        ('VPN подключения', {'fields': ('vpn_connections',), 'classes': ('collapse',)}),
+        ('Подписки и устройства', {'fields': ('subscriptions_overview',)}),
         ('Системная информация', {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
     )
 
     actions = ['add_vpn_to_selected_users']
+
+    def get_readonly_fields(self, request, obj=None):
+        """`telegram_id` правится только при заведении строки.
+
+        Он связывает аккаунт с чатом в Telegram: правка существующего адресует
+        баланс и подписки другому человеку, и заметно это станет не сразу.
+        """
+        readonly = list(super().get_readonly_fields(request, obj))
+        if obj is not None:
+            readonly.append('telegram_id')
+        return readonly
 
     def vpn_count(self, obj):
         """Количество VPN подключений пользователя"""
@@ -55,28 +114,66 @@ class TelegramUserAdmin(admin.ModelAdmin):
 
     balance_split.short_description = 'Баланс: всего / деньги / бонусы'
 
-    def vpn_connections(self, obj):
-        """Отображение VPN подключений пользователя"""
-        vpns = obj.vpn.select_related('server').all()
-        if not vpns:
-            return 'Нет VPN подключений'
+    def subscriptions_overview(self, obj):
+        """Подписки клиента: тариф, состояние и сколько устройств привязано.
 
-        html = '<ul>'
-        for vpn in vpns:
-            status_color = 'green' if vpn.enabled else 'red'
-            status_text = 'Активно' if vpn.enabled else 'Отключено'
-            html += f'''
-                <li>
-                    <strong>{vpn.server.name}</strong>
-                    <span style="color: {status_color};">({status_text})</span>
-                    <br>
-                    <small>UUID: {vpn.vpn_uuid}</small>
-                </li>
-            '''
-        html += '</ul>'
-        return format_html(html)
+        Число устройств — первое, что спрашивает поддержка на «не подключается с
+        нового телефона», и оно же объясняет отказ подписки без единого лога.
+        Идентификаторов клиента здесь нет: они предъявительские.
+        """
+        subscriptions = obj.vpn.select_related('server', 'server__tariff').prefetch_related('devices')
+        if not subscriptions:
+            return 'Нет подписок'
 
-    vpn_connections.short_description = 'VPN подключения'
+        rows = [
+            (
+                subscription.server.name,
+                subscription.server.tariff.name,
+                subscription.server.tariff.price,
+                'Активна' if subscription.enabled else 'Отключена',
+                'green' if subscription.enabled else 'red',
+                len(subscription.devices.all()),
+                device_limit_for(subscription),
+            )
+            for subscription in subscriptions
+        ]
+
+        return format_html(
+            '<ul>{}</ul>',
+            format_html_join(
+                '',
+                '<li><strong>{0}</strong> — тариф {1}, {2} руб./сут.<br>'
+                '<span style="color: {4};">{3}</span>, устройств: {5} из {6}</li>',
+                rows,
+            ),
+        )
+
+    subscriptions_overview.short_description = 'Подписки и устройства'
+
+    def recent_transactions(self, obj):
+        """Последние движения по счёту — чем именно сложился текущий баланс."""
+        transactions = obj.transactions.order_by('-created_at')[:RECENT_TRANSACTIONS]
+        if not transactions:
+            return 'Операций нет'
+
+        return format_html(
+            '<ul>{}</ul>',
+            format_html_join(
+                '',
+                '<li>{} — <strong>{}</strong> руб., {}, {}</li>',
+                (
+                    (
+                        transaction.created_at.strftime('%d.%m.%Y %H:%M'),
+                        transaction.amount,
+                        transaction.get_source_display(),
+                        transaction.get_status_display(),
+                    )
+                    for transaction in transactions
+                ),
+            ),
+        )
+
+    recent_transactions.short_description = f'Последние операции (до {RECENT_TRANSACTIONS})'
 
     def add_vpn_to_selected_users(self, request, queryset):
         """Действие для добавления VPN выбранным пользователям"""

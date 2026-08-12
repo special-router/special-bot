@@ -16,6 +16,7 @@ from apps.telegram_bot.handlers.show_keys import show_keys
 from apps.telegram_bot.handlers.start import start
 from apps.telegram_bot.handlers.subscription import show_subscription
 from apps.telegram_bot.handlers.support import (
+    SUPPORT_MESSAGE_FILTER,
     support_close,
     support_message,
     support_open,
@@ -76,15 +77,16 @@ def register_handlers():
     if settings.SUPPORT_CHAT_ID:
         telegram_bot_app.add_handler(CallbackQueryHandler(support_open, pattern=r'^support_open$'))
         telegram_bot_app.add_handler(CallbackQueryHandler(support_close, pattern=r'^support_close:\d+$'))
+        # Фильтр перечисляет и то, что пересылается, и то, что отклоняется:
+        # необработанное вложение иначе не дошло бы ни до какого обработчика, и
+        # отправитель не узнал бы, что его сообщение никуда не ушло.
         telegram_bot_app.add_handler(
             MessageHandler(
-                filters.Chat(settings.SUPPORT_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
+                filters.Chat(settings.SUPPORT_CHAT_ID) & SUPPORT_MESSAGE_FILTER,
                 support_operator_reply,
             )
         )
-        telegram_bot_app.add_handler(
-            MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, support_message)
-        )
+        telegram_bot_app.add_handler(MessageHandler(filters.ChatType.PRIVATE & SUPPORT_MESSAGE_FILTER, support_message))
 
     telegram_bot_app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))
     telegram_bot_app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))

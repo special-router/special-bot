@@ -46,6 +46,12 @@ COPY . .
 RUN chmod +x /app/entrypoint.sh /usr/local/bin/xray \
     && /usr/local/bin/xray version
 
+# Статика собирается в образ, а не при старте. entrypoint делает то же самое, но
+# через `|| true`: там сбой сборки молча оставляет админку без единого стиля.
+# Здесь он ломает сборку. Ни базы, ни `.environment` команде не нужно — все
+# настройки, которые она читает, имеют значения по умолчанию.
+RUN python manage.py collectstatic --noinput
+
 # Overridden per service in docker-compose.deploy.yml
 CMD ["python", "manage.py", "help"]
 
