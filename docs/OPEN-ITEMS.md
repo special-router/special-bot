@@ -292,10 +292,15 @@ Two rules make that check usable in both places it runs:
 
 - **Absence is not drift.** A package the interpreter does not have says
   nothing; only a version that contradicts a pin fails.
-- **A system interpreter is skipped entirely** (`pins=skipped-outside-venv/44`).
-  Absence alone is not enough to tell the two contexts apart: this machine's
-  `python3` carries 21 of the 44 as distro packages, at distro versions nobody
-  pinned, and it never runs the suite.
+- **The exemption belongs to the invocation, never to the interpreter.** A bare
+  `validate_repository.py` is a repository lint and passes anywhere
+  (`pins=not-requested`); `--check-pins` and `conftest.py` enforce, so every
+  interpreter that collects the suite is checked. An earlier version keyed the
+  exemption off `sys.prefix != sys.base_prefix`, which disabled the guard inside
+  the image — `Dockerfile` installs `requirements.txt` into the base interpreter
+  of `python:3.13-slim` and creates no venv — and let
+  `SPECIAL_VERIFY_PYTHON=/usr/bin/python3` produce a green suite run. This
+  machine's `python3` has 34 of the 44 installed, 21 of them drifted.
 
 **The pin nobody wrote is written now.** All eleven dependencies in
 `pyproject.toml` carry the version `requirements.txt` had already compiled, so

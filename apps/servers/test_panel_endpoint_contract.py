@@ -70,7 +70,14 @@ class PanelEndpointContractTests(IsolatedAsyncioTestCase):
 
 
 class ScopedDeleteEndpointContractTests(IsolatedAsyncioTestCase):
-    """delete_client_by_uuid() must stay inbound-scoped and UUID-addressed."""
+    """delete_client_by_uuid() must stay inbound-scoped and UUID-addressed.
+
+    Unlike the tests above, this one is blind to the library version: the URL is
+    built by utils/py3xui/async_api_inbound.py on _post/_url, and py3xui's own
+    delete() is never reached, so it passes on 0.5.1 and 0.7.0 alike. What it
+    guards is our own future edits to that method — that a rewrite cannot
+    quietly widen the delete beyond one UUID inside one inbound.
+    """
 
     async def test_delete_addresses_the_uuid_inside_its_inbound(self):
         api = object.__new__(AsyncInboundApi)
