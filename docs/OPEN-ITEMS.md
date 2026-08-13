@@ -126,41 +126,82 @@ on NL carries exactly two rules, both for the panel port `23133`. Ports `2096`,
 `3000`, `8080` and `27914` have no rule at all. The host has been up 9 days, so
 nothing was lost to a reboot — the rules were never added.
 
-### `darkcore-connection-service` on `:3000`
+### `darkcore-connection-service` on `:3000` — an open client-creation endpoint
+
+**Closed 2026-08-13 with owner approval. Read this before reopening anything.**
 
 A NestJS application, image built locally on 2026-08-05, deployed over Drone SSH,
-published on `0.0.0.0:3000`. It logs into our 3x-ui panel and drives inbound 13
-(`POST /api/connections`, `POST /api/connections/toggle`). Four separate problems,
-in order of how much they cost if ignored:
+`network_mode: "host"` — so it bound `0.0.0.0:3000` regardless of its `ports:`
+mapping. Its source lives in `/opt/darkcore-connection-service` on NL. `main.js`
+is four lines: `NestFactory.create(AppModule)`, `setGlobalPrefix('/api')`,
+`listen(3000)`. It registers four routes and **no authentication of any kind** —
+grepping the whole built bundle for `UseGuards`, `CanActivate`, `ApiKey` or
+`Authorization` returns nothing:
 
-1. **Reachable from the internet and unauthenticated.** `POST /api/connections`
-   from an unrelated host answers `500`, not `401` — an outside caller is already
-   executing application code that holds panel credentials.
-2. **It carries the panel username and the secret base path in plain container
-   environment.** That path is bearer access to the whole control plane; this
-   repository treats it as a secret and pins three loggers to `WARNING` to keep
-   it out of logs. It sits in `docker inspect` output.
-3. **It talks to the panel over plaintext HTTP**, which our own client refuses at
-   construction time. Loopback-only, so not on the wire — but it proves the panel
-   still accepts plaintext locally.
-4. **Nobody in this project owns it.**
+| Route | What it does |
+|---|---|
+| `GET /api/connections/:id/config` | returns a client's configuration |
+| `GET /api/connections/routingconfig` | returns the routing configuration |
+| `POST /api/connections` | `createConnection(body.uuid)` — **creates a client in our panel** |
+| `POST /api/connections/toggle` | `toggleClient(body.uuid, body.status)` — enables or disables a client |
 
-**Blocked on:** an owner decision about whether this service stays. If it stays,
-it needs authentication and a bind to `127.0.0.1`, and the panel credential it
-holds must be rotated because it has been reachable. If it goes, stopping it
-disables whatever drives inbound 13's seven clients — establish who they are
-first.
+So anyone on the internet could create a VPN client on our production panel by
+posting a UUID, and enable or disable any client in the inbound this service is
+scoped to. That scope is a single inbound from its `XUI_VLESS_INBOUND`
+environment variable — **13** — which is why inbound 5's customers were never
+reachable through it, and why inbound 13 accumulated seven clients that are in
+nobody's records. The earlier `500` response was not a rejection; it was the
+handler failing on a missing body.
 
-### Nine clients that are not ours
+It also carries the panel username and the secret base path in its `.env`, which
+is mode `644` — world-readable to any account on the host — and talks to the
+panel over plaintext HTTP.
 
-Inbounds 10 and 13 hold nine enabled, never-expiring clients. **Not one of their
-UUIDs is in `UserVPN`**, and together they have moved **10.8 TB** — a sixth of
-what our whole product inbound has moved. One is labelled `keenetic1`, i.e. a
-router, and one alone accounts for 9.2 TB. They pay us nothing through this
-system and are invisible to billing.
+**Done, and reversible:**
 
-**Blocked on:** identifying who they belong to before disabling anything —
-the same rule that found the `2096` users.
+- `iptables -A INPUT -i lo -p tcp --dport 3000 -j ACCEPT` followed by
+  `-A INPUT -p tcp --dport 3000 -j DROP`. Verified: external `POST` no longer
+  connects, `127.0.0.1:3000/api/connections/routingconfig` still answers `200`.
+- Inbound 13 disabled through `AsyncInboundApi.set_enabled(13, False)`.
+  Reverse with `set_enabled(13, True)`.
+
+The seven clients were cut off by disabling the listener rather than by editing
+each client, because this repository has a verified, config-preserving path for
+an inbound and none for a per-client edit, and inbound 13 held nothing but those
+seven. Port 27914 now refuses connections as a side effect. Before acting, two
+independent readings 60 s apart showed inbound 13 moving **0 bytes** with zero
+established connections on 27914 or 3000 — nobody was disconnected mid-session.
+Panel database backed up to `/etc/x-ui/x-ui.db.bak.20260813-194800` first.
+
+**Still open:**
+
+- **The rule does not survive a reboot.** Nothing on this host makes iptables
+  persistent. A restart reopens the endpoint.
+- **The panel credential must be rotated.** It sat in a world-readable file
+  behind an internet-reachable service; treat it as disclosed.
+- **Nobody in this project owns the service.** Whoever deployed it on 2026-08-05
+  has to say what it is for. If it stays, it needs authentication and a loopback
+  bind of its own rather than a firewall rule compensating for its absence.
+
+### Two clients on inbound 10 that are not ours — still live
+
+Inbound 10 holds two enabled, never-expiring clients, neither in `UserVPN`,
+together **9.6 TB**. One is labelled `keenetic1`, i.e. a router; the other alone
+accounts for 9.2 TB. They are unrelated to the service above — different inbound,
+different mechanism, origin unknown.
+
+**They are carrying traffic right now**: measured twice, 12.5 MB over 90 s and
+7.6 MB over 60 s, roughly 1 Mbit/s sustained. Disabling the inbound disconnects
+a live session, so it was deliberately left alone.
+
+**And `:80` belongs to them.** `nginx.conf` has a `stream` block —
+`listen 80; proxy_pass 127.0.0.1:8080;` — that hands the whole of port 80 to
+inbound 10. The port-reduction target of "22/80/443" was therefore preserving
+this tenant's front door, not ours. Nothing of ours uses port 80: the panel and
+the subscription backend are both reached through `:443`.
+
+**Blocked on:** identifying who they belong to. Then either they are legitimate
+and get recorded, or the inbound is disabled and `:80` closes with it.
 
 ### No per-client traffic attribution on the product inbound
 
