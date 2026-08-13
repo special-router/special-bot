@@ -29,7 +29,7 @@ SPECIAL_VERIFY_PYTHON=<absolute path to the project test venv python> \
 ```
 
 It runs the repository validators, `makemigrations --check`, and the full pytest
-suite. **549 tests and 261 subtests pass as of 2026-08-13** — compare against that
+suite. **550 tests and 261 subtests pass as of 2026-08-13** — compare against that
 number, because a new test file whose name does not match `test_*.py` is
 silently never collected and leaves the count unchanged. `SPECIAL_VERIFY_PRODUCTION`
 defaults to false, so nothing touches a server. Ask the operator for the venv
