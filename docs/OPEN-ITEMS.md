@@ -215,9 +215,12 @@ The consequence is measurable: inbound 5 reports **58 TB** moved, and
 that no longer exist on any client. Today, nothing accumulates. **We cannot tell
 who consumes what, cannot detect a shared key, and cannot enforce a quota.**
 
-**Decided:** every client we write now carries `uv-<inbound_id>-<UserVPN.id>`,
-stamped inside the panel transport (`apps/servers/client_labels.py`) so no call
-site can forget it. `UserVPN.id` is a surrogate key that identifies nobody to
+**Decided, and off until someone turns it on.**
+`CLIENT_TRAFFIC_LABELS_ENABLED` defaults to `false`, so deploying this changes
+nothing: with it off every client write leaves `email` exactly as it found it,
+and `backfill_client_labels --apply` refuses. With it on, every client we write
+carries `uv-<inbound_id>-<UserVPN.id>`, stamped inside the panel transport
+(`apps/servers/client_labels.py`) so no call site can forget it. `UserVPN.id` is a surrogate key that identifies nobody to
 whoever reads the panel; the inbound prefix keeps it unique under the panel-wide
 UNIQUE on `client_traffics.email` if the mirror inbounds ever wake. A label the
 transport did not write — the status inbound's `осталось N дней`, or a hand-made
@@ -233,10 +236,14 @@ attribution on that client and nothing else. Existing clients are repaired by
 `manage.py backfill_client_labels --server-id N --inbound-id M [--apply]`, which
 is a dry run unless `--apply` is passed and refuses to write a colliding label.
 
-**The consequence: x-ui becomes a second actor able to disable a customer.**
+**The consequence, and the whole reason for the flag: with labels on, x-ui
+becomes a second actor able to disable a customer.**
 x-ui enforces `total` and `expiryTime` per client off `client_traffics`, and
 that enforcement is inert today only because no rows exist. Labelling creates
-the rows and switches it on. On day one it agrees with the bot: `total = 0` on
+the rows and switches it on — which is why it is a deliberate `.environment`
+edit rather than something acquired by shipping unrelated work. Setting
+`CLIENT_TRAFFIC_LABELS_ENABLED=false` again stops new labels, but does not
+remove the rows already created; those are cleared in the panel. On day one it agrees with the bot: `total = 0` on
 every client on inbound 5, so no quota can trip, and `sync_expiry_times` pushes
 a fresh `expiryTime` daily. It stops agreeing the moment that daily push does
 not run — if `sync_expiry_times` or `update_user_vpn` stalls past a day, x-ui

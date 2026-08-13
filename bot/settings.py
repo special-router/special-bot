@@ -509,6 +509,16 @@ SUBSCRIPTION_RELAY_PORT = env.int('SUBSCRIPTION_RELAY_PORT', 443)
 # (via the 3x-ui email field). Working inbounds keep an empty email so their
 # subscription remark stays clean. Set to 0 to disable the status inbound.
 STATUS_INBOUND_ID = env.int('STATUS_INBOUND_ID', 0)
+# Write a per-client attribution label into the 3x-ui email field, which is the
+# key xray counts traffic under. Off means every client write leaves email
+# exactly as it found it, which is how this has always behaved.
+#
+# Turning it on is not only an accounting change: a client with a non-empty
+# email gets a client_traffics row, and x-ui then enforces that client's own
+# total and expiryTime itself. That enforcement is inert today because no rows
+# exist. With it on, a stalled sync_expiry_times means x-ui disables paid-up
+# customers on its own. Enable deliberately, and read OPEN-ITEMS.md first.
+CLIENT_TRAFFIC_LABELS_ENABLED = env.bool('CLIENT_TRAFFIC_LABELS_ENABLED', False)
 SPECIAL_MONITOR_CHECKOUT_TIMEOUT = env.int('SPECIAL_MONITOR_CHECKOUT_TIMEOUT', 15)
 # Номинал служебного счёта в копейках. Ссылку никто не оплачивает, но провайдер
 # проверяет сумму при её выпуске, и слишком маленькая была бы отклонена —

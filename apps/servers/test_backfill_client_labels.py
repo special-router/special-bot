@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from django.core.management import CommandError, call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.servers.models import Server, TariffServer
 from apps.users.models import TelegramUser
@@ -22,6 +22,7 @@ def panel_client(client_id, email=''):
     return SimpleNamespace(id=str(client_id), email=email, inbound_id=None)
 
 
+@override_settings(CLIENT_TRAFFIC_LABELS_ENABLED=True)
 class BackfillClientLabelsTests(TestCase):
     def setUp(self):
         tariff = TariffServer.objects.create(name='test', price='7.00')
@@ -130,6 +131,24 @@ class BackfillClientLabelsTests(TestCase):
 
         self.assertIn('skipped_foreign_label=1', output)
         self.assertEqual(client.email, 'осталось 28 дней')
+        api.client.update.assert_not_awaited()
+
+    @override_settings(CLIENT_TRAFFIC_LABELS_ENABLED=False)
+    def test_refuses_to_apply_while_labelling_is_disabled(self):
+        """A label written now would be dropped by the next transport write."""
+        client = panel_client(self.connection.vpn_uuid)
+
+        with self.assertRaisesMessage(CommandError, 'CLIENT_TRAFFIC_LABELS_ENABLED is false'):
+            self.run_command([inbound(5, [client])], apply=True)
+
+        self.assertEqual(client.email, '')
+
+    @override_settings(CLIENT_TRAFFIC_LABELS_ENABLED=False)
+    def test_dry_run_still_works_while_labelling_is_disabled(self):
+        api, output = self.run_command([inbound(5, [panel_client(self.connection.vpn_uuid)])])
+
+        self.assertIn('mode=dry-run', output)
+        self.assertIn('planned=1 changed=0', output)
         api.client.update.assert_not_awaited()
 
     def test_refuses_an_inbound_the_panel_does_not_have(self):

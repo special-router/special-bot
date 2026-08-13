@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from py3xui import Client
 from py3xui.async_api import AsyncClientApi
 
@@ -13,6 +13,7 @@ from apps.servers.client_labels import (
     client_label,
     is_client_label,
     label_for_client,
+    labelling_enabled,
     owner_for_uuid,
 )
 from apps.servers.models import Server, TariffServer
@@ -36,6 +37,7 @@ class ClientLabelFormatTests(TestCase):
             self.assertFalse(is_client_label(foreign), foreign)
 
 
+@override_settings(CLIENT_TRAFFIC_LABELS_ENABLED=True)
 class ClientLabelResolutionTests(TestCase):
     def setUp(self):
         tariff = TariffServer.objects.create(name='test', price='7.00')
@@ -101,6 +103,12 @@ class ClientLabelResolutionTests(TestCase):
 
 
 class LabelledClientApiTests(IsolatedAsyncioTestCase):
+    def setUp(self):
+        # override_settings cannot decorate an IsolatedAsyncioTestCase class.
+        labelling = override_settings(CLIENT_TRAFFIC_LABELS_ENABLED=True)
+        labelling.enable()
+        self.addCleanup(labelling.disable)
+
     def api(self):
         return object.__new__(LabelledClientApi)
 
@@ -192,6 +200,57 @@ class LabelledClientApiTests(IsolatedAsyncioTestCase):
             update.assert_awaited_once()
 
 
+class LabellingDisabledTests(IsolatedAsyncioTestCase):
+    """Off is the default, and off must be byte-identical to the old behaviour."""
+
+    @staticmethod
+    def api():
+        return object.__new__(LabelledClientApi)
+
+    @staticmethod
+    def client(email='', inbound_id=5):
+        return SimpleNamespace(id=UUID, email=email, inbound_id=inbound_id)
+
+    def test_off_is_the_default(self):
+        self.assertFalse(labelling_enabled())
+
+    async def test_update_leaves_the_email_untouched(self):
+        client = self.client()
+        with patch('apps.servers.client_labels.owner_for_uuid', return_value=(42, 5)), \
+                patch.object(AsyncClientApi, 'update', new=AsyncMock()) as update:
+            await self.api().update(client.id, client)
+
+        self.assertEqual(client.email, '')
+        update.assert_awaited_once()
+
+    async def test_create_leaves_the_email_untouched(self):
+        client = self.client()
+        with patch('apps.servers.client_labels.owner_for_uuid', return_value=(42, 5)), \
+                patch.object(AsyncClientApi, 'add', new=AsyncMock()) as add:
+            await self.api().add(5, [client])
+
+        self.assertEqual(client.email, '')
+        add.assert_awaited_once()
+
+    async def test_an_existing_label_is_neither_extended_nor_removed(self):
+        client = self.client(email='uv-5-42')
+        with patch('apps.servers.client_labels.owner_for_uuid', return_value=(99, 5)), \
+                patch.object(AsyncClientApi, 'update', new=AsyncMock()):
+            await self.api().update(client.id, client)
+
+        self.assertEqual(client.email, 'uv-5-42')
+
+    async def test_the_owner_is_not_even_looked_up(self):
+        """Off costs no query: the flag is checked before touching the database."""
+        client = self.client()
+        with patch('apps.servers.client_labels.owner_for_uuid') as owner, \
+                patch.object(AsyncClientApi, 'update', new=AsyncMock()):
+            await self.api().update(client.id, client)
+
+        owner.assert_not_called()
+
+
+@override_settings(CLIENT_TRAFFIC_LABELS_ENABLED=True)
 class VPNClientLabelTests(TestCase):
     """The label reaches the panel through the real APIVPNClient call path."""
 
