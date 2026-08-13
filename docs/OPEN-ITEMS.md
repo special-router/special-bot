@@ -386,6 +386,50 @@ about the exposure changed — the credential is still to be treated as disclose
 and the service that held it is firewalled rather than removed. Do this before
 assuming the panel is safe.
 
+## A region is picked without ever checking the endpoint is alive
+
+Selection takes the host belonging to the fewest regions and excludes the public
+resolvers. It never dials anything. Whether the chosen server answers is not an
+input, and `docs/MIRROR-INBOUNDS-SPEC.md` already states the opposite intent
+under "Safety constraints": *every rendered line must be tested before going
+live; a broken link is worse than no link.*
+
+Measured 2026-08-13 by probing all sixteen servers in the configured provider's
+document rather than only the nine we render: **two are dead** —
+`BRIDGE_RUSSIA_VLESS_1` (`213.171.9.195`) and `L3_BRIDGE_VLESS_1`
+(`78.159.245.59`), both Russian. The Russian region alone offers six candidates,
+two of them dead. We rendered a working one, and nothing in the code made that
+happen.
+
+**What it costs when it goes wrong:** a customer taps a country, the client
+opens a TCP connection that succeeds or times out, and nothing works. It reads
+as our fault. This is the same failure shape as the `1.1.1.1` incident, where
+every region resolved to a Cloudflare resolver — that one was caught because it
+hit every region at once. One dead country would not be.
+
+**The fix is a liveness signal in selection**, not a bigger exclusion list: probe
+candidates out of band, cache the verdict, and prefer a host known to answer.
+`ops/scripts/probe_mirror_tunnel.py` already dials a rendered list; the missing
+half is feeding its result back into the choice.
+
+## Every Russian address in the provider document is an exit, not a bridge
+
+Recorded because the tag names invite the opposite conclusion. The document
+carries seven Russian servers out of sixteen and names several of them
+`BRIDGE_*`, `L1_BRIDGE_*`, `L2_BRIDGE_*`, `L3_BRIDGE_*`, with `L1`/`L2` using a
+Reality SNI of `id.x5.ru` and `L3` `media-newportal.x5.ru` — a large Russian
+retailer, which is ordinary DPI camouflage for a Russian ingress.
+
+Probed end to end anyway. **No outbound uses sing-box `detour`**, so there is no
+client-side chaining at all, and every live node exits in the country it is
+entered from. The `BRIDGE_<country>` entries are byte-identical twins of their
+plain counterparts — same address, same exit. The one real chain is
+`L2_BRIDGE` (`91.240.87.119`) exiting at `L1_BRIDGE` (`194.26.229.158`), and
+both ends are in Russia.
+
+So no mirrored endpoint is relayed, the `relayed` flag being `False` in every
+parser is correct, and `белые списки` still marks exactly one line: ours.
+
 ## Not built
 
 ### Per-UUID inbound diagnostics
