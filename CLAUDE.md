@@ -29,11 +29,18 @@ SPECIAL_VERIFY_PYTHON=<absolute path to the project test venv python> \
 ```
 
 It runs the repository validators, `makemigrations --check`, and the full pytest
-suite. **442 tests and 226 subtests pass as of 2026-08-13** — compare against that
+suite. **502 tests and 261 subtests pass as of 2026-08-13** — compare against that
 number, because a new test file whose name does not match `test_*.py` is
 silently never collected and leaves the count unchanged. `SPECIAL_VERIFY_PRODUCTION`
 defaults to false, so nothing touches a server. Ask the operator for the venv
 path; it is deliberately not written down here.
+
+**That venv must have the same package versions as the image.** It did not, and
+nothing noticed: the tests ran against a py3xui two minor versions ahead of the
+deployed one, which addresses panel clients through entirely different URLs. The
+validator now refuses to run on an interpreter whose py3xui disagrees with
+`requirements.txt`. If it stops you, rebuild the venv from `requirements.txt`
+rather than loosening the pin — see [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
 To iterate on one file, export the same environment the script does:
 

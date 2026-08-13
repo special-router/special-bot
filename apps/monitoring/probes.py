@@ -16,7 +16,10 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from django.conf import settings
+from django.utils import timezone
+from telegram import Bot, LabeledPrice
 
+from apps.analytics.models import MoneyEvent
 from apps.servers.management.commands.audit_xui_inbounds import fetch_inbound_snapshots
 from apps.servers.models import Server
 from apps.servers.subscription_connector import build_subscription_url
@@ -425,4 +428,120 @@ def run_protocol_canary() -> LayerResult:
         ok=subscription_ok and direct_ok,
         error_class=None if subscription_ok and direct_ok else 'canary_protocol',
         details={'subscription_e2e': subscription_ok, 'direct_legacy_e2e': direct_ok},
+    )
+
+
+def cash_gap_days() -> int | None:
+    """Whole days since the last rouble actually received.
+
+    ``None`` means no cash has ever been recorded. That is deliberately not a
+    gap: on an unseeded database it is indistinguishable from a silent one, and
+    alerting on it would page on every fresh deployment instead of on a real
+    stall.
+    """
+    latest = (
+        MoneyEvent.objects.filter(cash_amount__gt=0)
+        .order_by('-occurred_at')
+        .values_list('occurred_at', flat=True)
+        .first()
+    )
+    if latest is None:
+        return None
+    return max(0, (timezone.now() - latest).days)
+
+
+async def create_probe_invoice_link(timeout: float) -> None:
+    """Ask Bot API for one invoice link and drop it.
+
+    A link bills nobody until someone opens and pays it, which is what makes
+    the live provider token safe to exercise on a schedule. The returned link
+    is discarded rather than stored: it is payable, so it does not belong in
+    monitoring state.
+    """
+    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+    await bot.initialize()
+    try:
+        await bot.create_invoice_link(
+            title='Проверка оплаты',
+            description='Служебная проверка платёжного пути. Оплачивать не нужно.',
+            payload='special-monitor-checkout',
+            provider_token=settings.YOUMONEY_TOKEN,
+            currency='RUB',
+            prices=[LabeledPrice('Проверка', settings.SPECIAL_MONITOR_CHECKOUT_AMOUNT)],
+            read_timeout=timeout,
+            write_timeout=timeout,
+            connect_timeout=timeout,
+            pool_timeout=timeout,
+        )
+    finally:
+        await bot.shutdown()
+
+
+# Bot API returns a fixed identifier for each payment rejection, and it is the
+# only thing separating "the token is wrong" from "Telegram had a bad minute" —
+# both arrive as ``BadRequest``. The identifier is matched, never echoed: the
+# rest of the message is Telegram's to change, and a future one could carry
+# something that must not reach a log or a page.
+INVOICE_REJECTIONS = (
+    ('PAYMENT_PROVIDER_INVALID', 'provider_token_rejected'),
+    ('CURRENCY_TOTAL_AMOUNT_INVALID', 'invoice_amount_rejected'),
+    ('CURRENCY_INVALID', 'invoice_currency_rejected'),
+)
+
+
+def classify_invoice_error(error: Exception) -> str:
+    """Name the failure an operator has to act on, in this module's own words.
+
+    An unrecognised failure keeps the coarse exception class, which is still
+    the useful split: ``InvalidToken`` is the bot token, ``NetworkError`` and
+    ``TimedOut`` are Telegram, and neither is the provider.
+    """
+    description = str(error).upper()
+    for identifier, error_class in INVOICE_REJECTIONS:
+        if identifier in description:
+            return error_class
+    return type(error).__name__[:64]
+
+
+def probe_invoice_link(timeout: float) -> str | None:
+    """Return a coarse failure class for the invoice call, or ``None`` if it worked.
+
+    The per-phase httpx timeouts above bound connect, read and write
+    separately, so a call that stalls between phases can outlive all of them;
+    the outer deadline is what actually hands the worker back. Workers run
+    ``--pool=solo``, where a wedged task takes the whole queue with it.
+    """
+    if not settings.TELEGRAM_BOT_TOKEN or not settings.YOUMONEY_TOKEN:
+        return 'not_configured'
+    try:
+        asyncio.run(asyncio.wait_for(create_probe_invoice_link(timeout), timeout * 2))
+    except TimeoutError:
+        return 'invoice_timeout'
+    except Exception as error:
+        return classify_invoice_error(error)
+    return None
+
+
+def run_checkout_probe() -> LayerResult:
+    """Whether a customer could pay right now, and whether anyone has been paying.
+
+    Two independent questions, kept apart on purpose. A healthy probe with a
+    growing gap is a demand problem; a failing probe is a checkout problem, and
+    it outranks the gap, because a zero gap alongside a broken probe only means
+    the last payment landed before the break.
+    """
+    invoice_error = probe_invoice_link(float(settings.SPECIAL_MONITOR_CHECKOUT_TIMEOUT))
+    gap_days = cash_gap_days()
+    threshold = settings.SPECIAL_MONITOR_CASH_GAP_DAYS
+    gap_breached = gap_days is not None and gap_days > threshold
+    return LayerResult(
+        layer='checkout',
+        ok=invoice_error is None and not gap_breached,
+        error_class=invoice_error or ('cash_gap' if gap_breached else None),
+        details={
+            'invoice_ok': invoice_error is None,
+            'invoice_error_class': invoice_error,
+            'cash_gap_days': gap_days,
+            'cash_gap_threshold': threshold,
+        },
     )

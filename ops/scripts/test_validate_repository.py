@@ -1,6 +1,6 @@
 import unittest
 
-from ops.scripts.validate_repository import flag_drift
+from ops.scripts.validate_repository import dependency_drift, flag_drift, pinned_requirements, REQUIREMENTS
 
 
 SETTINGS = """
@@ -16,6 +16,15 @@ FLAGS = """
 | `DEBUG` | bool | `False` | `false` | Django debug mode. |
 | `SUPPORT_CHAT_ID` | int | `0` | `0` | Operators' supergroup. |
 | `SUBSCRIPTION_INTERNAL_ENDPOINTS` | json | `[]` | `[]` | Canary endpoints. |
+"""
+
+REQUIREMENTS_TEXT = """
+httpx==0.28.1
+    # via
+    #   py3xui
+    #   python-telegram-bot
+py3xui==0.5.1
+    # via vpnbot (pyproject.toml)
 """
 
 
@@ -42,6 +51,44 @@ class FlagDriftTests(unittest.TestCase):
     def test_prose_mentioning_a_flag_is_not_a_row(self):
         flags = FLAGS + 'Set `RETIRED_FLAG` only after the owner approves.\n'
         self.assertEqual(flag_drift(SETTINGS, flags), ([], []))
+
+
+class PinnedRequirementsTests(unittest.TestCase):
+    def test_only_unindented_lines_are_pins(self):
+        self.assertEqual(pinned_requirements(REQUIREMENTS_TEXT), {'httpx': '0.28.1', 'py3xui': '0.5.1'})
+
+    def test_a_via_comment_naming_a_version_is_not_a_pin(self):
+        self.assertEqual(pinned_requirements('    # via py3xui==9.9.9\n'), {})
+
+    def test_an_environment_marker_is_not_part_of_the_version(self):
+        self.assertEqual(pinned_requirements("colorama==0.4.6 ; sys_platform == 'win32'\n"), {'colorama': '0.4.6'})
+
+    def test_the_real_requirements_pin_the_whole_image(self):
+        pinned = pinned_requirements(REQUIREMENTS.read_text(encoding='utf-8'))
+        self.assertEqual(pinned['py3xui'], '0.5.1')
+        self.assertGreater(len(pinned), 40)
+
+
+class DependencyDriftTests(unittest.TestCase):
+    PINNED = {'httpx': '0.28.1', 'py3xui': '0.5.1'}
+
+    def test_the_pinned_versions_report_no_drift(self):
+        self.assertEqual(dependency_drift(self.PINNED, {'httpx': '0.28.1', 'py3xui': '0.5.1'}), [])
+
+    def test_one_drifted_dependency_names_only_itself_and_both_versions(self):
+        (message,) = dependency_drift(self.PINNED, {'httpx': '0.28.1', 'py3xui': '0.7.0'})
+        self.assertIn('py3xui', message)
+        self.assertIn('0.5.1', message)
+        self.assertIn('0.7.0', message)
+        self.assertNotIn('httpx', message)
+
+    def test_every_drifted_dependency_gets_its_own_line(self):
+        drift = dependency_drift(self.PINNED, {'httpx': '0.29.0', 'py3xui': '0.7.0'})
+        self.assertEqual(len(drift), 2)
+
+    def test_an_absent_dependency_is_not_drift(self):
+        # The validator also runs on a bare interpreter that installs nothing.
+        self.assertEqual(dependency_drift(self.PINNED, {'httpx': None, 'py3xui': None}), [])
 
 
 if __name__ == '__main__':

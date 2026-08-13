@@ -11,7 +11,9 @@ SPECIAL_VERIFY_PYTHON=<absolute path to the project test venv python> \
   ./ops/scripts/verify_scale_closeout.sh
 ```
 
-Must be clean. As of 2026-08-12 that is **296 tests and 110 subtests**.
+Must be clean. The expected test and subtest count lives in `CLAUDE.md` and
+nowhere else — a second copy of that number here would rot exactly as the first
+one did.
 
 ### Run the suite against PostgreSQL before declaring a deploy safe
 
@@ -29,6 +31,59 @@ Running the suite against a real PostgreSQL test database inside the container
 has already caught a failure the local run could not. Do it as part of the
 deploy, not as an optional extra: build the image, then run pytest in a
 throwaway container pointed at a PostgreSQL test database on the bot host.
+
+### The test venv must hold the versions the image installs
+
+`requirements.txt` is what the image installs; it is compiled from
+`pyproject.toml` by `uv pip compile`. A dependency left unpinned in
+`pyproject.toml` therefore resolves to whatever is current whenever someone
+builds a venv from it, while the image keeps the compiled pin.
+
+That happened with `py3xui`: `requirements.txt` pins **0.5.1** and the running
+container has it, but `pyproject.toml` listed it unpinned, so the project test
+venv resolved to **0.7.0**. The two do not update a client the same way:
+
+- 0.5.1 posts to `panel/api/inbounds/updateClient/{client_uuid}` — addressed by
+  UUID, which is what SPECIAL clients have.
+- 0.7.0 posts to `panel/api/clients/update/{email or uuid}` — a different route,
+  addressed by email whenever the client carries one.
+
+Every test touching the panel client write path was validating a request
+production never sends. Two things guard it now:
+
+- `ops/scripts/validate_repository.py` compares **every** `==` pin in
+  `requirements.txt` against the versions installed in the interpreter running
+  it, and names each drifted package with both versions.
+  `verify_scale_closeout.sh` runs the validator under the test venv's python so
+  the check sees the interpreter the suite uses. A package the interpreter does
+  not have is an absence, not drift; a system interpreter is skipped entirely,
+  because distro packages are nobody's pin and it never runs the suite.
+- `apps/servers/test_panel_endpoint_contract.py` asserts the exact endpoint each
+  client operation puts on the wire. The guard compares version strings and so
+  says nothing about a deliberate upgrade of the pin; the contract tests fail on
+  any library that routes differently, whichever version it claims to be.
+
+Every dependency in `pyproject.toml` now carries the version
+`requirements.txt` already compiled, so building a venv from either file lands
+on the same tree and an upgrade takes an explicit edit. Keep it that way: pin
+runtime dependencies where the resolver reads them, not only in the compiled
+output.
+
+**If the guard stops you, rebuild the venv rather than pick at the packages it
+names.** Drift arrives in bulk, not one package at a time: the venv measured on
+2026-08-13 was 10 packages away from the image — py3xui, celery, psycopg, redis,
+gunicorn, django-environ, requests and pydantic among them — because it had been
+resolved when `pyproject.toml` was still open-ended. Rebuilding is three
+commands:
+
+```bash
+uv venv <path> --python 3.13
+uv pip install --python <path>/bin/python -r requirements.txt
+uv pip install --python <path>/bin/python pytest pytest-django
+```
+
+The test runner is deliberately absent from `requirements.txt`: the image does
+not ship it.
 
 ## The deploy itself
 

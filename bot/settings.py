@@ -210,6 +210,7 @@ CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
 CELERY_TASK_ROUTES = {
     'apps.monitoring.tasks.run_protocol_monitor': {'queue': 'monitoring'},
     'apps.monitoring.tasks.run_host_capacity_monitor': {'queue': 'monitoring'},
+    'apps.monitoring.tasks.run_checkout_monitor': {'queue': 'monitoring'},
     'apps.telegram_bot.tasks.safe_broadcast_v1': {'queue': 'safe_broadcast_v1'},
 }
 
@@ -226,6 +227,7 @@ CELERY_BEAT_SCHEDULE = {
 
 SPECIAL_MONITOR_ENABLED = env.bool('SPECIAL_MONITOR_ENABLED', False)
 SPECIAL_MONITOR_L2_ENABLED = env.bool('SPECIAL_MONITOR_L2_ENABLED', False)
+SPECIAL_MONITOR_CHECKOUT_ENABLED = env.bool('SPECIAL_MONITOR_CHECKOUT_ENABLED', False)
 if SPECIAL_MONITOR_ENABLED:
     CELERY_BEAT_SCHEDULE.update(
         {
@@ -247,6 +249,11 @@ if SPECIAL_MONITOR_ENABLED and SPECIAL_MONITOR_L2_ENABLED:
     CELERY_BEAT_SCHEDULE['special_monitor_l2'] = {
         'task': 'apps.monitoring.tasks.run_protocol_monitor',
         'schedule': crontab(minute='2-59/5'),
+    }
+if SPECIAL_MONITOR_ENABLED and SPECIAL_MONITOR_CHECKOUT_ENABLED:
+    CELERY_BEAT_SCHEDULE['special_monitor_checkout'] = {
+        'task': 'apps.monitoring.tasks.run_checkout_monitor',
+        'schedule': crontab(minute='7-59/15'),
     }
 
 REFERRAL_PERCENT = env.int('REFERRAL_PERCENT', 30)
@@ -502,6 +509,12 @@ SUBSCRIPTION_RELAY_PORT = env.int('SUBSCRIPTION_RELAY_PORT', 443)
 # (via the 3x-ui email field). Working inbounds keep an empty email so their
 # subscription remark stays clean. Set to 0 to disable the status inbound.
 STATUS_INBOUND_ID = env.int('STATUS_INBOUND_ID', 0)
+SPECIAL_MONITOR_CHECKOUT_TIMEOUT = env.int('SPECIAL_MONITOR_CHECKOUT_TIMEOUT', 15)
+# Номинал служебного счёта в копейках. Ссылку никто не оплачивает, но провайдер
+# проверяет сумму при её выпуске, и слишком маленькая была бы отклонена —
+# мониторинг сообщал бы о поломке оплаты там, где сломан только сам зонд.
+SPECIAL_MONITOR_CHECKOUT_AMOUNT = env.int('SPECIAL_MONITOR_CHECKOUT_AMOUNT', 10000)
+SPECIAL_MONITOR_CASH_GAP_DAYS = env.int('SPECIAL_MONITOR_CASH_GAP_DAYS', 3)
 SPECIAL_MONITOR_XRAY_PATH = env.str('SPECIAL_MONITOR_XRAY_PATH', '/usr/local/bin/xray')
 SPECIAL_MONITOR_EXPECTED_EGRESS = env.str('SPECIAL_MONITOR_EXPECTED_EGRESS', '')
 SPECIAL_MONITOR_HEALTH_URL = env.str('SPECIAL_MONITOR_HEALTH_URL', 'https://api.ipify.org')

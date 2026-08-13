@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import sys
+from importlib import metadata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,6 +16,7 @@ MARKDOWN = [
 ]
 SETTINGS_FILE = ROOT / 'bot' / 'settings.py'
 FLAGS_DOC = ROOT / 'docs' / 'FLAGS.md'
+REQUIREMENTS = ROOT / 'requirements.txt'
 SHELL = sorted((ROOT / 'ops' / 'scripts').glob('*.sh'))
 PYTHON_SCRIPTS = sorted((ROOT / 'ops' / 'scripts').glob('*.py'))
 CANONICAL_OPERATOR_SCRIPTS = (
@@ -58,6 +60,20 @@ LINK_PATTERN = re.compile(r'\[[^\]]+\]\(([^)]+)\)')
 # canary JSON helper; a documented flag is the first cell of a FLAGS.md row.
 ENV_SETTING_PATTERN = re.compile(r"(?:env\.\w+|_internal_canary_json)\(\s*'([A-Z][A-Z0-9_]*)'")
 FLAG_ROW_PATTERN = re.compile(r'^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|', re.MULTILINE)
+
+# uv writes one unindented ``name==version`` per pin and indents every comment.
+PIN_PATTERN = re.compile(r'^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;]+)', re.MULTILINE)
+
+# Every pin is guarded rather than py3xui alone: the check is one dictionary
+# comparison either way, and the shared test venv was rebuilt from
+# requirements.txt on 2026-08-13, so the only thing it can report now is drift
+# that appeared afterwards. Most of pyproject.toml is still unpinned, which is
+# what lets a rebuilt venv drift again; this is what makes that loud.
+REBUILD_HINT = (
+    'rebuild the venv from requirements.txt '
+    '(uv pip install --python <venv>/bin/python -r requirements.txt); '
+    'never loosen a pin to match an environment'
+)
 
 
 def fail(message: str) -> None:
@@ -136,14 +152,65 @@ def check_flags() -> int:
     return len(set(ENV_SETTING_PATTERN.findall(settings_text)))
 
 
+def pinned_requirements(requirements_text: str) -> dict[str, str]:
+    """Return every ``name==version`` pin, ignoring uv's indented ``# via`` comments."""
+    return dict(PIN_PATTERN.findall(requirements_text))
+
+
+def dependency_drift(pinned: dict[str, str], installed: dict[str, str | None]) -> list[str]:
+    """Name only the pins this interpreter contradicts, one line each.
+
+    A dependency the interpreter does not have is an absence, not a drift: the
+    validator also runs on a bare interpreter that installs none of them.
+    """
+    return [
+        f'{name}: requirements.txt pins {expected}, this interpreter has {installed[name]}'
+        for name, expected in sorted(pinned.items())
+        if installed.get(name) is not None and installed[name] != expected
+    ]
+
+
+def installed_versions(names: list[str]) -> dict[str, str | None]:
+    versions: dict[str, str | None] = {}
+    for name in names:
+        try:
+            versions[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            versions[name] = None
+    return versions
+
+
+def check_dependency_pins() -> str:
+    """The suite must exercise the versions the image installs, not later ones."""
+    pinned = pinned_requirements(REQUIREMENTS.read_text(encoding='utf-8'))
+    if not pinned:
+        fail('requirements.txt: no pins parsed, the dependency guard would check nothing')
+    if sys.prefix == sys.base_prefix:
+        # A system interpreter carries distro packages nobody pinned — this
+        # machine's python3 has 21 of these 44 — and it never runs the suite.
+        return f'skipped-outside-venv/{len(pinned)}'
+    installed = installed_versions(sorted(pinned))
+    drift = dependency_drift(pinned, installed)
+    if drift:
+        subject = 'dependency does' if len(drift) == 1 else 'dependencies do'
+        fail(
+            f'{len(drift)} pinned {subject} not match this interpreter:\n  '
+            + '\n  '.join(drift)
+            + f'\n{REBUILD_HINT}'
+        )
+    verified = sum(1 for version in installed.values() if version is not None)
+    return f'{verified}/{len(pinned)}'
+
+
 def main() -> None:
     check_markdown()
     check_scripts()
     documented_flags = check_flags()
+    pins = check_dependency_pins()
     print(
         f'repository_validation=passed markdown={len(MARKDOWN)} '
         f'shell={len(SHELL)} python_scripts={len(PYTHON_SCRIPTS)} '
-        f'flags={documented_flags}'
+        f'flags={documented_flags} pins={pins}'
     )
 
 
