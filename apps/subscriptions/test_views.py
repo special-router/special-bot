@@ -1006,6 +1006,36 @@ class MirrorIngestTests(SimpleTestCase):
 
         self.assertEqual(views._sanitize_upstream_payload(self.singbox(outbound)), [])
 
+        outbound['tls']['reality'] = {'enabled': True, 'public_key': '', 'short_id': 'ab01'}
+
+        self.assertEqual(views._sanitize_upstream_payload(self.singbox(outbound)), [])
+
+    def test_singbox_reality_without_short_id_is_served_without_sid(self):
+        """An empty ``shortIds`` list is a working Reality server, not a broken one."""
+        outbound = copy.deepcopy(self.reality_outbound)
+        del outbound['tls']['reality']['short_id']
+
+        link = views._sanitize_upstream_payload(self.singbox(outbound))[0]
+
+        self.assertEqual(link, self.reality_link.replace('sid=ab01&', ''))
+        self.assertNotIn('sid', parse_qs(urlsplit(link).query))
+
+    def test_singbox_reality_omits_every_absent_optional_field(self):
+        outbound = {
+            'type': 'vless',
+            'tag': 'Mirror Bare',
+            'server': 'mirror-three.example',
+            'server_port': 8443,
+            'uuid': 'synthetic-bare-id',
+            'tls': {'enabled': True,
+                    'reality': {'enabled': True, 'public_key': 'synthetic-pbk'}},
+        }
+
+        self.assertEqual(views._sanitize_upstream_payload(self.singbox(outbound)), [
+            'vless://synthetic-bare-id@mirror-three.example:8443?'
+            'type=tcp&security=reality&pbk=synthetic-pbk&spx=%2F#Mirror%20Bare',
+        ])
+
     def test_v2ray_array_is_parsed_and_gated_like_singbox(self):
         self.assertEqual(views._sanitize_upstream_payload(self.v2ray_array()), [])
 

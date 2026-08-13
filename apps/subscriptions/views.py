@@ -1221,9 +1221,11 @@ def _normalized_mirror_endpoint(raw: dict) -> dict | None:
         'service_name': _mirror_field(raw.get('service_name')),
         'path': _mirror_field(raw.get('path')),
     }
-    # Reality without its key material is not a usable endpoint, and rendering
-    # it would advertise a Reality link that no client can complete.
-    if security == 'reality' and not (endpoint['public_key'] and endpoint['short_id']):
+    # Reality without its public key is not a usable endpoint, and rendering it
+    # would advertise a Reality link that no client can complete. The short id
+    # is optional: a server may be configured with an empty ``shortIds`` list,
+    # and clients then simply omit ``sid``.
+    if security == 'reality' and not endpoint['public_key']:
         return None
     return endpoint
 
@@ -1276,7 +1278,9 @@ def _build_mirror_vless(endpoint: dict) -> str:
     if endpoint['server_name']:
         query_fields.append(('sni', endpoint['server_name']))
     if reality:
-        query_fields.extend((('sid', endpoint['short_id']), ('spx', '/')))
+        if endpoint['short_id']:
+            query_fields.append(('sid', endpoint['short_id']))
+        query_fields.append(('spx', '/'))
     if endpoint['network'] == 'grpc' and endpoint['service_name']:
         query_fields.append(('serviceName', endpoint['service_name']))
     if endpoint['network'] == 'ws' and endpoint['path']:
