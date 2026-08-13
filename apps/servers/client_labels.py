@@ -8,11 +8,13 @@ id, username or address.  It is scoped by inbound because
 UUID appearing on a mirror inbound would otherwise want the same row.
 
 ``LabelledClientApi`` stamps it inside the panel transport, so no caller has to
-remember it.  Two things are never written: a non-empty label this module did
-not write -- the status inbound's ``осталось N дней``, or a hand-made one -- and
-any label at all on an inbound that is not the one its owner's ``Server`` row
-configures.  The panel hosts a foreign tenant, and a label on their inbound is a
-write we had no business making.
+remember it.  Three things are never written: anything at all while
+``CLIENT_TRAFFIC_LABELS_ENABLED`` is off, which is the default and reproduces
+the historical behaviour byte for byte; a non-empty label this module did not
+write -- the status inbound's ``осталось N дней``, or a hand-made one -- and any
+label on an inbound that is not the one its owner's ``Server`` row configures.
+The panel hosts a foreign tenant, and a label on their inbound is a write we had
+no business making.
 """
 from __future__ import annotations
 
@@ -20,6 +22,7 @@ import re
 from typing import Any
 
 from asgiref.sync import sync_to_async
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from py3xui.async_api import AsyncClientApi
 
@@ -37,6 +40,11 @@ def client_label(inbound_id: int, user_vpn_id: int) -> str:
 def is_client_label(value: str | None) -> bool:
     """Report whether a label was written by this module."""
     return bool(_LABEL_PATTERN.match(value or ''))
+
+
+def labelling_enabled() -> bool:
+    """Report whether labels may be written at all."""
+    return bool(getattr(settings, 'CLIENT_TRAFFIC_LABELS_ENABLED', False))
 
 
 def owner_for_uuid(client_uuid: Any) -> tuple[int, int] | None:
@@ -75,6 +83,8 @@ def label_for_client(client: Any, inbound_id: int | None) -> str | None:
     different record of the same customer.  Anything this function cannot
     positively establish as ours is left unlabelled.
     """
+    if not labelling_enabled():
+        return None
     if not inbound_id:
         return None
     current = getattr(client, 'email', '') or ''

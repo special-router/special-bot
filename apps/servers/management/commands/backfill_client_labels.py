@@ -11,7 +11,7 @@ import asyncio
 
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.servers.client_labels import client_label, is_client_label
+from apps.servers.client_labels import client_label, is_client_label, labelling_enabled
 from apps.servers.models import Server
 from apps.vpn.models import UserVPN
 from utils.py3xui.async_api import AsyncApi
@@ -32,6 +32,11 @@ class Command(BaseCommand):
         parser.add_argument('--list', action='store_true', help='Print one line per client that would change.')
 
     def handle(self, *args, **options):
+        if options['apply'] and not labelling_enabled():
+            # A label written now would be dropped the next time the transport
+            # touches that client, leaving the panel and its traffic rows out of
+            # step with each other.  Reading is still useful; writing is not.
+            raise CommandError('Refusing --apply: CLIENT_TRAFFIC_LABELS_ENABLED is false.')
         # Every database read happens here, before the event loop: the panel
         # calls are the only thing that needs to be async.
         server, owners = self._load(options['server_id'])
