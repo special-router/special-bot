@@ -3,18 +3,25 @@ name = "vpnbot"
 version = "0.1.0"
 description = "..."
 requires-python = ">=3.13"
+# Every dependency is pinned, and that is deliberate. This is an application
+# with one deployment, not a library resolving against someone else's tree.
+# An unpinned entry here is what let a venv resolve py3xui 0.7.0 while the
+# image ran 0.5.1 — two versions that address panel clients through different
+# URLs — and the whole test suite validated the wrong one for as long as it
+# took someone to look. Upgrading should cost an edit here; drifting should
+# cost nothing less. `ops/scripts/validate_repository.py` enforces the match.
 dependencies = [
-    'python-telegram-bot',
-    'django',
-    'django-environ',
+    'python-telegram-bot==22.8',
+    'django==5.2.6',
+    'django-environ==0.12.0',
     'py3xui==0.5.1',
-    'celery',
-    'redis',
-    'psycopg[binary]',
+    'celery==5.5.3',
+    'redis==6.4.0',
+    'psycopg[binary]==3.2.10',
     'djangorestframework==3.15.2',
     'Pillow==11.0.0',
-    'gunicorn',
-    'whitenoise',
+    'gunicorn==23.0.0',
+    'whitenoise==6.11.0',
 ]
 [tool.isort]
 profile = 'black'
