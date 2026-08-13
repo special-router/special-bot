@@ -1518,6 +1518,167 @@ class MirrorLabelPolicyTests(SimpleTestCase):
                 self.assertEqual(unquote(parsed.fragment), expected)
 
 
+class MirrorEndpointChoiceTests(SimpleTestCase):
+    """Which endpoint a region resolves to, on a document shaped like the live one.
+
+    The provider offers 31 outbounds over 16 distinct hosts. One of them is
+    Cloudflare's resolver, carried under nine different flags and labelled by
+    the provider as its fastest node; one real host is shared by eight regions;
+    the rest belong to a single region each. A customer reported the whole
+    subscription as dead when every region resolved to the resolver, which
+    accepts a connection and completes no handshake.
+    """
+
+    # (flag, region, [(host, port)]) — the region's members in the provider's
+    # own order, resolver entries included.
+    regions = (
+        ('🇪🇺', 'Fastest', (('1.1.1.1', 443), ('shared.example', 443))),
+        ('🇳🇱', 'Netherlands', (('1.1.1.1', 443), ('shared.example', 443),
+                                ('nl-1.example', 443), ('nl-2.example', 443))),
+        ('🇩🇪', 'Germany', (('1.1.1.1', 443), ('shared.example', 443),
+                            ('de-1.example', 8443), ('de-2.example', 443))),
+        ('🇸🇪', 'Sweden', (('1.1.1.1', 443), ('shared.example', 443),
+                           ('se-1.example', 59406), ('se-2.example', 443))),
+        ('🇳🇴', 'Norway', (('1.1.1.1', 443), ('shared.example', 443), ('no-1.example', 443))),
+        ('🇺🇸', 'USA', (('1.1.1.1', 443), ('shared.example', 443), ('us-1.example', 8443))),
+        ('🇰🇿', 'Kazakhstan', (('1.1.1.1', 443), ('shared.example', 443), ('kz-1.example', 443))),
+        ('🇯🇵', 'Japan', (('1.1.1.1', 443), ('shared.example', 443), ('jp-1.example', 443))),
+        ('🇷🇺', 'Russia', (('1.1.1.1', 443), ('9.9.9.9', 443),
+                           ('ru-1.example', 443), ('ru-2.example', 443))),
+        # Every candidate this region offers is a resolver, so it must not be
+        # rendered at all rather than rendered as something that never connects.
+        ('🇦🇲', 'Armenia', (('8.8.8.8', 443),)),
+    )
+    expected_hosts = ['de-1.example', 'shared.example', 'jp-1.example', 'kz-1.example',
+                      'nl-1.example', 'no-1.example', 'ru-1.example', 'se-1.example',
+                      'us-1.example']
+    expected_remarks = ['🇩🇪 Germany', '🇪🇺 Europe', '🇯🇵 Japan', '🇰🇿 Kazakhstan',
+                        '🇳🇱 Netherlands', '🇳🇴 Norway', '🇷🇺 Russia', '🇸🇪 Sweden',
+                        '🇺🇸 United States']
+
+    def document(self, reverse=False):
+        """The provider's answer: a root selector, region groups, then servers."""
+        groups, servers, server_tags = [], [], []
+        for flag, region, members in self.regions:
+            tags = [f'{flag} {region.upper()}_VLESS_{index + 1}'
+                    for index in range(len(members))]
+            server_tags.extend(tags)
+            groups.append({'type': 'selector', 'tag': f'{flag} {region}', 'outbounds': tags})
+            servers.extend({
+                'type': 'vless',
+                'tag': server_tag,
+                'server': host,
+                'server_port': port,
+                'uuid': f'synthetic-{server_tag}',
+                'tls': {
+                    'enabled': True,
+                    'server_name': 'sni.example',
+                    'reality': {'enabled': True, 'public_key': 'synthetic-pbk', 'short_id': 'ab01'},
+                },
+            } for server_tag, (host, port) in zip(tags, members))
+        outbounds = [
+            {'type': 'selector', 'tag': '→ Remnawave',
+             'outbounds': [group['tag'] for group in groups] + server_tags},
+            *groups, *servers, {'type': 'direct', 'tag': 'direct'},
+        ]
+        if reverse:
+            outbounds.reverse()
+        return json.dumps({'outbounds': outbounds}).encode()
+
+    def hosts(self, links):
+        return [urlsplit(link).hostname for link in links]
+
+    def remarks(self, links):
+        return [unquote(urlsplit(link).fragment) for link in links]
+
+    def test_the_fixture_matches_the_live_documents_shape(self):
+        outbounds = json.loads(self.document())['outbounds']
+        servers = [outbound for outbound in outbounds if outbound['type'] == 'vless']
+
+        self.assertEqual(len(servers), 31)
+        self.assertEqual(len({server['server'] for server in servers}), 16)
+        self.assertEqual(sum(server['server'] == '1.1.1.1' for server in servers), 9)
+        self.assertEqual(sum(server['server'] == 'shared.example' for server in servers), 8)
+        self.assertEqual({server['server_port'] for server in servers}, {443, 8443, 59406})
+
+    def test_a_public_resolver_is_never_rendered_under_any_flag(self):
+        links = views._sanitize_upstream_payload(self.document())
+
+        self.assertNotIn('1.1.1.1', self.hosts(links))
+        self.assertFalse(set(self.hosts(links)) & {'1.1.1.1', '8.8.8.8', '9.9.9.9'})
+
+    def test_every_excluded_address_is_refused_as_an_endpoint_host(self):
+        for address in views._MIRROR_EXCLUDED_HOSTS:
+            with self.subTest(address=str(address)):
+                self.assertFalse(views._safe_endpoint_host(str(address)))
+        # The ranges ``_is_public_unicast`` already refused stay refused, and an
+        # ordinary public address is still a usable endpoint.
+        self.assertFalse(views._safe_endpoint_host('127.0.0.1'))
+        self.assertFalse(views._safe_endpoint_host('169.254.10.10'))
+        self.assertFalse(views._safe_endpoint_host('203.0.113.10'))
+        self.assertTrue(views._safe_endpoint_host('13.13.13.13'))
+
+    def test_each_region_keeps_its_own_server_where_the_document_offers_one(self):
+        links = views._sanitize_upstream_payload(self.document())
+
+        self.assertEqual(self.hosts(links), self.expected_hosts)
+        self.assertEqual(len(set(self.hosts(links))), len(links))
+
+    def test_a_host_shared_by_eight_regions_loses_to_a_single_region_host(self):
+        """Only the region with no server of its own falls back to the shared host."""
+        links = views._sanitize_upstream_payload(self.document())
+
+        self.assertEqual(self.hosts(links).count('shared.example'), 1)
+        self.assertEqual(self.remarks(links)[self.hosts(links).index('shared.example')],
+                         '🇪🇺 Europe')
+
+    def test_a_region_whose_only_candidate_is_excluded_disappears(self):
+        remarks = self.remarks(views._sanitize_upstream_payload(self.document()))
+
+        self.assertNotIn('🇦🇲 Armenia', remarks)
+        self.assertEqual(remarks, self.expected_remarks)
+
+    def test_selection_is_identical_across_two_runs_and_a_reordered_document(self):
+        links = views._sanitize_upstream_payload(self.document())
+
+        self.assertEqual(views._sanitize_upstream_payload(self.document()), links)
+        self.assertEqual(views._sanitize_upstream_payload(self.document(reverse=True)), links)
+
+    def test_a_non_default_port_survives_selection(self):
+        links = views._sanitize_upstream_payload(self.document())
+        ports = dict(zip(self.hosts(links), (urlsplit(link).port for link in links)))
+
+        self.assertEqual(ports['de-1.example'], 8443)
+        self.assertEqual(ports['se-1.example'], 59406)
+        self.assertEqual(ports['us-1.example'], 8443)
+
+    def test_the_providers_inventory_names_never_reach_a_remark(self):
+        rendered = ' '.join(self.remarks(views._sanitize_upstream_payload(self.document())))
+
+        for leaked in ('VLESS', 'Remnawave', 'SWEDEN_VLESS_1', 'RUSSIA_VLESS_3', 'Fastest'):
+            self.assertNotIn(leaked, rendered)
+
+    def test_a_bridge_inventory_tag_renders_as_a_place_or_as_nothing_named(self):
+        """The tags the provider writes for its own transit nodes, exactly as sent."""
+        for tag, expected in (('L2_BRIDGE_VLESS_1', views._MIRROR_UNKNOWN_REGION),
+                              ('L3_BRIDGE_VLESS_2', views._MIRROR_UNKNOWN_REGION),
+                              ('BRIDGE_RUSSIA_VLESS_1', '🇷🇺 Russia'),
+                              ('SWEDEN_VLESS_1', '🇸🇪 Sweden')):
+            with self.subTest(tag=tag):
+                payload = json.dumps({'outbounds': [{
+                    'type': 'vless', 'tag': tag, 'server': 'bridge.example',
+                    'server_port': 8443, 'uuid': 'synthetic-bridge-id',
+                    'tls': {'enabled': True, 'reality': {
+                        'enabled': True, 'public_key': 'synthetic-pbk'}},
+                }]}).encode()
+
+                remark = self.remarks(views._sanitize_upstream_payload(payload))[0]
+
+                self.assertEqual(remark, expected)
+                self.assertNotIn('VLESS', remark)
+                self.assertNotIn('BRIDGE', remark.upper())
+
+
 class SubscriptionResponseCacheTests(SimpleTestCase):
     def test_success_and_not_found_responses_are_not_cacheable(self):
         for response in (views._no_cache_response(views.HttpResponse('ok')),

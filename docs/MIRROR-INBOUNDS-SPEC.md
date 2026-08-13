@@ -265,12 +265,29 @@ nine of them Sweden. Two caps bound that.
   our own lines. The tighter of it and `SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES`
   applies.
 
-**Ordering rule:** entries sort by rendered label, then by `(host, port)`. Both
-keys are properties of the endpoint, never of its position in the provider's
-document, so a provider that reorders its outbounds between two refreshes
-cannot reshuffle a customer's list or change which server a region resolves to.
-Sorting by label puts the countries in a fixed sequence and leaves `🌐 Backup`
-last, because its globe sorts above every regional indicator codepoint.
+**Ordering rule:** entries sort by rendered label, then by how many regions the
+host is offered under, then by `(host, port)`. Every key is a property of the
+endpoint set, never of a position in the provider's document, so a provider that
+reorders its outbounds between two refreshes cannot reshuffle a customer's list
+or change which server a region resolves to. Sorting by label puts the countries
+in a fixed sequence and leaves `🌐 Backup` last, because its globe sorts above
+every regional indicator codepoint.
+
+**Which server a region gets:** the one that belongs to the fewest regions. A
+host the provider lists under nine flags is a front or an aggregate, not the
+server of any one of those countries; a host that appears under a single flag is
+what that flag names. Only a region with no server of its own falls back to a
+widely shared host.
+
+**Hosts that are never rendered:** the public resolvers and anycast addresses in
+`_MIRROR_EXCLUDED_HOSTS` — Cloudflare, Google, Quad9, Yandex, OpenDNS — whatever
+the provider's label calls them. One provider offered `1.1.1.1` as its
+`🇪🇺 Fastest` node, and because it was every region's alphabetically first
+candidate, every rendered region pointed a customer at a DNS resolver: the TCP
+connect succeeds, the Reality handshake never completes, and the subscription
+reads as entirely dead. A region whose every candidate is excluded is dropped
+rather than rendered — a missing country is honest, a country that silently
+fails is not.
 
 ### Feature gate
 
