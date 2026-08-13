@@ -51,13 +51,16 @@ venv resolved to **0.7.0**. The two do not update a client the same way:
 Every test touching the panel client write path was validating a request
 production never sends. Two things guard it now:
 
-- `ops/scripts/validate_repository.py` compares **every** `==` pin in
-  `requirements.txt` against the versions installed in the interpreter running
-  it, and names each drifted package with both versions.
-  `verify_scale_closeout.sh` runs the validator under the test venv's python so
-  the check sees the interpreter the suite uses. A package the interpreter does
-  not have is an absence, not drift; a system interpreter is skipped entirely,
-  because distro packages are nobody's pin and it never runs the suite.
+- `ops/scripts/validate_repository.py --check-pins` compares **every** `==` pin
+  in `requirements.txt` against the versions installed in the interpreter
+  running it, and names each drifted package with both versions.
+  `verify_scale_closeout.sh` passes that flag on the run under
+  `SPECIAL_VERIFY_PYTHON`, and `conftest.py` runs the same check at pytest
+  startup, so no interpreter that collects the suite can skip it — including the
+  container, which `pip install`s into its base interpreter with no venv at all.
+  Without the flag the validator is an ordinary repository lint and passes on
+  any interpreter. A package the interpreter does not have is an absence, not
+  drift.
 - `apps/servers/test_panel_endpoint_contract.py` asserts the exact endpoint each
   client operation puts on the wire. The guard compares version strings and so
   says nothing about a deliberate upgrade of the pin; the contract tests fail on

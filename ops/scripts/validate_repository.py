@@ -180,33 +180,52 @@ def installed_versions(names: list[str]) -> dict[str, str | None]:
     return versions
 
 
-def check_dependency_pins() -> str:
-    """The suite must exercise the versions the image installs, not later ones."""
+def dependency_pin_report() -> tuple[str, str | None]:
+    """Return a ``verified/pinned`` summary and a failure message, if any.
+
+    The suite must exercise the versions the image installs, not later ones,
+    and this must never be made conditional on what kind of interpreter is
+    running. The image installs requirements.txt into the base interpreter of
+    python:3.13-slim with no venv anywhere, so any rule that exempts a non-venv
+    interpreter switches the check off inside the container it exists to
+    protect. The exemption belongs to the *invocation* instead: a bare
+    ``validate_repository.py`` is a repository lint and passes anywhere, while
+    every interpreter that runs the suite is checked, through ``--check-pins``
+    or through conftest.py. For the record, the machine this was written on has
+    34 of these 44 installed system-wide and 21 of them drift, so an unguarded
+    run there is green against 21 wrong versions.
+    """
     pinned = pinned_requirements(REQUIREMENTS.read_text(encoding='utf-8'))
     if not pinned:
-        fail('requirements.txt: no pins parsed, the dependency guard would check nothing')
-    if sys.prefix == sys.base_prefix:
-        # A system interpreter carries distro packages nobody pinned — this
-        # machine's python3 has 21 of these 44 — and it never runs the suite.
-        return f'skipped-outside-venv/{len(pinned)}'
+        return '0/0', 'requirements.txt: no pins parsed, the dependency guard would check nothing'
     installed = installed_versions(sorted(pinned))
-    drift = dependency_drift(pinned, installed)
-    if drift:
-        subject = 'dependency does' if len(drift) == 1 else 'dependencies do'
-        fail(
-            f'{len(drift)} pinned {subject} not match this interpreter:\n  '
-            + '\n  '.join(drift)
-            + f'\n{REBUILD_HINT}'
-        )
     verified = sum(1 for version in installed.values() if version is not None)
-    return f'{verified}/{len(pinned)}'
+    summary = f'{verified}/{len(pinned)}'
+    drift = dependency_drift(pinned, installed)
+    if not drift:
+        return summary, None
+    subject = 'dependency does' if len(drift) == 1 else 'dependencies do'
+    return summary, (
+        f'{len(drift)} pinned {subject} not match this interpreter:\n  '
+        + '\n  '.join(drift)
+        + f'\n{REBUILD_HINT}'
+    )
 
 
-def main() -> None:
+def check_dependency_pins() -> str:
+    summary, failure = dependency_pin_report()
+    if failure:
+        fail(failure)
+    return summary
+
+
+def main(argv: list[str]) -> None:
     check_markdown()
     check_scripts()
     documented_flags = check_flags()
-    pins = check_dependency_pins()
+    # The lint runs on any interpreter, including one that never installs the
+    # requirements; only a caller that claims to run the suite asks for pins.
+    pins = check_dependency_pins() if '--check-pins' in argv else 'not-requested'
     print(
         f'repository_validation=passed markdown={len(MARKDOWN)} '
         f'shell={len(SHELL)} python_scripts={len(PYTHON_SCRIPTS)} '
@@ -215,4 +234,4 @@ def main() -> None:
 
 
 if __name__ == '__main__':
-    main()
+    main(sys.argv[1:])

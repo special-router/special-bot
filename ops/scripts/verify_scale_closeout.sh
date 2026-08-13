@@ -12,7 +12,7 @@ PYTHON=${SPECIAL_VERIFY_PYTHON:-$ROOT/.venv/bin/python}
 cd "$ROOT"
 
 python3 ops/scripts/validate_repository.py
-"$PYTHON" ops/scripts/validate_repository.py
+"$PYTHON" ops/scripts/validate_repository.py --check-pins
 python3 -m unittest ops/scripts/test_validate_origins.py
 python3 ops/scripts/validate_origins.py ops/origins.example.json
 bash -n entrypoint.sh ops/scripts/*.sh

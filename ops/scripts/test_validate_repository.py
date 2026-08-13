@@ -1,6 +1,12 @@
 import unittest
 
-from ops.scripts.validate_repository import dependency_drift, flag_drift, pinned_requirements, REQUIREMENTS
+from ops.scripts.validate_repository import (
+    dependency_drift,
+    dependency_pin_report,
+    flag_drift,
+    pinned_requirements,
+    REQUIREMENTS,
+)
 
 
 SETTINGS = """
@@ -89,6 +95,17 @@ class DependencyDriftTests(unittest.TestCase):
     def test_an_absent_dependency_is_not_drift(self):
         # The validator also runs on a bare interpreter that installs nothing.
         self.assertEqual(dependency_drift(self.PINNED, {'httpx': None, 'py3xui': None}), [])
+
+
+class DependencyPinReportTests(unittest.TestCase):
+    """The interpreter running these tests installs requirements.txt, by construction."""
+
+    def test_this_interpreter_matches_every_pin_it_has(self):
+        summary, failure = dependency_pin_report()
+        self.assertIsNone(failure)
+        verified, pinned = summary.split('/')
+        self.assertEqual(pinned, str(len(pinned_requirements(REQUIREMENTS.read_text(encoding='utf-8')))))
+        self.assertGreater(int(verified), 0)
 
 
 if __name__ == '__main__':
