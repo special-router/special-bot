@@ -21,7 +21,7 @@ from telegram import Bot, LabeledPrice
 
 from apps.analytics.models import MoneyEvent
 from apps.servers.management.commands.audit_xui_inbounds import fetch_inbound_snapshots
-from apps.servers.models import Server
+from apps.servers.models import Server, TariffServer
 from apps.servers.subscription_connector import build_subscription_url
 from apps.vpn.management.commands.audit_legacy_vpn import fetch_control_plane_client_ids, get_server_entitlement
 from apps.vpn.models import UserVPN
@@ -459,8 +459,12 @@ async def create_probe_invoice_link(timeout: float) -> None:
     monitoring state.
     """
     bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
-    await bot.initialize()
     try:
+        # Inside the ``try``, because ``initialize`` marks the request objects
+        # initialised before calling ``get_me`` — and ``get_me`` is exactly what
+        # a revoked bot token fails. Left outside, the most likely failure of
+        # all leaks two live HTTPXRequest clients bound to a loop we then close.
+        await bot.initialize()
         await bot.create_invoice_link(
             title='Проверка оплаты',
             description='Служебная проверка платёжного пути. Оплачивать не нужно.',
@@ -522,23 +526,50 @@ def probe_invoice_link(timeout: float) -> str | None:
     return None
 
 
+def probe_tariff_lookup() -> str | None:
+    """Resolve the tariff the way the top-up handler resolves it.
+
+    ``top_up_balance_days`` reaches ``send_invoice`` only after a bare
+    ``TariffServer.objects.aget()``, and nothing constrains that table to one
+    row. Empty or doubled, the customer taps an amount and gets an exception
+    instead of an invoice — while the provider itself is perfectly healthy. The
+    lookup is repeated here rather than inferred, because a probe that skips it
+    stays green through exactly that outage. ``aget`` is ``get`` behind
+    ``sync_to_async``, so the sync call resolves identically.
+    """
+    try:
+        TariffServer.objects.get()
+    except TariffServer.DoesNotExist:
+        return 'tariff_missing'
+    except TariffServer.MultipleObjectsReturned:
+        return 'tariff_ambiguous'
+    except Exception as error:
+        return type(error).__name__[:64]
+    return None
+
+
 def run_checkout_probe() -> LayerResult:
     """Whether a customer could pay right now, and whether anyone has been paying.
 
-    Two independent questions, kept apart on purpose. A healthy probe with a
-    growing gap is a demand problem; a failing probe is a checkout problem, and
-    it outranks the gap, because a zero gap alongside a broken probe only means
-    the last payment landed before the break.
+    Three questions, kept apart on purpose, and every verdict survives into
+    ``details`` even when another one outranks it. Order follows the customer's
+    own path: our tariff lookup runs before the provider is ever asked, so a
+    broken lookup is reported as ours rather than blamed on the provider. A
+    failing checkout in turn outranks the gap, because a zero gap alongside a
+    broken checkout only means the last payment landed before the break.
     """
+    tariff_error = probe_tariff_lookup()
     invoice_error = probe_invoice_link(float(settings.SPECIAL_MONITOR_CHECKOUT_TIMEOUT))
     gap_days = cash_gap_days()
     threshold = settings.SPECIAL_MONITOR_CASH_GAP_DAYS
     gap_breached = gap_days is not None and gap_days > threshold
     return LayerResult(
         layer='checkout',
-        ok=invoice_error is None and not gap_breached,
-        error_class=invoice_error or ('cash_gap' if gap_breached else None),
+        ok=tariff_error is None and invoice_error is None and not gap_breached,
+        error_class=tariff_error or invoice_error or ('cash_gap' if gap_breached else None),
         details={
+            'tariff_ok': tariff_error is None,
+            'tariff_error_class': tariff_error,
             'invoice_ok': invoice_error is None,
             'invoice_error_class': invoice_error,
             'cash_gap_days': gap_days,
