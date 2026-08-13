@@ -941,6 +941,21 @@ _MIRROR_REGION_TOKENS = {
 # An endpoint whose region we cannot name is still worth offering; naming it
 # after the provider's own string is the part we refuse.
 _MIRROR_UNKNOWN_REGION = '🌐 Backup'
+# Public addresses that answer on 443 and are not anybody's VPN server.  A
+# provider listed 1.1.1.1 under its own '🇪🇺 Fastest' label; every region we
+# rendered then pointed a customer at an anycast resolver, which accepts the TCP
+# connection and never completes a handshake, so a whole subscription looked
+# alive and worked nowhere.  A label is not evidence about what listens, so
+# these are refused whatever the provider calls them.  Private, loopback,
+# link-local, reserved and documentation ranges are already refused by
+# ``_is_public_unicast``; these are ordinary global unicast and must be named.
+_MIRROR_EXCLUDED_HOSTS = frozenset(ipaddress.ip_address(address) for address in (
+    '1.1.1.1', '1.0.0.1', '2606:4700:4700::1111', '2606:4700:4700::1001',
+    '8.8.8.8', '8.8.4.4', '2001:4860:4860::8888', '2001:4860:4860::8844',
+    '9.9.9.9', '149.112.112.112', '2620:fe::fe', '2620:fe::9',
+    '77.88.8.8', '77.88.8.1', '2a02:6b8::feed:0ff', '2a02:6b8:0:1::feed:0ff',
+    '208.67.222.222', '208.67.220.220', '2620:119:35::35', '2620:119:53::53',
+))
 _REGIONAL_INDICATOR_A = 0x1F1E6
 
 
@@ -1351,14 +1366,24 @@ def _branded_mirror_endpoints(endpoints: list[dict]) -> list[dict]:
     provider that reorders its outbounds between two refreshes cannot reshuffle
     a customer's list.  Ordering by the rendered label groups the countries in a
     fixed sequence and leaves the unnamed group last, because its globe sorts
-    above every regional indicator; ``(host, port)`` decides inside a region.
+    above every regional indicator.
+
+    Inside a region the least widely shared host wins, and ``(host, port)``
+    still separates hosts shared equally often.  A host a provider offers under
+    nine different flags is a front or an aggregate rather than the server of
+    any one of those countries, while a host that appears under one flag only is
+    what that flag names.  The count comes from the document's own contents, so
+    the choice remains a function of what the provider sent and not of the order
+    it sent it in.
     """
     from django.conf import settings
     limit = int(_bounded_number(
         getattr(settings, 'SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION', 1),
         default=1, lower=1, upper=_MIRROR_MAX_ENDPOINTS))
+    spread = _mirror_host_spread(endpoints)
     selected, counts = [], {}
-    for endpoint in sorted(endpoints, key=lambda item: (item['label'], item['host'], item['port'])):
+    for endpoint in sorted(endpoints, key=lambda item: (item['label'], spread[item['host']],
+                                                        item['host'], item['port'])):
         position = counts.get(endpoint['label'], 0)
         if position >= limit:
             continue
@@ -1369,6 +1394,14 @@ def _branded_mirror_endpoints(endpoints: list[dict]) -> list[dict]:
             endpoint['remark'] = f"{endpoint['label']} {position + 1}"
         selected.append(endpoint)
     return selected
+
+
+def _mirror_host_spread(endpoints: list[dict]) -> dict[str, int]:
+    """Count how many distinct regions each host is offered under."""
+    regions: dict[str, set] = {}
+    for endpoint in endpoints:
+        regions.setdefault(endpoint['host'], set()).add(endpoint['label'])
+    return {host: len(labels) for host, labels in regions.items()}
 
 
 def _mirror_field(value, *, limit: int = 256) -> str:
@@ -1390,14 +1423,20 @@ def _mirror_port(value) -> int | None:
 
 
 def _safe_endpoint_host(host: str) -> bool:
-    """Reject hosts that would aim a client at this deployment's own network."""
+    """Reject hosts that are not a third party's own server.
+
+    Two refusals for two different failures. A private, loopback or reserved
+    literal would aim a client at this deployment's own network; a public
+    resolver or anycast address is perfectly reachable and simply has no VPN
+    behind it, which renders an entry that connects and then hangs.
+    """
     if any(character in host for character in ' \t/@?#') or host.casefold() == 'localhost':
         return False
     try:
         literal = ipaddress.ip_address(host)
     except ValueError:
         return True
-    return _is_public_unicast(str(literal))
+    return _is_public_unicast(str(literal)) and literal not in _MIRROR_EXCLUDED_HOSTS
 
 
 def _build_mirror_vless(endpoint: dict) -> str:
@@ -1442,7 +1481,8 @@ def _is_sentinel_vless_line(raw_line: bytes) -> bool:
             literal = ipaddress.ip_address(host)
         except ValueError:
             literal = None
-        if literal and (literal.is_private or literal.is_loopback or literal.is_unspecified):
+        if literal and (literal.is_private or literal.is_loopback or literal.is_unspecified
+                        or literal in _MIRROR_EXCLUDED_HOSTS):
             return True
         fragment = unquote_to_bytes(parsed.fragment).decode('utf-8').strip().casefold()
     except (UnicodeDecodeError, ValueError):
