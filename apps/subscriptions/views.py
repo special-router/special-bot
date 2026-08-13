@@ -385,22 +385,25 @@ def subscription_proxy(request, sub_id: str):
     # once a real client is seen rendering that header.
     if getattr(settings_relays(), 'SUBSCRIPTION_STATUS_ENTRY_ENABLED', True):
         links.append(_build_vless(uuid_str, '127.0.0.1', 1, f'📊 Подписка-{status_label}', params, flow=''))
+    # 2) and 3) are the two endpoints this deployment operates and is
+    # accountable for, so a customer scanning the list reaches them before
+    # anything a third party serves.  Everything below them is a fallback.
     # 2) Direct NL primary.
     links.append(_build_vless(uuid_str, direct_host, direct_port,
                               _endpoint_label(_OWN_REGION_CODE), params, flow=flow))
-    # 3) Same-origin internal transport canary. Every candidate independently
-    # stable-reads its own live inbound and silently omits on any uncertainty.
-    if _is_internal_test_user(user_vpn.id):
-        links.extend(_internal_links(server.id, uuid_str))
-    # 4) External backup endpoints (feature-gated test group).
-    backup_links = _backup_links() if _is_backup_test_user(user_vpn.id) else None
-    if backup_links:
-        links.extend(backup_links)
-    # 5) RU relay (only if configured).
+    # 3) RU relay (only if configured).
     if relay_host:
         links.append(_build_vless(uuid_str, relay_host, relay_port,
                                   _endpoint_label(_OWN_REGION_CODE, relayed=True),
                                   params, flow=flow))
+    # 4) Same-origin internal transport canary. Every candidate independently
+    # stable-reads its own live inbound and silently omits on any uncertainty.
+    if _is_internal_test_user(user_vpn.id):
+        links.extend(_internal_links(server.id, uuid_str))
+    # 5) External backup endpoints (feature-gated test group).
+    backup_links = _backup_links() if _is_backup_test_user(user_vpn.id) else None
+    if backup_links:
+        links.extend(backup_links)
 
     payload = '\n'.join(links) + '\n'
     encoded = base64.b64encode(payload.encode('utf-8'))
