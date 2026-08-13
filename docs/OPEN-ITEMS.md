@@ -109,22 +109,28 @@ hours of unattended binding from the rollout, putting the flip around
 
 ## Reducing the NL host to 22/80/443
 
-Externally reachable on NL as last surveyed: **22, 80, 443, 2096, 3000, 8080,
-8443, 27914**. The intent is 22/80/443 only. Each remaining port is blocked for
-its own reason, and none of them is "nobody got around to it":
+Was **22, 80, 443, 2096, 3000, 8080, 8443, 27914**. Now **22, 80, 443, 8443,
+2096**, verified from a second host on 2026-08-13. Three ports closed that day,
+none of them costing a live connection:
 
-| Port | Why it is still open |
-|---|---|
-| `2096` | Live external clients are connected. Closing it disconnects paying users. Verify current connections before touching it. |
-| `3000` | **Identified 2026-08-13** — see below. A NestJS control plane over our own 3x-ui panel, owned by someone else. |
-| `8080` | Inbound 10. **Not diagnostic-only:** two clients, neither in our database, **9.6 TB** consumed. |
-| `8443` | The primary VLESS/Reality inbound. Not closable — it is the product. |
-| `27914` | Inbound 13. Seven clients, **none in our database**, 1.16 TB. Toggled by the service on `:3000`. |
+| Port | State | Why |
+|---|---|---|
+| `2096` | **open** | 12 established external connections. Closing it disconnects paying users. Verify current connections before touching it. |
+| `8443` | **open** | The primary VLESS/Reality inbound. Not closable — it is the product. |
+| `3000` | closed | An unauthenticated client-creation endpoint; see below. |
+| `8080` | closed | Inbound 10's own port. **Every connection to it came from `127.0.0.1`** — nginx proxying from `:80`, no direct external user at all — so blocking it externally cost nothing and the inbound kept running. Measured after the rule: 16 MB in 60 s, still flowing. |
+| `27914` | closed | Inbound 13, itself disabled. Blocked so re-enabling the inbound cannot silently re-expose the port. |
 
-**Measured 2026-08-13, and only one of these is firewalled.** `iptables -S INPUT`
-on NL carries exactly two rules, both for the panel port `23133`. Ports `2096`,
-`3000`, `8080` and `27914` have no rule at all. The host has been up 9 days, so
-nothing was lost to a reboot — the rules were never added.
+Each closed port has a pair of rules — `-i lo … -j ACCEPT` then `-j DROP` — so
+loopback callers keep working and only the outside is refused.
+
+**The rules now survive a reboot.** `/etc/systemd/system/iptables-restore.service`
+is a `Type=oneshot` unit ordered `Before=network-pre.target`, restoring
+`/etc/iptables/rules.v4` (mode 0600), enabled and **exercised** — started once
+and the ruleset re-read identical, so it is verified rather than merely
+installed. No package was installed; `iptables-save`/`iptables-restore` were
+already present. To change the rules, edit them live and re-run `iptables-save`
+into that file, or the next reboot silently reverts your change.
 
 ### `darkcore-connection-service` on `:3000` — an open client-creation endpoint
 
