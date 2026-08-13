@@ -1268,9 +1268,11 @@ class MirrorClientIdentityTests(SimpleTestCase):
 
         remarks = self.remarks(links)
         self.assertEqual(len(links), len(self.regions))
+        # The Dutch entry is numbered against our own line, which every response
+        # carries above the mirrored ones.
         self.assertEqual(remarks, [
-            '🇩🇪 Germany', '🇯🇵 Japan', '🇰🇿 Kazakhstan', '🇳🇱 Netherlands', '🇳🇴 Norway',
-            '🇷🇺 Russia', '🇸🇪 Sweden', '🇺🇸 United States', '🌐 Backup',
+            '🇩🇪 Германия', '🇰🇿 Казахстан', '🇳🇱 Нидерланды 2', '🇳🇴 Норвегия', '🇷🇺 Россия',
+            '🇺🇸 США', '🇸🇪 Швеция', '🇯🇵 Япония', '🌐 Резерв',
         ])
 
     @override_settings(SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION=views._MIRROR_MAX_ENDPOINTS)
@@ -1358,8 +1360,8 @@ class MirrorLabelPolicyTests(SimpleTestCase):
     regions = (('🇪🇺', 'Fastest'), ('🇳🇱', 'Netherlands'), ('🇩🇪', 'Germany'),
                ('🇸🇪', 'Sweden'), ('🇳🇴', 'Norway'), ('🇺🇸', 'USA'),
                ('🇰🇿', 'Kazakhstan'), ('🇯🇵', 'Japan'), ('🇷🇺', 'Russia'))
-    expected = ['🇩🇪 Germany', '🇪🇺 Europe', '🇯🇵 Japan', '🇰🇿 Kazakhstan', '🇳🇱 Netherlands',
-                '🇳🇴 Norway', '🇷🇺 Russia', '🇸🇪 Sweden', '🇺🇸 United States']
+    expected = ['🇩🇪 Германия', '🇪🇺 Европа', '🇰🇿 Казахстан', '🇳🇱 Нидерланды 2', '🇳🇴 Норвегия',
+                '🇷🇺 Россия', '🇺🇸 США', '🇸🇪 Швеция', '🇯🇵 Япония']
 
     def setUp(self):
         super().setUp()
@@ -1415,7 +1417,7 @@ class MirrorLabelPolicyTests(SimpleTestCase):
         remarks = self.remarks(views._sanitize_upstream_payload(self.document(flags=False)))
 
         self.assertNotIn('SWEDEN_VLESS_1', ' '.join(remarks))
-        self.assertIn('🇸🇪 Sweden', remarks)
+        self.assertIn('🇸🇪 Швеция', remarks)
         # 'Fastest' names no place, so it keeps an honest generic label rather
         # than borrowing the provider's word for it.
         self.assertIn(views._MIRROR_UNKNOWN_REGION, remarks)
@@ -1428,14 +1430,14 @@ class MirrorLabelPolicyTests(SimpleTestCase):
         # Same servers, reordered document: identical list, same chosen hosts.
         self.assertEqual(views._sanitize_upstream_payload(self.document(reverse=True)), links)
         self.assertEqual([urlsplit(link).hostname for link in links],
-                         [f'server-{index}-0.example' for index in (2, 0, 7, 6, 1, 4, 8, 3, 5)])
+                         [f'server-{index}-0.example' for index in (2, 0, 6, 1, 4, 8, 5, 3, 7)])
 
     @override_settings(SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION=3)
     def test_raising_the_per_region_cap_yields_more_entries(self):
         remarks = self.remarks(views._sanitize_upstream_payload(self.document()))
 
         self.assertEqual(len(remarks), 27)
-        self.assertEqual(remarks[:3], ['🇩🇪 Germany', '🇩🇪 Germany 2', '🇩🇪 Germany 3'])
+        self.assertEqual(remarks[:3], ['🇩🇪 Германия', '🇩🇪 Германия 2', '🇩🇪 Германия 3'])
 
     @override_settings(
         SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
@@ -1479,8 +1481,9 @@ class MirrorLabelPolicyTests(SimpleTestCase):
             RequestFactory().get('/sub/synthetic'), 'synthetic').content).decode().splitlines()
 
         self.assertEqual(len(lines), 3 + 9)
-        self.assertEqual(self.remarks(lines[:2]), ['📊 Подписка-подписка окончена', '🇳🇱 NL Direct'])
-        self.assertEqual(self.remarks(lines[-1:]), ['🇳🇱 NL Relay'])
+        self.assertEqual(self.remarks(lines[:2]),
+                         ['📊 Подписка-подписка окончена', '🇳🇱 Нидерланды'])
+        self.assertEqual(self.remarks(lines[-1:]), ['🇳🇱 Нидерланды белые списки'])
         self.assertEqual(urlsplit(lines[1]).hostname, 'direct.example')
         self.assertEqual(urlsplit(lines[-1]).hostname, 'relay.example')
         self.assertEqual(self.remarks(lines[2:-1]), self.expected)
@@ -1495,8 +1498,8 @@ class MirrorLabelPolicyTests(SimpleTestCase):
         """
         backup = views._MIRROR_UNKNOWN_REGION
         for label, expected in (
-            ('🇯🇵 Japan#x?a=b&c=d/../', '🇯🇵 Japan'),
-            ('../../🇯🇵', '🇯🇵 Japan'),
+            ('🇯🇵 Japan#x?a=b&c=d/../', '🇯🇵 Япония'),
+            ('../../🇯🇵', '🇯🇵 Япония'),
             ('🇯🇵 Japan\r\nX-Injected: 1', backup),
             ('🇯🇵 Japan' * 100, backup),
             ('🇯🇵\x00Japan', backup),
@@ -1516,6 +1519,159 @@ class MirrorLabelPolicyTests(SimpleTestCase):
                 self.assertNotIn('\n', link)
                 self.assertNotIn('#', parsed.fragment)
                 self.assertEqual(unquote(parsed.fragment), expected)
+
+
+@override_settings(
+    SUBSCRIPTION_BASE_URL='https://direct.example/sub',
+    SUBSCRIPTION_DIRECT_ADVERTISED_PORT=0,
+    SUBSCRIPTION_STATUS_ENTRY_ENABLED=True,
+    SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=False,
+)
+class EndpointLabelTests(SimpleTestCase):
+    """What a line tells a customer: where it exits, and how it gets there.
+
+    Two lines of the same country are not substitutes — the relayed one is
+    reachable from a whitelisted network that refuses the direct host — so the
+    route is part of the label, and it is composed from the endpoint's own flag
+    rather than written onto the one line that happens to need it today.
+    """
+
+    params = {'public_key': 'synthetic-public-key', 'server_name': 'sni.example',
+              'short_ids': ['synthetic-short-id'], 'port': 8443, 'network': 'tcp'}
+
+    def remarks(self, links):
+        return [unquote(urlsplit(link).fragment) for link in links]
+
+    def subscription(self, client_vpn_host='relay.example:443', document=None):
+        """Render one customer's document, with mirrored sources only on request."""
+        views._clear_backup_cache()
+        self.addCleanup(views._clear_backup_cache)
+        with patch('apps.subscriptions.views._fetch_upstream_payload',
+                   return_value=({}, document or b'')), \
+                patch('apps.subscriptions.views._get_params', return_value=self.params), \
+                patch('apps.subscriptions.views.TelegramUser.objects') as telegram_user_objects, \
+                patch('apps.subscriptions.views.UserVPN.objects') as user_vpn_objects:
+            user_vpn_objects.select_related.return_value.get.return_value = SimpleNamespace(
+                id=801, enabled=True, user_id=801, vpn_uuid='synthetic-local-id',
+                server=SimpleNamespace(id=1, inbound_id=5, tariff=None,
+                                       client_vpn_host=client_vpn_host),
+            )
+            telegram_user_objects.annotate_balance.return_value.filter.return_value.first.return_value = None
+            response = views.subscription_proxy(
+                RequestFactory().get('/sub/synthetic'), 'synthetic')
+        return base64.b64decode(response.content).decode().splitlines()
+
+    def mirrored(self, **overrides):
+        raw = {'host': 'se-1.example', 'port': 443, 'uuid': 'synthetic-mirror-id',
+               'security': 'reality', 'remark': '🇸🇪 SWEDEN_VLESS_1',
+               'public_key': 'synthetic-pbk'}
+        raw.update(overrides)
+        return views._normalized_mirror_endpoint(raw)
+
+    def provider_document(self, *regions):
+        """A provider answer holding one flagged server per named region."""
+        return json.dumps({'outbounds': [{
+            'type': 'vless',
+            'tag': f'{flag} {name.upper()}_VLESS_1',
+            'server': f'{name.lower()}-1.example',
+            'server_port': 443,
+            'uuid': f'synthetic-{name.lower()}-id',
+            'tls': {'enabled': True, 'server_name': 'sni.example',
+                    'reality': {'enabled': True, 'public_key': 'synthetic-pbk',
+                                'short_id': 'ab01'}},
+        } for flag, name in regions]}).encode()
+
+    def test_the_direct_line_names_its_country_and_claims_no_route(self):
+        self.assertEqual(self.remarks(self.subscription())[1], '🇳🇱 Нидерланды')
+
+    def test_the_relayed_line_names_the_same_country_and_its_route(self):
+        lines = self.subscription()
+
+        self.assertEqual(self.remarks(lines)[-1], '🇳🇱 Нидерланды белые списки')
+        self.assertEqual(urlsplit(lines[-1]).hostname, 'relay.example')
+
+    def test_a_server_with_no_relay_renders_no_suffixed_line(self):
+        self.assertEqual(self.remarks(self.subscription(client_vpn_host='')),
+                         ['📊 Подписка-подписка окончена', '🇳🇱 Нидерланды'])
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_TEST_USER_IDS=[801],
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://subscription.example/mirror'],
+    )
+    def test_our_dutch_line_stays_bare_and_a_mirrored_one_is_numbered(self):
+        """Two identical entries would leave a customer nothing to choose on.
+
+        The number disambiguates and says nothing about whose endpoint it is.
+        Ours is the unsuffixed one because the view renders it above every
+        mirrored line; this pins that, so a later ordering change cannot quietly
+        demote our own endpoint to the numbered position.
+        """
+        remarks = self.remarks(
+            self.subscription(document=self.provider_document(('🇳🇱', 'Netherlands'),
+                                                              ('🇸🇪', 'Sweden'))))
+
+        self.assertEqual(remarks, ['📊 Подписка-подписка окончена', '🇳🇱 Нидерланды',
+                                   '🇳🇱 Нидерланды 2', '🇸🇪 Швеция',
+                                   '🇳🇱 Нидерланды белые списки'])
+        self.assertEqual(remarks.count('🇳🇱 Нидерланды'), 1)
+        self.assertLess(remarks.index('🇳🇱 Нидерланды'), remarks.index('🇳🇱 Нидерланды 2'))
+        for remark in remarks[1:]:
+            self.assertNotIn('Резерв', remark)
+            self.assertNotIn('Backup', remark)
+
+    def test_a_mirrored_endpoint_is_direct_and_says_only_its_country(self):
+        endpoint = self.mirrored()
+
+        self.assertFalse(endpoint['relayed'])
+        self.assertEqual(self.remarks([views._build_mirror_vless(endpoint)]), ['🇸🇪 Швеция'])
+
+    def test_the_suffix_follows_the_route_and_not_the_position_or_the_host(self):
+        """A relayed endpoint is labelled by construction, wherever it sits."""
+        relayed = self.mirrored(relayed=True)
+
+        self.assertEqual(relayed['remark'], '🇸🇪 Швеция белые списки')
+        self.assertEqual(relayed['host'], self.mirrored()['host'])
+        self.assertEqual(views._endpoint_label('SE'), '🇸🇪 Швеция')
+        self.assertEqual(views._endpoint_label('SE', relayed=True), '🇸🇪 Швеция белые списки')
+        # A route we can name on a region we cannot still names the route.
+        self.assertEqual(views._endpoint_label('', relayed=True),
+                         f'{views._MIRROR_UNKNOWN_REGION} белые списки')
+
+    def test_the_suffixed_remark_survives_the_fragment_encoding(self):
+        line = self.subscription()[-1]
+        fragment = urlsplit(line).fragment
+
+        self.assertEqual(unquote(fragment), '🇳🇱 Нидерланды белые списки')
+        # A literal space or Cyrillic byte in a fragment ends the URI early in a
+        # client that splits a subscription on whitespace.
+        self.assertTrue(line.isascii())
+        self.assertEqual(fragment.count('%20'), 3)
+        for character in ' ?&=/':
+            self.assertNotIn(character, fragment)
+
+    def test_every_rendered_region_name_is_written_in_russian(self):
+        for code, name in views._MIRROR_REGION_NAMES.items():
+            with self.subTest(code=code):
+                self.assertFalse(any(character.isascii() and character.isalpha()
+                                     for character in name))
+
+    def test_a_place_a_provider_writes_in_english_still_resolves_to_one(self):
+        """The parse side stays Latin; only what we render is translated."""
+        for label, expected in (('SWEDEN_VLESS_1', '🇸🇪 Швеция'),
+                                ('United States', '🇺🇸 США'),
+                                ('Hong Kong', '🇭🇰 Гонконг'),
+                                ('Holland', '🇳🇱 Нидерланды')):
+            with self.subTest(label=label):
+                self.assertEqual(views._endpoint_label(views._mirror_region_code(label)), expected)
+
+    def test_regions_order_by_their_russian_name_and_leave_the_unnamed_last(self):
+        codes = ('JP', 'DE', 'US', '', 'SE', 'GB', 'FI')
+
+        self.assertEqual(
+            [views._endpoint_label(code) for code in sorted(codes, key=views._region_order_key)],
+            ['🇬🇧 Великобритания', '🇩🇪 Германия', '🇺🇸 США', '🇫🇮 Финляндия', '🇸🇪 Швеция',
+             '🇯🇵 Япония', '🌐 Резерв'])
 
 
 class MirrorEndpointChoiceTests(SimpleTestCase):
@@ -1549,12 +1705,12 @@ class MirrorEndpointChoiceTests(SimpleTestCase):
         # rendered at all rather than rendered as something that never connects.
         ('🇦🇲', 'Armenia', (('8.8.8.8', 443),)),
     )
-    expected_hosts = ['de-1.example', 'shared.example', 'jp-1.example', 'kz-1.example',
-                      'nl-1.example', 'no-1.example', 'ru-1.example', 'se-1.example',
-                      'us-1.example']
-    expected_remarks = ['🇩🇪 Germany', '🇪🇺 Europe', '🇯🇵 Japan', '🇰🇿 Kazakhstan',
-                        '🇳🇱 Netherlands', '🇳🇴 Norway', '🇷🇺 Russia', '🇸🇪 Sweden',
-                        '🇺🇸 United States']
+    expected_hosts = ['de-1.example', 'shared.example', 'kz-1.example', 'nl-1.example',
+                      'no-1.example', 'ru-1.example', 'us-1.example', 'se-1.example',
+                      'jp-1.example']
+    expected_remarks = ['🇩🇪 Германия', '🇪🇺 Европа', '🇰🇿 Казахстан', '🇳🇱 Нидерланды 2',
+                        '🇳🇴 Норвегия', '🇷🇺 Россия', '🇺🇸 США', '🇸🇪 Швеция',
+                        '🇯🇵 Япония']
 
     def document(self, reverse=False):
         """The provider's answer: a root selector, region groups, then servers."""
@@ -1630,12 +1786,12 @@ class MirrorEndpointChoiceTests(SimpleTestCase):
 
         self.assertEqual(self.hosts(links).count('shared.example'), 1)
         self.assertEqual(self.remarks(links)[self.hosts(links).index('shared.example')],
-                         '🇪🇺 Europe')
+                         '🇪🇺 Европа')
 
     def test_a_region_whose_only_candidate_is_excluded_disappears(self):
         remarks = self.remarks(views._sanitize_upstream_payload(self.document()))
 
-        self.assertNotIn('🇦🇲 Armenia', remarks)
+        self.assertNotIn('🇦🇲 Армения', remarks)
         self.assertEqual(remarks, self.expected_remarks)
 
     def test_selection_is_identical_across_two_runs_and_a_reordered_document(self):
@@ -1662,8 +1818,8 @@ class MirrorEndpointChoiceTests(SimpleTestCase):
         """The tags the provider writes for its own transit nodes, exactly as sent."""
         for tag, expected in (('L2_BRIDGE_VLESS_1', views._MIRROR_UNKNOWN_REGION),
                               ('L3_BRIDGE_VLESS_2', views._MIRROR_UNKNOWN_REGION),
-                              ('BRIDGE_RUSSIA_VLESS_1', '🇷🇺 Russia'),
-                              ('SWEDEN_VLESS_1', '🇸🇪 Sweden')):
+                              ('BRIDGE_RUSSIA_VLESS_1', '🇷🇺 Россия'),
+                              ('SWEDEN_VLESS_1', '🇸🇪 Швеция')):
             with self.subTest(tag=tag):
                 payload = json.dumps({'outbounds': [{
                     'type': 'vless', 'tag': tag, 'server': 'bridge.example',

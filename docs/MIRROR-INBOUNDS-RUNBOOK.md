@@ -195,7 +195,7 @@ a customer's list.
 their rack inventory. Rendering either tells our customer who we buy from. The
 label is read for exactly one thing — an ISO 3166-1 alpha-2 code, from a flag
 emoji or a place written in words — and the rendered text, flag included, is
-composed here from that code. No country signal → `🌐 Backup`.
+composed here from that code, in Russian. No country signal → `🌐 Резерв`.
 
 ---
 

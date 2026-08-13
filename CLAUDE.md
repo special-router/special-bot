@@ -18,8 +18,9 @@ searching.
 | **RU relay** | `Server.client_vpn_host` in the DB | byte-transparent nginx stream relay in front of NL | separate legacy credential, see [`docs/RUNBOOK.md`](docs/RUNBOOK.md) |
 
 The NL host is the `Server` row named «Нидерланды». The relay is **not** the NL
-host: it is whatever `client_vpn_host` holds, and it is the only source of the
-`🇳🇱 NL Relay` line in a subscription.
+host: it is whatever `client_vpn_host` holds, and it is the only relayed
+endpoint in a subscription — the one line rendered
+`🇳🇱 Нидерланды белые списки`.
 
 ## The one validation command
 

@@ -55,7 +55,7 @@ internal canary, not of the customer path.
   with no days left get an `expiryTime` in the past so happ hides them.
 
 Working inbounds keep an empty `email` so the subscription remark stays clean
-(`🇳🇱 NL Direct`, `🇳🇱 NL Relay`).
+(`🇳🇱 Нидерланды`, `🇳🇱 Нидерланды белые списки`).
 
 ## Invariants
 

@@ -386,7 +386,8 @@ def subscription_proxy(request, sub_id: str):
     if getattr(settings_relays(), 'SUBSCRIPTION_STATUS_ENTRY_ENABLED', True):
         links.append(_build_vless(uuid_str, '127.0.0.1', 1, f'📊 Подписка-{status_label}', params, flow=''))
     # 2) Direct NL primary.
-    links.append(_build_vless(uuid_str, direct_host, direct_port, '🇳🇱 NL Direct', params, flow=flow))
+    links.append(_build_vless(uuid_str, direct_host, direct_port,
+                              _endpoint_label(_OWN_REGION_CODE), params, flow=flow))
     # 3) Same-origin internal transport canary. Every candidate independently
     # stable-reads its own live inbound and silently omits on any uncertainty.
     if _is_internal_test_user(user_vpn.id):
@@ -397,7 +398,9 @@ def subscription_proxy(request, sub_id: str):
         links.extend(backup_links)
     # 5) RU relay (only if configured).
     if relay_host:
-        links.append(_build_vless(uuid_str, relay_host, relay_port, '🇳🇱 NL Relay', params, flow=flow))
+        links.append(_build_vless(uuid_str, relay_host, relay_port,
+                                  _endpoint_label(_OWN_REGION_CODE, relayed=True),
+                                  params, flow=flow))
 
     payload = '\n'.join(links) + '\n'
     encoded = base64.b64encode(payload.encode('utf-8'))
@@ -912,7 +915,29 @@ _MIRROR_GROUP_TYPES = ('selector', 'urltest')
 # thing — which country the endpoint sits in — and every character that reaches
 # the URI, the flag included, is regenerated here from the ISO 3166-1 alpha-2
 # code that signal resolved to.
+# The names are Russian because the whole list is: the bot speaks Russian, the
+# status line above these entries is Russian, and a customer reading «Подписка»
+# and «белые списки» in one list should not find 'Netherlands' between them.
 _MIRROR_REGION_NAMES = {
+    'AE': 'ОАЭ', 'AM': 'Армения', 'AT': 'Австрия', 'AU': 'Австралия', 'AZ': 'Азербайджан',
+    'BE': 'Бельгия', 'BG': 'Болгария', 'BR': 'Бразилия', 'BY': 'Беларусь', 'CA': 'Канада',
+    'CH': 'Швейцария', 'CN': 'Китай', 'CY': 'Кипр', 'CZ': 'Чехия', 'DE': 'Германия',
+    'DK': 'Дания', 'EE': 'Эстония', 'ES': 'Испания', 'EU': 'Европа', 'FI': 'Финляндия',
+    'FR': 'Франция', 'GB': 'Великобритания', 'GE': 'Грузия', 'GR': 'Греция',
+    'HK': 'Гонконг', 'HU': 'Венгрия', 'ID': 'Индонезия', 'IE': 'Ирландия', 'IL': 'Израиль',
+    'IN': 'Индия', 'IR': 'Иран', 'IS': 'Исландия', 'IT': 'Италия', 'JP': 'Япония',
+    'KG': 'Киргизия', 'KR': 'Южная Корея', 'KZ': 'Казахстан', 'LT': 'Литва',
+    'LU': 'Люксембург', 'LV': 'Латвия', 'MD': 'Молдова', 'MX': 'Мексика', 'MY': 'Малайзия',
+    'NL': 'Нидерланды', 'NO': 'Норвегия', 'NZ': 'Новая Зеландия', 'PL': 'Польша',
+    'PT': 'Португалия', 'RO': 'Румыния', 'RS': 'Сербия', 'RU': 'Россия', 'SE': 'Швеция',
+    'SG': 'Сингапур', 'SK': 'Словакия', 'TH': 'Таиланд', 'TR': 'Турция', 'TW': 'Тайвань',
+    'UA': 'Украина', 'US': 'США', 'UZ': 'Узбекистан', 'VN': 'Вьетнам',
+    'ZA': 'ЮАР',
+}
+# The parse side stays English and is never rendered: a provider writes
+# 'SWEDEN_VLESS_1', and ``_label_words`` only collects ASCII runs, so a Cyrillic
+# token table would recognize no place a provider actually writes.
+_MIRROR_REGION_ENGLISH_NAMES = {
     'AE': 'UAE', 'AM': 'Armenia', 'AT': 'Austria', 'AU': 'Australia', 'AZ': 'Azerbaijan',
     'BE': 'Belgium', 'BG': 'Bulgaria', 'BR': 'Brazil', 'BY': 'Belarus', 'CA': 'Canada',
     'CH': 'Switzerland', 'CN': 'China', 'CY': 'Cyprus', 'CZ': 'Czechia', 'DE': 'Germany',
@@ -934,13 +959,24 @@ _MIRROR_REGION_ALIASES = {
     'EMIRATES': 'AE', 'TURKIYE': 'TR', 'CZECHREPUBLIC': 'CZ',
 }
 _MIRROR_REGION_TOKENS = {
-    **{name.upper().replace(' ', ''): code for code, name in _MIRROR_REGION_NAMES.items()},
+    **{name.upper().replace(' ', ''): code
+       for code, name in _MIRROR_REGION_ENGLISH_NAMES.items()},
     **{code: code for code in _MIRROR_REGION_NAMES},
     **_MIRROR_REGION_ALIASES,
 }
 # An endpoint whose region we cannot name is still worth offering; naming it
 # after the provider's own string is the part we refuse.
-_MIRROR_UNKNOWN_REGION = '🌐 Backup'
+_MIRROR_UNKNOWN_REGION = '🌐 Резерв'
+# How the endpoint reaches the customer, which is the one thing that is not
+# interchangeable between two lines of the same country: everything we and our
+# providers serve is dialled directly except what goes through the RU relay in
+# ``Server.client_vpn_host``.  The suffix is composed from that property of the
+# endpoint, never written onto a line, so the second relayed endpoint is
+# labelled correctly the day someone adds it.
+_RELAYED_LABEL_SUFFIX = 'белые списки'
+# Every endpoint this deployment runs itself exits in the Netherlands, the relay
+# included: the RU front is a byte-transparent stream relay, not another exit.
+_OWN_REGION_CODE = 'NL'
 # Public addresses that answer on 443 and are not anybody's VPN server.  A
 # provider listed 1.1.1.1 under its own '🇪🇺 Fastest' label; every region we
 # rendered then pointed a customer at an anycast resolver, which accepts the TCP
@@ -1265,11 +1301,18 @@ def _normalized_mirror_endpoint(raw: dict) -> dict | None:
     # read, and what reaches the URI is text this module composed, so a label
     # can no longer lengthen a remark, name the upstream, or carry inventory
     # numbering into a customer's client.
-    label = _mirror_region_label(_mirror_region_code(
-        _mirror_field(raw.get('remark')), _mirror_field(raw.get('region'), limit=64)))
+    region = _mirror_region_code(
+        _mirror_field(raw.get('remark')), _mirror_field(raw.get('region'), limit=64))
+    # A mirrored endpoint is dialled directly today, and the flag is read from
+    # the parsed outbound rather than assumed, so a source we ever reach through
+    # a relay says so once in its parser instead of once per rendered line.
+    relayed = bool(raw.get('relayed'))
+    label = _endpoint_label(region, relayed=relayed)
     endpoint = {
         'host': host,
         'port': port,
+        'region_code': region,
+        'relayed': relayed,
         # Our own UUIDs are quote-invariant, so quoting costs nothing here and
         # stops a provider from writing URI structure into the userinfo field.
         'uuid': quote(uuid, safe=''),
@@ -1353,9 +1396,17 @@ def _mirror_region_code(*labels: str) -> str:
     return ''
 
 
-def _mirror_region_label(code: str) -> str:
-    return f'{_region_flag(code)} {_MIRROR_REGION_NAMES.get(code, code)}' if code \
+def _endpoint_label(code: str, *, relayed: bool = False) -> str:
+    """Compose the only text a customer reads for one endpoint.
+
+    Two facts and nothing else: where it exits, and how it gets there.  A
+    country alone would leave the customer choosing between two lines that are
+    not substitutes — the relayed one is reachable from a whitelisted network
+    that refuses the direct host, and slower for everyone else.
+    """
+    region = f'{_region_flag(code)} {_MIRROR_REGION_NAMES.get(code, code)}' if code \
         else _MIRROR_UNKNOWN_REGION
+    return f'{region} {_RELAYED_LABEL_SUFFIX}' if relayed else region
 
 
 def _branded_mirror_endpoints(endpoints: list[dict]) -> list[dict]:
@@ -1364,9 +1415,9 @@ def _branded_mirror_endpoints(endpoints: list[dict]) -> list[dict]:
     Both the order and the selection are computed from the endpoint's own
     fields and never from its position in the provider's document, so a
     provider that reorders its outbounds between two refreshes cannot reshuffle
-    a customer's list.  Ordering by the rendered label groups the countries in a
-    fixed sequence and leaves the unnamed group last, because its globe sorts
-    above every regional indicator.
+    a customer's list.  Ordering is by the rendered country name, so the list
+    reads alphabetically in the language it is written in, and the unnamed group
+    is held last because it names no country to sort among them.
 
     Inside a region the least widely shared host wins, and ``(host, port)``
     still separates hosts shared equally often.  A host a provider offers under
@@ -1382,18 +1433,62 @@ def _branded_mirror_endpoints(endpoints: list[dict]) -> list[dict]:
         default=1, lower=1, upper=_MIRROR_MAX_ENDPOINTS))
     spread = _mirror_host_spread(endpoints)
     selected, counts = [], {}
-    for endpoint in sorted(endpoints, key=lambda item: (item['label'], spread[item['host']],
+    for endpoint in sorted(endpoints, key=lambda item: (_region_order_key(item['region_code']),
+                                                        spread[item['host']],
                                                         item['host'], item['port'])):
         position = counts.get(endpoint['label'], 0)
         if position >= limit:
             continue
         counts[endpoint['label']] = position + 1
-        # Two endpoints in one region would otherwise be indistinguishable in a
-        # client's list.
+        selected.append(endpoint)
+    return _numbered_mirror_endpoints(selected)
+
+
+def _numbered_mirror_endpoints(endpoints: list[dict]) -> list[dict]:
+    """Number the lines a customer would otherwise be unable to tell apart.
+
+    The count starts at the lines this deployment always renders itself, so a
+    mirrored Dutch endpoint reads '🇳🇱 Нидерланды 2' against our own bare
+    '🇳🇱 Нидерланды' rather than repeating it: two identical entries leave a
+    customer unable to choose between them, and unable to tell that one of them
+    failing means something different from the other failing.  Ours keeps the
+    bare label because the view renders it first, above every mirrored line.
+
+    A number is a disambiguator, never a category.  Nothing here may say whose
+    endpoint a line is: a word like 'Резерв' on this line would leak the thing
+    the region-label policy exists to hide, and would tell a customer to
+    distrust an endpoint that works.
+    """
+    counts = {label: 1 for label in _own_rendered_labels()}
+    for endpoint in endpoints:
+        position = counts.get(endpoint['label'], 0)
+        counts[endpoint['label']] = position + 1
         if position:
             endpoint['remark'] = f"{endpoint['label']} {position + 1}"
-        selected.append(endpoint)
-    return selected
+    return endpoints
+
+
+def _own_rendered_labels() -> tuple[str, ...]:
+    """The labels this deployment's own endpoints occupy in every response.
+
+    Constants, not per-request state: the direct line is unconditional and the
+    relayed one is the only other label we compose, which is what lets the
+    numbering account for them inside a per-source cache.
+    """
+    return _endpoint_label(_OWN_REGION_CODE), _endpoint_label(_OWN_REGION_CODE, relayed=True)
+
+
+def _region_order_key(code: str) -> tuple[bool, str]:
+    """Order regions the way the customer's alphabet does, unnamed last.
+
+    The rendered label cannot order the list: it opens with the flag, whose code
+    points follow the ISO alpha-2 code, so sorting on it spelled the list in ISO
+    order — readable while the names were English and coincidentally alphabetic,
+    arbitrary once they are Russian (🇫🇮 Финляндия ahead of 🇬🇧 Великобритания).
+    Sorting on the name itself is stable for the same reason the label was: the
+    name is a function of the code alone.
+    """
+    return not code, _MIRROR_REGION_NAMES.get(code, code)
 
 
 def _mirror_host_spread(endpoints: list[dict]) -> dict[str, int]:

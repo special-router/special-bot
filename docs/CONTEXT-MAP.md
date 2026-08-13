@@ -147,9 +147,9 @@ env DJANGO_SETTINGS_MODULE=bot.settings DATABASE_URL='sqlite:///:memory:' \
 
 `GET /sub/<sub_id>` returns base64 of, in order: a non-working status line
 (`127.0.0.1:1`, remark `📊 Подписка-осталось N дней` or `подписка окончена`),
-`🇳🇱 NL Direct` on the subscription hostname, then — only for allowlisted test
-users — internal canary lines and external backup lines, then `🇳🇱 NL Relay` if
-`server.client_vpn_host` is set. `flow` is deliberately empty: forcing Vision
+`🇳🇱 Нидерланды` on the subscription hostname, then — only for allowlisted test
+users — internal canary lines and external backup lines, then
+`🇳🇱 Нидерланды белые списки` if `server.client_vpn_host` is set. `flow` is deliberately empty: forcing Vision
 breaks the deployed client contract.
 
 Response headers drive the client app's interface: `Profile-Update-Interval: 12`,
