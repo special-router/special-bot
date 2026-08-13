@@ -292,10 +292,15 @@ Two rules make that check usable in both places it runs:
 
 - **Absence is not drift.** A package the interpreter does not have says
   nothing; only a version that contradicts a pin fails.
-- **A system interpreter is skipped entirely** (`pins=skipped-outside-venv/44`).
-  Absence alone is not enough to tell the two contexts apart: this machine's
-  `python3` carries 21 of the 44 as distro packages, at distro versions nobody
-  pinned, and it never runs the suite.
+- **The exemption belongs to the invocation, never to the interpreter.** A bare
+  `validate_repository.py` is a repository lint and passes anywhere
+  (`pins=not-requested`); `--check-pins` and `conftest.py` enforce, so every
+  interpreter that collects the suite is checked. An earlier version keyed the
+  exemption off `sys.prefix != sys.base_prefix`, which disabled the guard inside
+  the image — `Dockerfile` installs `requirements.txt` into the base interpreter
+  of `python:3.13-slim` and creates no venv — and let
+  `SPECIAL_VERIFY_PYTHON=/usr/bin/python3` produce a green suite run. This
+  machine's `python3` has 34 of the 44 installed, 21 of them drifted.
 
 **The pin nobody wrote is written now.** All eleven dependencies in
 `pyproject.toml` carry the version `requirements.txt` had already compiled, so
@@ -320,6 +325,28 @@ contract test compares behaviour.
 
 **Blocked on:** nothing. It is ordinary work, listed here so the next person does
 not rediscover it.
+
+## `TariffServer` is a singleton that nothing declares to be one
+
+`apps/telegram_bot/handlers/top_up_balance.py` reads the same table twice with
+different strictness: line 101 takes `afirst()` to record the funnel step, line
+113 takes `aget()` to price the invoice. Each is defensible on its own — the
+funnel must never crash the screen, and `aget()` failing loudly on two rows is
+**correct**, because `afirst()` there would silently bill at whichever row sorts
+first and a wrong-price charge to a real customer is worse than a visible error.
+
+Together they disagree. With two rows, the funnel records a plan at the first
+row's price and the invoice then refuses to pick one, so the customer taps an
+amount and gets an error while analytics believes a plan was chosen. With zero
+rows, `aget()` raises before `send_invoice` and the customer gets nothing.
+
+The checkout probe now catches both — `tariff_missing` and `tariff_ambiguous`
+are separate verdicts and are blamed before the payment provider is — so this is
+observable rather than silent. But monitoring a constraint is not enforcing one.
+
+**The fix is in the data, not the handler:** a uniqueness constraint plus a
+migration, after which both call sites can read the same way. Not done because a
+schema change on a live money path is its own decision.
 
 ## Not built
 
