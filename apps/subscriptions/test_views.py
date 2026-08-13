@@ -1,5 +1,6 @@
 import base64
 import copy
+import datetime
 import hashlib
 import io
 import json
@@ -17,9 +18,11 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from django.test import RequestFactory, SimpleTestCase, override_settings
+from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
+from django.utils import timezone
 
 from apps.subscriptions import views
+from apps.subscriptions.models import MirrorEndpointLiveness
 from apps.subscriptions.views import _build_vless, _is_backup_test_user, _is_internal_test_user
 
 
@@ -1528,12 +1531,12 @@ class MirrorLabelPolicyTests(SimpleTestCase):
     SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=False,
 )
 class EndpointLabelTests(SimpleTestCase):
-    """What a line tells a customer: where it exits, and how it gets there.
+    """What a line tells a customer: where it exits, and whether it survives a whitelist.
 
-    Two lines of the same country are not substitutes — the relayed one is
+    Two lines of the same country are not substitutes — the suffixed one is
     reachable from a whitelisted network that refuses the direct host — so the
-    route is part of the label, and it is composed from the endpoint's own flag
-    rather than written onto the one line that happens to need it today.
+    property is part of the label, and it is composed from the endpoint's own
+    flag rather than written onto the one line that happens to need it today.
     """
 
     params = {'public_key': 'synthetic-public-key', 'server_name': 'sni.example',
@@ -1584,7 +1587,7 @@ class EndpointLabelTests(SimpleTestCase):
     def test_the_direct_line_names_its_country_and_claims_no_route(self):
         self.assertEqual(self.remarks(self.subscription())[1], '🇳🇱 Нидерланды')
 
-    def test_the_relayed_line_names_the_same_country_and_its_route(self):
+    def test_the_relay_line_names_the_same_country_and_its_whitelist_property(self):
         """Both endpoints we operate sit at the top, ours before any fallback."""
         lines = self.subscription()
 
@@ -1618,7 +1621,7 @@ class EndpointLabelTests(SimpleTestCase):
                                    '🇸🇪 Швеция'])
         self.assertEqual(remarks.count('🇳🇱 Нидерланды'), 1)
         self.assertLess(remarks.index('🇳🇱 Нидерланды'), remarks.index('🇳🇱 Нидерланды 2'))
-        # The seed counts both of our labels, so moving the relayed line above
+        # The seed counts both of our labels, so moving the suffixed line above
         # the mirrors cannot renumber one of them onto a mirrored endpoint.
         self.assertEqual(remarks.count('🇳🇱 Нидерланды белые списки'), 1)
         self.assertEqual(remarks.count('🇳🇱 Нидерланды 2'), 1)
@@ -1626,22 +1629,23 @@ class EndpointLabelTests(SimpleTestCase):
             self.assertNotIn('Резерв', remark)
             self.assertNotIn('Backup', remark)
 
-    def test_a_mirrored_endpoint_is_direct_and_says_only_its_country(self):
+    def test_a_mirrored_endpoint_claims_no_whitelist_and_says_only_its_country(self):
         endpoint = self.mirrored()
 
-        self.assertFalse(endpoint['relayed'])
+        self.assertFalse(endpoint['whitelisted'])
         self.assertEqual(self.remarks([views._build_mirror_vless(endpoint)]), ['🇸🇪 Швеция'])
 
-    def test_the_suffix_follows_the_route_and_not_the_position_or_the_host(self):
-        """A relayed endpoint is labelled by construction, wherever it sits."""
-        relayed = self.mirrored(relayed=True)
+    @override_settings(SUBSCRIPTION_BACKUP_WHITELIST_SNI_SUFFIXES=['x5.ru'])
+    def test_the_suffix_follows_the_property_and_not_the_position_or_the_host(self):
+        """A whitelist-capable endpoint is labelled by construction, wherever it sits."""
+        whitelisted = self.mirrored(server_name='id.x5.ru')
 
-        self.assertEqual(relayed['remark'], '🇸🇪 Швеция белые списки')
-        self.assertEqual(relayed['host'], self.mirrored()['host'])
+        self.assertEqual(whitelisted['remark'], '🇸🇪 Швеция белые списки')
+        self.assertEqual(whitelisted['host'], self.mirrored()['host'])
         self.assertEqual(views._endpoint_label('SE'), '🇸🇪 Швеция')
-        self.assertEqual(views._endpoint_label('SE', relayed=True), '🇸🇪 Швеция белые списки')
-        # A route we can name on a region we cannot still names the route.
-        self.assertEqual(views._endpoint_label('', relayed=True),
+        self.assertEqual(views._endpoint_label('SE', whitelisted=True), '🇸🇪 Швеция белые списки')
+        # A property we can name on a region we cannot still names the property.
+        self.assertEqual(views._endpoint_label('', whitelisted=True),
                          f'{views._MIRROR_UNKNOWN_REGION} белые списки')
 
     def test_the_suffixed_remark_survives_the_fragment_encoding(self):
@@ -1839,6 +1843,239 @@ class MirrorEndpointChoiceTests(SimpleTestCase):
                 self.assertEqual(remark, expected)
                 self.assertNotIn('VLESS', remark)
                 self.assertNotIn('BRIDGE', remark.upper())
+
+
+class _MirrorDocumentMixin:
+    """One provider answer per named region, in the shape the live one has."""
+
+    def document(self, regions):
+        outbounds = []
+        for flag, name, members in regions:
+            for index, member in enumerate(members):
+                host, port, server_name = member
+                outbounds.append({
+                    'type': 'vless',
+                    'tag': f'{flag} {name.upper()}_VLESS_{index + 1}',
+                    'server': host,
+                    'server_port': port,
+                    'uuid': f'synthetic-{host}',
+                    'tls': {'enabled': True, 'server_name': server_name,
+                            'reality': {'enabled': True, 'public_key': 'synthetic-pbk',
+                                        'short_id': 'ab01'}},
+                })
+        return json.dumps({'outbounds': outbounds}).encode()
+
+    def hosts(self, links):
+        return [urlsplit(link).hostname for link in links]
+
+    def remarks(self, links):
+        return [unquote(urlsplit(link).fragment) for link in links]
+
+
+class MirrorEndpointLivenessTests(_MirrorDocumentMixin, TestCase):
+    """Which candidate a region resolves to once something has actually dialled.
+
+    Eleven of the live provider's thirty-one outbounds do not complete a
+    handshake, and the Russian region alone offers six candidates with two of
+    them dead. Selection never dials — a request has an eight-second fetch
+    budget — so it reads verdicts a probe wrote out of band, and every case
+    where it has none must land exactly where the blind pick landed.
+    """
+
+    regions = (
+        ('🇷🇺', 'Russia', (('ru-1.example', 443, 'sni.example'),
+                           ('ru-2.example', 443, 'sni.example'),
+                           ('ru-3.example', 443, 'sni.example'))),
+        ('🇸🇪', 'Sweden', (('se-1.example', 443, 'sni.example'),)),
+    )
+
+    def payload(self):
+        return self.document(self.regions)
+
+    def verdict(self, host, *, alive, port=443, age_seconds=0):
+        MirrorEndpointLiveness.objects.create(
+            host=host, port=port, alive=alive,
+            checked_at=timezone.now() - datetime.timedelta(seconds=age_seconds))
+
+    def rendered(self):
+        return views._sanitize_upstream_payload(self.payload())
+
+    def blind(self):
+        """What the deployment rendered before any verdict existed."""
+        with override_settings(SUBSCRIPTION_BACKUP_LIVENESS_ENABLED=False):
+            return self.rendered()
+
+    def test_the_blind_selection_takes_the_first_candidate_of_each_region(self):
+        self.assertEqual(self.hosts(self.blind()), ['ru-1.example', 'se-1.example'])
+
+    @override_settings(SUBSCRIPTION_BACKUP_LIVENESS_ENABLED=True)
+    def test_a_dead_verdict_removes_a_candidate_and_the_next_one_is_chosen(self):
+        self.verdict('ru-1.example', alive=False)
+
+        self.assertEqual(self.hosts(self.rendered()), ['ru-2.example', 'se-1.example'])
+
+    @override_settings(SUBSCRIPTION_BACKUP_LIVENESS_ENABLED=True)
+    def test_a_region_whose_every_candidate_is_dead_disappears(self):
+        """A region with nothing left is dropped, never rendered as a dead line."""
+        for host in ('ru-1.example', 'ru-2.example', 'ru-3.example'):
+            self.verdict(host, alive=False)
+
+        links = self.rendered()
+
+        self.assertEqual(self.hosts(links), ['se-1.example'])
+        self.assertNotIn('🇷🇺 Россия', self.remarks(links))
+
+    @override_settings(SUBSCRIPTION_BACKUP_LIVENESS_ENABLED=True)
+    def test_no_verdicts_at_all_reproduce_todays_output_exactly(self):
+        self.assertEqual(MirrorEndpointLiveness.objects.count(), 0)
+
+        self.assertEqual(self.rendered(), self.blind())
+
+    @override_settings(SUBSCRIPTION_BACKUP_LIVENESS_ENABLED=True,
+                       SUBSCRIPTION_BACKUP_LIVENESS_MAX_AGE_SECONDS=3600)
+    def test_an_expired_verdict_is_ignored(self):
+        """A server down an hour ago may be up now, so an old verdict stops counting."""
+        self.verdict('ru-1.example', alive=False, age_seconds=7200)
+
+        self.assertEqual(self.rendered(), self.blind())
+
+    @override_settings(SUBSCRIPTION_BACKUP_LIVENESS_ENABLED=True)
+    def test_a_candidate_known_to_answer_outranks_one_nobody_dialled(self):
+        self.verdict('ru-3.example', alive=True)
+
+        self.assertEqual(self.hosts(self.rendered()), ['ru-3.example', 'se-1.example'])
+
+    @override_settings(SUBSCRIPTION_BACKUP_LIVENESS_ENABLED=True)
+    def test_a_verdict_belongs_to_one_address_and_port(self):
+        self.verdict('ru-1.example', alive=False, port=8443)
+
+        self.assertEqual(self.rendered(), self.blind())
+
+    @override_settings(SUBSCRIPTION_BACKUP_LIVENESS_ENABLED=False)
+    def test_the_flag_off_reads_no_verdict_and_issues_no_query(self):
+        self.verdict('ru-1.example', alive=False)
+
+        with self.assertNumQueries(0):
+            links = self.rendered()
+
+        self.assertEqual(self.hosts(links), ['ru-1.example', 'se-1.example'])
+
+    @override_settings(SUBSCRIPTION_BACKUP_LIVENESS_ENABLED=True)
+    def test_a_database_that_cannot_answer_costs_the_improvement_not_the_list(self):
+        """One unavailable table must not become a 500 on every subscription refresh."""
+        with patch('apps.subscriptions.views.MirrorEndpointLiveness.objects.filter',
+                   side_effect=RuntimeError('database is locked')):
+            links = self.rendered()
+
+        self.assertEqual(links, self.blind())
+
+
+class MirrorWhitelistSniTests(_MirrorDocumentMixin, SimpleTestCase):
+    """Rendering the endpoints that keep working when a region is cut to a whitelist.
+
+    The provider advertises the bypass and implements none of it in routing:
+    three rules, no domain logic. It is in ``tls.server_name`` — two live nodes
+    announce a large Russian retailer, whose domain stays reachable so payments
+    and shops keep working, and a Reality handshake wearing that name passes
+    inspection that blocks everything else. Both nodes exit in Russia, so the
+    line stays Russian; only the suffix is new.
+    """
+
+    regions = (
+        ('🇷🇺', 'Russia', (('ru-1.example', 443, 'camouflage.example'),
+                           ('l1-bridge.example', 443, 'id.x5.example'),
+                           ('l2-bridge.example', 59406, 'id.x5.example'))),
+        ('🇸🇪', 'Sweden', (('se-1.example', 443, 'camouflage.example'),)),
+    )
+
+    def payload(self):
+        return self.document(self.regions)
+
+    def rendered(self):
+        return views._sanitize_upstream_payload(self.payload())
+
+    def test_a_declared_suffix_renders_its_own_line_carrying_the_suffix(self):
+        with override_settings(SUBSCRIPTION_BACKUP_WHITELIST_SNI_SUFFIXES=['x5.example']):
+            links = self.rendered()
+
+        self.assertEqual(self.remarks(links),
+                         ['🇷🇺 Россия', '🇷🇺 Россия белые списки', '🇷🇺 Россия белые списки 2',
+                          '🇸🇪 Швеция'])
+        self.assertEqual(self.hosts(links),
+                         ['ru-1.example', 'l1-bridge.example', 'l2-bridge.example',
+                          'se-1.example'])
+
+    def test_the_whitelist_line_does_not_consume_the_regions_ordinary_slot(self):
+        """One per region still means one ordinary Russian server, plus the bypass."""
+        with override_settings(SUBSCRIPTION_BACKUP_WHITELIST_SNI_SUFFIXES=['x5.example'],
+                               SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION=1):
+            remarks = self.remarks(self.rendered())
+
+        self.assertEqual(remarks.count('🇷🇺 Россия'), 1)
+        self.assertEqual(sum('белые списки' in remark for remark in remarks), 2)
+        self.assertLess(remarks.index('🇷🇺 Россия'), remarks.index('🇷🇺 Россия белые списки'))
+
+    def test_an_empty_suffix_list_changes_nothing(self):
+        """Undeclared, the two bypass nodes are three ordinary Russian candidates.
+
+        So the region collapses to one line again and the pick is the host
+        ordering this shipped with — the default renders exactly what it did
+        before whitelist camouflage was a concept here.
+        """
+        with override_settings(SUBSCRIPTION_BACKUP_WHITELIST_SNI_SUFFIXES=[]):
+            links = self.rendered()
+
+        self.assertEqual(self.remarks(links), ['🇷🇺 Россия', '🇸🇪 Швеция'])
+        self.assertEqual(self.hosts(links), ['l1-bridge.example', 'se-1.example'])
+
+    def test_a_tag_naming_a_bridge_is_never_the_signal(self):
+        """``BRIDGE_`` outbounds are byte-identical twins; only the SNI is evidence."""
+        with override_settings(SUBSCRIPTION_BACKUP_WHITELIST_SNI_SUFFIXES=['nothing.example']):
+            remarks = self.remarks(self.rendered())
+
+        self.assertNotIn('🇷🇺 Россия белые списки', remarks)
+        for remark in remarks:
+            self.assertNotIn('BRIDGE', remark.upper())
+
+    def test_a_neighbouring_registration_does_not_match_a_declared_suffix(self):
+        for server_name, expected in (('id.x5.example', True), ('x5.example', True),
+                                      ('ID.X5.EXAMPLE.', True), ('notx5.example', False),
+                                      ('x5.example.net', False), ('', False)):
+            with self.subTest(server_name=server_name), \
+                    override_settings(SUBSCRIPTION_BACKUP_WHITELIST_SNI_SUFFIXES=['x5.example']):
+                self.assertIs(views._whitelist_capable(server_name), expected)
+
+    def test_a_malformed_suffix_list_declares_nothing(self):
+        for suffixes in (None, 'x5.example', [None, 5], ['   '], ['.']):
+            with self.subTest(suffixes=suffixes), \
+                    override_settings(SUBSCRIPTION_BACKUP_WHITELIST_SNI_SUFFIXES=suffixes):
+                self.assertFalse(views._whitelist_capable('id.x5.example'))
+
+    def test_the_country_stays_the_exit_country_and_never_reads_as_foreign(self):
+        """L1 exits at its own Russian address; a foreign flag here would be a lie."""
+        with override_settings(SUBSCRIPTION_BACKUP_WHITELIST_SNI_SUFFIXES=['x5.example']):
+            remarks = self.remarks(self.rendered())
+
+        for remark in remarks:
+            if 'белые списки' in remark:
+                self.assertTrue(remark.startswith('🇷🇺 Россия'))
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://subscription.example/mirror'],
+        SUBSCRIPTION_BACKUP_MAX_MIRROR_ENTRIES=2,
+        SUBSCRIPTION_BACKUP_WHITELIST_SNI_SUFFIXES=['x5.example'],
+    )
+    def test_the_global_mirror_cap_still_binds_on_whitelist_lines(self):
+        """Our own status, Direct and Relay lines stay findable whatever renders here."""
+        views._clear_backup_cache()
+        self.addCleanup(views._clear_backup_cache)
+
+        with patch('apps.subscriptions.views._fetch_upstream_payload',
+                   return_value=({}, self.payload())):
+            links = views._backup_links()
+
+        self.assertEqual(self.remarks(links), ['🇷🇺 Россия', '🇷🇺 Россия белые списки'])
 
 
 class SubscriptionResponseCacheTests(SimpleTestCase):

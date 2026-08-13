@@ -454,6 +454,37 @@ SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_MODEL = env.str('SUBSCRIPTION_BACKUP_UPSTREA
 SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS = env.bool(
     'SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS', False)
 
+# Whether selection consults the verdicts ``probe_mirror_liveness`` writes.
+# Off, and with no verdicts, selection is the blind per-region pick this
+# shipped with: eleven of one provider's thirty-one outbounds do not complete a
+# handshake, and rendering a working one was luck. Nothing here ever dials
+# inside a request — a subscription has an eight-second fetch budget and one
+# handshake costs seconds.
+SUBSCRIPTION_BACKUP_LIVENESS_ENABLED = env.bool(
+    'SUBSCRIPTION_BACKUP_LIVENESS_ENABLED', False)
+# How old a verdict may be and still count. A server down an hour ago may be up
+# now, so a stale verdict must stop removing a candidate on its own; expiry
+# leaves selection where it was rather than where the last probe left it.
+SUBSCRIPTION_BACKUP_LIVENESS_MAX_AGE_SECONDS = env.int(
+    'SUBSCRIPTION_BACKUP_LIVENESS_MAX_AGE_SECONDS', 3600)
+# The prober runs one xray process per endpoint. Both bounds exist because it
+# is a management command an operator schedules: concurrency bounds the load of
+# one run, and the wall-clock ceiling bounds the run itself.
+SUBSCRIPTION_BACKUP_LIVENESS_PROBE_CONCURRENCY = env.int(
+    'SUBSCRIPTION_BACKUP_LIVENESS_PROBE_CONCURRENCY', 4)
+SUBSCRIPTION_BACKUP_LIVENESS_PROBE_MAX_SECONDS = env.int(
+    'SUBSCRIPTION_BACKUP_LIVENESS_PROBE_MAX_SECONDS', 300)
+SUBSCRIPTION_BACKUP_LIVENESS_PROBE_TIMEOUT_SECONDS = env.float(
+    'SUBSCRIPTION_BACKUP_LIVENESS_PROBE_TIMEOUT_SECONDS', 12)
+# Reality SNIs an operator declares as whitelist camouflage, matched on domain
+# labels. A provider advertising bypass of a mobile-internet shutdown puts it
+# nowhere in its routing config; it is the announced server name, a domain that
+# stays reachable while a region is cut to a whitelist. Never inferred from a
+# tag: ``BRIDGE_*`` outbounds are byte-identical twins of their plain
+# counterparts, same address and same exit.
+SUBSCRIPTION_BACKUP_WHITELIST_SNI_SUFFIXES = env.json(
+    'SUBSCRIPTION_BACKUP_WHITELIST_SNI_SUFFIXES', default=[])
+
 # Internal 3x-ui alternate-inbound canary. Endpoint records deliberately carry
 # only routing metadata; live 3x-ui remains the authority for client and
 # Reality data. A malformed rollout config produces no additional links.

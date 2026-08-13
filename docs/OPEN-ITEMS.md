@@ -409,8 +409,16 @@ hit every region at once. One dead country would not be.
 
 **The fix is a liveness signal in selection**, not a bigger exclusion list: probe
 candidates out of band, cache the verdict, and prefer a host known to answer.
-`ops/scripts/probe_mirror_tunnel.py` already dials a rendered list; the missing
-half is feeding its result back into the choice.
+
+**Built and inert.** `probe_mirror_liveness` dials every endpoint a configured
+source offers and writes `MirrorEndpointLiveness` rows; selection reads them
+behind `SUBSCRIPTION_BACKUP_LIVENESS_ENABLED`, which ships `False`. What remains
+before it can be turned on: a scheduled run on BOT — it is a management command
+and not a Celery task on purpose, because the workers run `--pool=solo` — and
+one manual run confirming that the container has egress and an executable
+`xray`. A run where nothing answered writes no verdict at all, so a broken
+prober cannot empty a customer's list, but it also means an unscheduled flag
+does nothing.
 
 ## Every Russian address in the provider document is an exit, not a bridge
 
@@ -427,8 +435,11 @@ plain counterparts — same address, same exit. The one real chain is
 `L2_BRIDGE` (`91.240.87.119`) exiting at `L1_BRIDGE` (`194.26.229.158`), and
 both ends are in Russia.
 
-So no mirrored endpoint is relayed, the `relayed` flag being `False` in every
-parser is correct, and `белые списки` still marks exactly one line: ours.
+So no mirrored endpoint is relayed. What the `x5.ru` SNI does mark is something
+else: an endpoint that stays reachable while a region is cut to a whitelist.
+The endpoint flag is now named `whitelisted` for that reason and is set only by
+`SUBSCRIPTION_BACKUP_WHITELIST_SNI_SUFFIXES`, never by a tag. With the default
+empty list, `белые списки` still marks exactly one line: ours.
 
 ## Not built
 
