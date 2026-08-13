@@ -10,13 +10,16 @@
 > internal relays, not mirrors — they lack per-client UUIDs and are not
 > usable as subscription endpoints.
 
-**Status (2026-08-12): the ingestion code is implemented, tested and deployed
-default-off.** `apps/subscriptions/views.py` fetches, classifies and renders
-provider endpoints today; what is missing is a provisioned provider. The
-"Design" and "Prerequisites" sections below therefore describe shipped
-behaviour and an external dependency respectively, not future work. Sections
-about the internal canary describe a separately gated feature that is also
-implemented and off.
+**Status (2026-08-13): live for `UserVPN` 801.** One provider is configured and
+its endpoints are verified end to end; every other subscription still renders the
+legacy three lines. The "Prerequisites" section below is therefore satisfied once,
+not pending. Sections about the internal canary describe a separately gated
+feature that is implemented and off.
+
+**For the operational sequence — the secret file, the device identity, the
+parsing bugs, the probe, and what widening the allowlist costs — read
+[`MIRROR-INBOUNDS-RUNBOOK.md`](MIRROR-INBOUNDS-RUNBOOK.md).** This document is
+the design; that one is what actually happened.
 
 ## Context
 

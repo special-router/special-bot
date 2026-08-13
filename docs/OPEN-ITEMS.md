@@ -48,14 +48,26 @@ failure count and timestamp.
 **Blocked on:** an approved external destination and a named on-call owner. Do
 not describe paging as live before both exist.
 
-### External backup endpoints
+### External backup endpoints, beyond the first user
 
-`SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=false`. Ingestion is implemented,
-format-aware and transport-gated.
+**Live since 2026-08-13, for `UserVPN` 801 alone.**
+`SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=true` with
+`SUBSCRIPTION_BACKUP_TEST_USER_IDS=[801]`. One provider is configured; its 9
+regions render as 8 country lines, each verified by a real Reality handshake with
+a distinct egress IP. 57 of 58 active subscriptions are untouched at three lines.
 
-**Blocked on:** provisioning at least one external provider, an accountable
-owner per provider, and a stable hostname — none of which are derivable from
-current infrastructure. See [`MIRROR-INBOUNDS-SPEC.md`](MIRROR-INBOUNDS-SPEC.md).
+**Blocked on an owner decision, and two facts that decision has to answer:**
+
+- **One shared upstream UUID for every customer.** Nobody can be revoked
+  individually, per-user consumption is invisible, and one abuser costs all of
+  them the account at once.
+- **The provider's device limit is 1/1.** The account is a single seat, so our
+  refreshes and the operator's own client compete for it. Raising it happens in
+  the provider's cabinet, not here.
+
+Per-user upstream credentials or chaining the provider through our own egress
+each remove both; neither is built. See
+[`MIRROR-INBOUNDS-RUNBOOK.md`](MIRROR-INBOUNDS-RUNBOOK.md#7-rolling-out).
 
 ### Internal same-origin canary
 

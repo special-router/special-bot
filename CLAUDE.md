@@ -77,6 +77,7 @@ caught a failure that the local run could not — see
 | How do I ship it? | [`docs/DEPLOY.md`](docs/DEPLOY.md) |
 | Something is broken in production | [`docs/RUNBOOK.md`](docs/RUNBOOK.md), [`docs/MONITORING.md`](docs/MONITORING.md) |
 | A user cannot connect | [`docs/INBOUND-DIAGNOSTICS-SPEC.md`](docs/INBOUND-DIAGNOSTICS-SPEC.md) (design only, not built) |
+| How do I add another provider's endpoints to a subscription? | [`docs/MIRROR-INBOUNDS-RUNBOOK.md`](docs/MIRROR-INBOUNDS-RUNBOOK.md) |
 
 ## What this repository cannot tell you
 

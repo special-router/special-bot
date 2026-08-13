@@ -95,10 +95,10 @@ environment; they come from a mode-0600 JSON file on the host.
 
 | Setting | Type | Default | Prod | What it does |
 |---|---|---|---|---|
-| `SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED` | bool | `False` | `false` | Master gate for third-party endpoints in a subscription. |
-| `SUBSCRIPTION_BACKUP_TEST_USER_IDS` | json | `[]` | `[]` | Allowlist of `UserVPN.id` during rollout. |
+| `SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED` | bool | `False` | **`true`** | Master gate for third-party endpoints in a subscription. |
+| `SUBSCRIPTION_BACKUP_TEST_USER_IDS` | json | `[]` | **`[801]`** | Allowlist of `UserVPN.id` during rollout. |
 | `SUBSCRIPTION_BACKUP_SECRET_FILE` | str | empty | container path | Path to the JSON secret inside the container. Compose binds `/dev/null` when the host path is unset, and settings rejects that non-regular file. Only a regular mode-0600 file is accepted. |
-| `SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS` | json | `None` | ? | Exact DNS hostname allowlist. Absent permits a controlled rollout; present but malformed denies everything. |
+| `SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS` | json | `None` | one provider host | Exact DNS hostname allowlist. Absent permits a controlled rollout; present but malformed denies everything. |
 | `SUBSCRIPTION_BACKUP_CONNECT_TIMEOUT_SECONDS` | float | `3` | ? | Per-source connect timeout. |
 | `SUBSCRIPTION_BACKUP_READ_TIMEOUT_SECONDS` | float | `5` | ? | Per-source read timeout. |
 | `SUBSCRIPTION_BACKUP_RESPONSE_MAX_BYTES` | int | `262144` | ? | Per-source response cap. |
@@ -109,9 +109,9 @@ environment; they come from a mode-0600 JSON file on the host.
 | `SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION` | int | `1` | ? | Mirrored endpoints kept per country, within one provider document. A provider lists every server it owns, so one region arrives nine times over; the customer picks a country, not a rack. Raise it to expose the rest. |
 | `SUBSCRIPTION_BACKUP_MAX_MIRROR_ENTRIES` | int | `16` | ? | Mirrored lines kept across all sources, so a provider returning hundreds cannot bury our own status/Direct/Relay lines. The tighter of this and `SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES` applies. |
 | `SUBSCRIPTION_BACKUP_FETCH_DEADLINE_SECONDS` | float | `8` | ? | Deadline for the whole fetch phase of one request. |
-| `SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT` | str | empty | ? | Providers serve a different document per User-Agent and reject unknown ones (`SFI/1.9` → sing-box JSON, `v2rayNG/1.8.5` and `Happ/1.0` → v2ray array, `clash-verge/1.5` → YAML). Empty keeps the neutral agent, so upgrading does not change a configured source's format. |
-| `SUBSCRIPTION_BACKUP_UPSTREAM_HWID` | str | empty | ? | Device identifier sent as `x-hwid`. A provider running the Remnawave device convention serves an instruction document instead of a configuration without it. Must match `^[a-zA-Z0-9=-]{10,64}$`; anything else sends no identity headers at all. **One stable value per installation** — a per-user or per-request value spends a device slot per subscription refresh and reads as a device flood. Never commit a value. |
-| `SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_OS` | str | empty | ? | Optional `x-device-os`, ≤32 printable ASCII. Sent only with a usable `SUBSCRIPTION_BACKUP_UPSTREAM_HWID`. |
+| `SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT` | str | empty | `SFI/1.9` | Providers serve a different document per User-Agent and reject unknown ones (`SFI/1.9` → sing-box JSON, `v2rayNG/1.8.5` and `Happ/1.0` → v2ray array, `clash-verge/1.5` → YAML). Empty keeps the neutral agent, so upgrading does not change a configured source's format. |
+| `SUBSCRIPTION_BACKUP_UPSTREAM_HWID` | str | empty | set, never printed | Device identifier sent as `x-hwid`. A provider running the Remnawave device convention serves an instruction document instead of a configuration without it. Must match `^[a-zA-Z0-9=-]{10,64}$`; anything else sends no identity headers at all. **One stable value per installation** — a per-user or per-request value spends a device slot per subscription refresh and reads as a device flood. Never commit a value. |
+| `SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_OS` | str | empty | `Android` | Optional `x-device-os`, ≤32 printable ASCII. Sent only with a usable `SUBSCRIPTION_BACKUP_UPSTREAM_HWID`. |
 | `SUBSCRIPTION_BACKUP_UPSTREAM_OS_VERSION` | str | empty | ? | Optional `x-ver-os`, ≤32 printable ASCII. Same condition. |
 | `SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_MODEL` | str | empty | ? | Optional `x-device-model`, ≤64 printable ASCII. Same condition. |
 | `SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS` | bool | `False` | `false` | Serve provider endpoints with neither TLS nor Reality. Off because plain VLESS carries the client UUID on the wire and is trivially fingerprinted — the same reason inbounds 11 and 12 were disabled. |
