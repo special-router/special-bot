@@ -354,6 +354,31 @@ observable rather than silent. But monitoring a constraint is not enforcing one.
 migration, after which both call sites can read the same way. Not done because a
 schema change on a live money path is its own decision.
 
+## Rotating the panel credential — the script would break the panel
+
+The 3x-ui credential must be treated as disclosed: it sat in a mode-644 `.env`
+behind an internet-reachable service until 2026-08-13. Rotating it is right.
+**`ops/scripts/rotate_special_xui_credentials.sh` cannot do it as written**, and
+that was found by reading it rather than by running it:
+
+1. **It rotates `webBasePath` and never touches nginx.** nginx fronts the panel
+   with `location <secret path> { proxy_pass http://127.0.0.1:23133; }`. After
+   rotation x-ui answers on the new path while nginx forwards only the old one,
+   so the panel becomes unreachable over HTTPS and the bot — whose `vpn_url` the
+   script does update — gets a 404 from nginx. Customer tunnels survive, because
+   xray never consults the panel; issuing, revoking and expiry sync do not.
+   The script predates nginx fronting the panel.
+2. **It runs `x-ui restart`.** That drops every VLESS session on inbounds 5 and
+   10 at once — all paying customers plus the other tenant. Clients reconnect in
+   seconds, but it is visible and it is not mentioned anywhere in the script's
+   output.
+
+**Before running it:** teach it to rewrite the nginx `location` to the new path
+and reload (`nginx -t` first, which fails closed on a bad config), or leave
+`webBasePath` alone and rotate only the username and password. Rotating the
+credential is the security-critical half; rotating the path is defence in depth
+and is what pulls nginx in.
+
 ## Not built
 
 ### Per-UUID inbound diagnostics
