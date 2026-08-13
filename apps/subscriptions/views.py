@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import datetime
 import hashlib
 import ipaddress
 import json
@@ -27,12 +28,14 @@ from functools import lru_cache
 from urllib.parse import quote, unquote_to_bytes, urlencode, urlsplit
 
 from django.http import HttpResponse, HttpResponseNotFound
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
 from apps.servers.models import Server
 from apps.subscriptions.devices import (
     client_hwid, client_metadata, hwid_strict, register_device, valid_hwid)
+from apps.subscriptions.models import MirrorEndpointLiveness
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 from utils.py3xui.async_api import AsyncApi
@@ -394,7 +397,7 @@ def subscription_proxy(request, sub_id: str):
     # 3) RU relay (only if configured).
     if relay_host:
         links.append(_build_vless(uuid_str, relay_host, relay_port,
-                                  _endpoint_label(_OWN_REGION_CODE, relayed=True),
+                                  _endpoint_label(_OWN_REGION_CODE, whitelisted=True),
                                   params, flow=flow))
     # 4) Same-origin internal transport canary. Every candidate independently
     # stable-reads its own live inbound and silently omits on any uncertainty.
@@ -970,13 +973,24 @@ _MIRROR_REGION_TOKENS = {
 # An endpoint whose region we cannot name is still worth offering; naming it
 # after the provider's own string is the part we refuse.
 _MIRROR_UNKNOWN_REGION = '🌐 Резерв'
-# How the endpoint reaches the customer, which is the one thing that is not
-# interchangeable between two lines of the same country: everything we and our
-# providers serve is dialled directly except what goes through the RU relay in
-# ``Server.client_vpn_host``.  The suffix is composed from that property of the
-# endpoint, never written onto a line, so the second relayed endpoint is
-# labelled correctly the day someone adds it.
-_RELAYED_LABEL_SUFFIX = 'белые списки'
+# What the suffix promises a customer, which is the one thing that is not
+# interchangeable between two lines of the same country: this line still works
+# when a region's mobile internet is cut to a whitelist.  Two different
+# endpoints qualify and the customer must not have to learn two words for one
+# property.  Ours is the RU relay in ``Server.client_vpn_host`` — a Russian
+# ingress reachable from a whitelisted network that refuses the direct host.  A
+# mirrored one is a Russian ingress announcing a Reality ``server_name`` an
+# operator declared as whitelist camouflage.  The suffix is composed from that
+# property of the endpoint, never written onto a line.
+_WHITELIST_LABEL_SUFFIX = 'белые списки'
+# A configured suffix list is operator input, not provider input, but it is
+# still read once per rendered document, so its length is bounded like every
+# other list this module walks.
+_MIRROR_MAX_WHITELIST_SUFFIXES = 16
+# How many liveness verdicts one selection may read.  A provider document
+# carries at most ``_MIRROR_MAX_ENDPOINTS`` endpoints and eight sources may be
+# configured, so this is the whole probeable fleet with room to spare.
+_MIRROR_LIVENESS_MAX_ROWS = 1024
 # Every endpoint this deployment runs itself exits in the Netherlands, the relay
 # included: the RU front is a byte-transparent stream relay, not another exit.
 _OWN_REGION_CODE = 'NL'
@@ -1095,6 +1109,19 @@ def _structured_upstream_links(payload: bytes,
                                headers: dict[str, str] | None = None) -> list[str] | None:
     """Render links from a JSON provider document, or decline the payload.
 
+    Parsing is separate from selection because the prober needs every endpoint
+    a provider offers, while a customer receives the slice this picks.
+    """
+    endpoints = _parse_upstream_endpoints(payload, headers)
+    if endpoints is None:
+        return None
+    return [_build_mirror_vless(endpoint) for endpoint in _branded_mirror_endpoints(endpoints)]
+
+
+def _parse_upstream_endpoints(payload: bytes,
+                              headers: dict[str, str] | None = None) -> list[dict] | None:
+    """Normalize every servable endpoint in a JSON provider document, or decline it.
+
     ``None`` means "not a document I parse" and hands the bytes back to the
     opaque URI-list path unchanged; an empty list means the document parsed and
     offered nothing servable. Callers must keep that distinction, otherwise a
@@ -1106,8 +1133,10 @@ def _structured_upstream_links(payload: bytes,
     case: a document that is really a message to the user, which must not be
     counted as a source with nothing to offer.
 
-    The per-region cap applies within one document, which is where a region is
-    known at all; ``_backup_links`` caps the mirrored total across sources.
+    Nothing here is capped per region: this is every endpoint the provider
+    offers, which is what the prober has to dial. ``_branded_mirror_endpoints``
+    applies the per-region cap within one document, which is where a region is
+    known at all, and ``_backup_links`` caps the mirrored total across sources.
     """
     document = _load_upstream_json(payload)
     if document is None:
@@ -1134,7 +1163,7 @@ def _structured_upstream_links(payload: bytes,
         if endpoint['security'] not in _MIRROR_SECURE_TRANSPORTS and not allow_plaintext:
             continue
         endpoints.append(endpoint)
-    return [_build_mirror_vless(endpoint) for endpoint in _branded_mirror_endpoints(endpoints)]
+    return endpoints
 
 
 def _is_identity_placeholder(raw_endpoints: list[dict], headers: dict[str, str]) -> bool:
@@ -1306,16 +1335,19 @@ def _normalized_mirror_endpoint(raw: dict) -> dict | None:
     # numbering into a customer's client.
     region = _mirror_region_code(
         _mirror_field(raw.get('remark')), _mirror_field(raw.get('region'), limit=64))
-    # A mirrored endpoint is dialled directly today, and the flag is read from
-    # the parsed outbound rather than assumed, so a source we ever reach through
-    # a relay says so once in its parser instead of once per rendered line.
-    relayed = bool(raw.get('relayed'))
-    label = _endpoint_label(region, relayed=relayed)
+    # Whether this endpoint keeps working while a region is cut to a whitelist.
+    # Read from the announced Reality server name against the operator's own
+    # list, never from the provider's tag text: the audited document names eight
+    # outbounds ``BRIDGE_*`` and each is a byte-identical twin of its plain
+    # counterpart, same address and same exit.
+    server_name = _mirror_field(raw.get('server_name'), limit=253)
+    whitelisted = _whitelist_capable(server_name)
+    label = _endpoint_label(region, whitelisted=whitelisted)
     endpoint = {
         'host': host,
         'port': port,
         'region_code': region,
-        'relayed': relayed,
+        'whitelisted': whitelisted,
         # Our own UUIDs are quote-invariant, so quoting costs nothing here and
         # stops a provider from writing URI structure into the userinfo field.
         'uuid': quote(uuid, safe=''),
@@ -1325,7 +1357,7 @@ def _normalized_mirror_endpoint(raw: dict) -> dict | None:
         'security': security,
         'public_key': _mirror_field(raw.get('public_key')),
         'short_id': _mirror_field(raw.get('short_id'), limit=64),
-        'server_name': _mirror_field(raw.get('server_name'), limit=253),
+        'server_name': server_name,
         'fingerprint': _mirror_field(raw.get('fingerprint'), limit=64),
         'network': _mirror_field(raw.get('network'), limit=32).lower() or 'tcp',
         'service_name': _mirror_field(raw.get('service_name')),
@@ -1399,17 +1431,49 @@ def _mirror_region_code(*labels: str) -> str:
     return ''
 
 
-def _endpoint_label(code: str, *, relayed: bool = False) -> str:
+def _endpoint_label(code: str, *, whitelisted: bool = False) -> str:
     """Compose the only text a customer reads for one endpoint.
 
-    Two facts and nothing else: where it exits, and how it gets there.  A
-    country alone would leave the customer choosing between two lines that are
-    not substitutes — the relayed one is reachable from a whitelisted network
-    that refuses the direct host, and slower for everyone else.
+    Two facts and nothing else: where it exits, and whether it survives a
+    whitelist.  A country alone would leave the customer choosing between two
+    lines that are not substitutes — the suffixed one keeps working from a
+    network that refuses the direct host, and is slower for everyone else.
+
+    The country is always the *exit* country, suffix or not.  A Russian ingress
+    with camouflaged SNI exits at its own Russian address, so reading its line
+    as a foreign one would be a lie about the only thing the flag claims.
     """
     region = f'{_region_flag(code)} {_MIRROR_REGION_NAMES.get(code, code)}' if code \
         else _MIRROR_UNKNOWN_REGION
-    return f'{region} {_RELAYED_LABEL_SUFFIX}' if relayed else region
+    return f'{region} {_WHITELIST_LABEL_SUFFIX}' if whitelisted else region
+
+
+def _whitelist_capable(server_name: str) -> bool:
+    """Whether an operator declared this endpoint's Reality SNI as camouflage.
+
+    A domain that stays reachable while a region's mobile internet is cut to a
+    whitelist — a large retailer, so payments and shops keep working — lets a
+    Reality handshake announcing it through inspection that blocks everything
+    else.  That is the whole mechanism: the provider's routing config has three
+    rules and no domain logic, so nothing but ``tls.server_name`` distinguishes
+    a bypass node from an ordinary one.
+
+    Only a configured suffix is evidence.  Matching is on domain labels rather
+    than on raw text, so declaring ``x5.ru`` accepts ``id.x5.ru`` and refuses
+    ``notx5.ru``, which is a different registration owned by somebody else.
+    """
+    from django.conf import settings
+    suffixes = getattr(settings, 'SUBSCRIPTION_BACKUP_WHITELIST_SNI_SUFFIXES', [])
+    if not server_name or not isinstance(suffixes, list):
+        return False
+    name = server_name.casefold().strip('.')
+    for suffix in suffixes[:_MIRROR_MAX_WHITELIST_SUFFIXES]:
+        if not isinstance(suffix, str):
+            continue
+        candidate = suffix.casefold().strip().strip('.')
+        if candidate and (name == candidate or name.endswith(f'.{candidate}')):
+            return True
+    return False
 
 
 def _branded_mirror_endpoints(endpoints: list[dict]) -> list[dict]:
@@ -1422,29 +1486,87 @@ def _branded_mirror_endpoints(endpoints: list[dict]) -> list[dict]:
     reads alphabetically in the language it is written in, and the unnamed group
     is held last because it names no country to sort among them.
 
-    Inside a region the least widely shared host wins, and ``(host, port)``
-    still separates hosts shared equally often.  A host a provider offers under
-    nine different flags is a front or an aggregate rather than the server of
-    any one of those countries, while a host that appears under one flag only is
-    what that flag names.  The count comes from the document's own contents, so
-    the choice remains a function of what the provider sent and not of the order
-    it sent it in.
+    Inside a region an endpoint known to answer wins over one nobody has
+    dialled, then the least widely shared host wins, and ``(host, port)`` still
+    separates hosts shared equally often.  A host a provider offers under nine
+    different flags is a front or an aggregate rather than the server of any one
+    of those countries, while a host that appears under one flag only is what
+    that flag names.  Spread is counted over the whole document rather than over
+    the survivors, so what a host *is* stays a property of what the provider
+    sent, and liveness only decides which candidates remain and in what order.
+
+    A dead verdict removes the candidate outright, so the next one takes the
+    region's slot and a region with nothing left disappears instead of
+    rendering a line that connects and never carries traffic.  With no verdicts
+    the ranks are equal and every tie falls through to the ordering above,
+    which is exactly the selection this shipped with.
+
+    A whitelist-capable endpoint is not counted against the per-region limit.
+    It is not a substitute for the region's ordinary server — it is the line
+    that still works when only whitelists do — so letting the two compete for
+    one slot is what kept it out of a subscription until now.  It sorts after
+    the region's ordinary lines for the same reason our own relay sits under
+    our own direct line: the ordinary one is what a customer wants first.
     """
     from django.conf import settings
     limit = int(_bounded_number(
         getattr(settings, 'SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION', 1),
         default=1, lower=1, upper=_MIRROR_MAX_ENDPOINTS))
+    verdicts = _liveness_verdicts()
     spread = _mirror_host_spread(endpoints)
+    live = [endpoint for endpoint in endpoints
+            if verdicts.get((endpoint['host'], endpoint['port']), True)]
     selected, counts = [], {}
-    for endpoint in sorted(endpoints, key=lambda item: (_region_order_key(item['region_code']),
-                                                        spread[item['host']],
-                                                        item['host'], item['port'])):
+    for endpoint in sorted(live, key=lambda item: (_region_order_key(item['region_code']),
+                                                   item['whitelisted'],
+                                                   not verdicts.get((item['host'], item['port'])),
+                                                   spread[item['host']],
+                                                   item['host'], item['port'])):
+        if endpoint['whitelisted']:
+            selected.append(endpoint)
+            continue
         position = counts.get(endpoint['label'], 0)
         if position >= limit:
             continue
         counts[endpoint['label']] = position + 1
         selected.append(endpoint)
     return _numbered_mirror_endpoints(selected)
+
+
+def _liveness_verdicts() -> dict[tuple[str, int], bool]:
+    """Return the fresh out-of-band verdicts, or nothing at all.
+
+    Every uncertain case returns an empty mapping — the flag is off, the prober
+    has never run, its rows have aged past the configured window, or the query
+    itself failed.  Selection then behaves exactly as it did before liveness
+    existed, because a feature that silently empties a customer's list when a
+    background job stalls is worse than the gap it closes.
+
+    Verdicts reach a customer no faster than
+    ``SUBSCRIPTION_BACKUP_CACHE_TTL_SECONDS``, since the rendered lines of one
+    source are cached for that long.  That is the trade for never dialling
+    inside a request, and it is why a verdict's own window is much wider.
+    """
+    from django.conf import settings
+    if getattr(settings, 'SUBSCRIPTION_BACKUP_LIVENESS_ENABLED', False) is not True:
+        return {}
+    max_age = _bounded_number(
+        getattr(settings, 'SUBSCRIPTION_BACKUP_LIVENESS_MAX_AGE_SECONDS', 3600),
+        default=3600, lower=60, upper=86400)
+    horizon = timezone.now() - datetime.timedelta(seconds=max_age)
+    try:
+        return {
+            (host, port): alive
+            for host, port, alive in MirrorEndpointLiveness.objects.filter(
+                checked_at__gte=horizon).values_list(
+                    'host', 'port', 'alive')[:_MIRROR_LIVENESS_MAX_ROWS]
+        }
+    except Exception:
+        # A database that cannot answer must cost a customer the improvement,
+        # never the subscription: the caller is one query away from a 500 on
+        # every refresh otherwise.
+        logger.warning('mirror liveness lookup failed; selection falls back to the blind choice')
+        return {}
 
 
 def _numbered_mirror_endpoints(endpoints: list[dict]) -> list[dict]:
@@ -1475,10 +1597,10 @@ def _own_rendered_labels() -> tuple[str, ...]:
     """The labels this deployment's own endpoints occupy in every response.
 
     Constants, not per-request state: the direct line is unconditional and the
-    relayed one is the only other label we compose, which is what lets the
-    numbering account for them inside a per-source cache.
+    whitelist-suffixed one is the only other label we compose, which is what
+    lets the numbering account for them inside a per-source cache.
     """
-    return _endpoint_label(_OWN_REGION_CODE), _endpoint_label(_OWN_REGION_CODE, relayed=True)
+    return _endpoint_label(_OWN_REGION_CODE), _endpoint_label(_OWN_REGION_CODE, whitelisted=True)
 
 
 def _region_order_key(code: str) -> tuple[bool, str]:

@@ -112,12 +112,16 @@ uTLS, and nothing to negotiate.
 
 - `_MIRROR_EXCLUDED_HOSTS` is not a nicety. Nine of 31 outbounds resolve to a
   public resolver and they hold the best names.
-- Selection still never dials anything — see
+- Selection still never dials *inside a request*, but it no longer picks blind:
+  `probe_mirror_liveness` dials out of band and selection drops a candidate
+  carrying a fresh dead verdict. Default off; see
   [`OPEN-ITEMS.md`](OPEN-ITEMS.md#a-region-is-picked-without-ever-checking-the-endpoint-is-alive).
-  With 11 dead outbounds in one document, picking a live one is luck.
-- Bypass endpoints cannot be recognised from a tag name. If we ever render one,
-  the signal has to be a configured SNI suffix an operator declares, never the
-  word `BRIDGE` — which this document proves means nothing.
+  With 11 dead outbounds in one document, picking a live one was luck.
+- Bypass endpoints cannot be recognised from a tag name, so the signal is
+  `SUBSCRIPTION_BACKUP_WHITELIST_SNI_SUFFIXES` — a configured SNI suffix an
+  operator declares — and never the word `BRIDGE`, which this document proves
+  means nothing. A matching endpoint renders as its own `белые списки` line
+  outside the per-region cap, keeping its Russian exit flag.
 - Geolocating a shared IP block needs two sources. One service placed four
   servers in Germany; a second placed them in Sandefjord, Frankfurt, Stockholm
   and Amsterdam, matching the flags. The first returned an empty ASN for that

@@ -149,6 +149,60 @@ class SubscriptionDeviceBindingWindow(models.Model):
         return f"{self.telegram_user} {str(self.opened_at)}"
 
 
+class MirrorEndpointLiveness(models.Model):
+    """Whether one third-party endpoint completed a real handshake, and when.
+
+    Rows are written out of band by ``probe_mirror_liveness`` and only read by
+    the subscription renderer, which never dials anything itself: a request has
+    an eight-second fetch deadline and a handshake takes seconds per node.
+
+    A row is a measurement rather than a state, which is why ``checked_at`` is
+    stored instead of a flag with a lifetime.  A server that was down an hour
+    ago may be up now, so the reader decides how old a verdict may be, and a
+    prober that stops running degrades to the blind selection this deployment
+    shipped before liveness existed rather than to an empty list.
+    """
+
+    host = models.CharField(
+        'Адрес эндпоинта',
+        max_length=253,
+    )
+
+    port = models.PositiveIntegerField(
+        'Порт',
+    )
+
+    alive = models.BooleanField(
+        'Отвечает',
+        default=False,
+    )
+
+    error_class = models.CharField(
+        'Класс отказа',
+        max_length=64,
+        blank=True,
+        default='',
+    )
+
+    checked_at = models.DateTimeField(
+        'Проверено',
+        default=timezone.now,
+    )
+
+    class Meta:
+        verbose_name = 'Живость зеркального эндпоинта'
+        verbose_name_plural = 'Живость зеркальных эндпоинтов'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['host', 'port'],
+                name='unique_mirror_endpoint_liveness',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.host}:{self.port} {'alive' if self.alive else 'dead'}"
+
+
 class SubscriptionDeviceRegistrationRate(models.Model):
     """Rolling count of new device registrations for one subscription.
 
