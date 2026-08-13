@@ -477,6 +477,32 @@ async def create_probe_invoice_link(timeout: float) -> None:
         await bot.shutdown()
 
 
+# Bot API returns a fixed identifier for each payment rejection, and it is the
+# only thing separating "the token is wrong" from "Telegram had a bad minute" —
+# both arrive as ``BadRequest``. The identifier is matched, never echoed: the
+# rest of the message is Telegram's to change, and a future one could carry
+# something that must not reach a log or a page.
+INVOICE_REJECTIONS = (
+    ('PAYMENT_PROVIDER_INVALID', 'provider_token_rejected'),
+    ('CURRENCY_TOTAL_AMOUNT_INVALID', 'invoice_amount_rejected'),
+    ('CURRENCY_INVALID', 'invoice_currency_rejected'),
+)
+
+
+def classify_invoice_error(error: Exception) -> str:
+    """Name the failure an operator has to act on, in this module's own words.
+
+    An unrecognised failure keeps the coarse exception class, which is still
+    the useful split: ``InvalidToken`` is the bot token, ``NetworkError`` and
+    ``TimedOut`` are Telegram, and neither is the provider.
+    """
+    description = str(error).upper()
+    for identifier, error_class in INVOICE_REJECTIONS:
+        if identifier in description:
+            return error_class
+    return type(error).__name__[:64]
+
+
 def probe_invoice_link(timeout: float) -> str | None:
     """Return a coarse failure class for the invoice call, or ``None`` if it worked.
 
@@ -492,9 +518,7 @@ def probe_invoice_link(timeout: float) -> str | None:
     except TimeoutError:
         return 'invoice_timeout'
     except Exception as error:
-        # The Bot API rejection text carries the provider's own wording; only
-        # the exception class is safe to keep.
-        return type(error).__name__[:64]
+        return classify_invoice_error(error)
     return None
 
 

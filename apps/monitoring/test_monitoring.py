@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from django.core import management
 from django.test import TestCase, override_settings
 from django.utils import timezone
-from telegram.error import BadRequest
+from telegram.error import BadRequest, InvalidToken, NetworkError
 
 from apps.analytics.choices import (
     CashBasisChoices,
@@ -439,7 +439,13 @@ class MonitoringStateTests(TestCase):
 
 
 PROBE_PROVIDER_TOKEN = 'fixture-provider-token'
-PROBE_REJECTION = BadRequest(f'Payment_provider_invalid: {PROBE_PROVIDER_TOKEN}')
+# Bot API wording, with the token spliced into the message the way a future
+# Telegram release could splice anything else in. The probe must key on the
+# identifier and carry neither the wording nor the token out.
+PROVIDER_REJECTION = BadRequest(f'Bad Request: PAYMENT_PROVIDER_INVALID {PROBE_PROVIDER_TOKEN}')
+AMOUNT_REJECTION = BadRequest('Bad Request: CURRENCY_TOTAL_AMOUNT_INVALID')
+CURRENCY_REJECTION = BadRequest('Bad Request: CURRENCY_INVALID')
+UNMAPPED_REJECTION = BadRequest(f'Bad Request: NOT_A_KNOWN_IDENTIFIER {PROBE_PROVIDER_TOKEN}')
 
 
 class CashGapTests(TestCase):
@@ -502,10 +508,46 @@ class CheckoutProbeTests(TestCase):
         bot.assert_not_called()
 
     @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
-    def test_provider_rejection_is_reduced_to_a_class(self, invoice):
-        invoice.side_effect = PROBE_REJECTION
+    def test_a_revoked_provider_token_is_named_as_such(self, invoice):
+        invoice.side_effect = PROVIDER_REJECTION
 
-        self.assertEqual(probe_invoice_link(1.0), 'BadRequest')
+        self.assertEqual(probe_invoice_link(1.0), 'provider_token_rejected')
+
+    @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
+    def test_a_rejected_amount_is_the_probe_not_the_checkout(self, invoice):
+        invoice.side_effect = AMOUNT_REJECTION
+
+        self.assertEqual(probe_invoice_link(1.0), 'invoice_amount_rejected')
+
+    @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
+    def test_a_rejected_currency_is_named_separately(self, invoice):
+        invoice.side_effect = CURRENCY_REJECTION
+
+        self.assertEqual(probe_invoice_link(1.0), 'invoice_currency_rejected')
+
+    @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
+    def test_an_unmapped_rejection_keeps_the_class_and_drops_the_text(self, invoice):
+        invoice.side_effect = UNMAPPED_REJECTION
+
+        error_class = probe_invoice_link(1.0)
+
+        self.assertEqual(error_class, 'BadRequest')
+        self.assertNotIn(PROBE_PROVIDER_TOKEN, error_class)
+        self.assertNotIn('NOT_A_KNOWN_IDENTIFIER', error_class)
+
+    @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
+    def test_a_bad_bot_token_stays_distinct_from_a_bad_provider_token(self, invoice):
+        # The two are the same alert but not the same repair, and the operator
+        # gets only this string.
+        invoice.side_effect = InvalidToken('Unauthorized')
+
+        self.assertEqual(probe_invoice_link(1.0), 'InvalidToken')
+
+    @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
+    def test_telegram_being_unreachable_is_not_a_provider_verdict(self, invoice):
+        invoice.side_effect = NetworkError('httpx.ConnectError')
+
+        self.assertEqual(probe_invoice_link(1.0), 'NetworkError')
 
     def test_a_stalled_invoice_call_hands_the_worker_back(self):
         async def never_returns(_timeout):
@@ -526,12 +568,12 @@ class CheckoutProbeTests(TestCase):
     @patch('apps.monitoring.probes.cash_gap_days', return_value=0)
     @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
     def test_failing_probe_with_zero_gap_is_a_checkout_failure(self, invoice, gap):
-        invoice.side_effect = PROBE_REJECTION
+        invoice.side_effect = PROVIDER_REJECTION
 
         result = run_checkout_probe()
 
         self.assertFalse(result.ok)
-        self.assertEqual(result.error_class, 'BadRequest')
+        self.assertEqual(result.error_class, 'provider_token_rejected')
         self.assertFalse(result.details['invoice_ok'])
         self.assertEqual(result.details['cash_gap_days'], 0)
 
@@ -556,14 +598,15 @@ class CheckoutProbeTests(TestCase):
     @patch('apps.monitoring.probes.cash_gap_days', return_value=0)
     @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
     def test_state_keeps_neither_the_token_nor_the_rejection_text(self, invoice, gap):
-        invoice.side_effect = PROBE_REJECTION
+        invoice.side_effect = PROVIDER_REJECTION
 
         task_result = _run('checkout', run_checkout_probe)
         state = MonitorState.objects.get(layer='checkout')
         rendered = repr((task_result, state.details, state.error_class))
 
+        self.assertIn('provider_token_rejected', rendered)
         self.assertNotIn(PROBE_PROVIDER_TOKEN, rendered)
-        self.assertNotIn('Payment_provider_invalid', rendered)
+        self.assertNotIn('Bad Request', rendered)
         self.assertNotIn('t.me', rendered)
 
 
