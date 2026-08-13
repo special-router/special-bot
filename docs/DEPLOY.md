@@ -11,7 +11,9 @@ SPECIAL_VERIFY_PYTHON=<absolute path to the project test venv python> \
   ./ops/scripts/verify_scale_closeout.sh
 ```
 
-Must be clean. As of 2026-08-12 that is **296 tests and 110 subtests**.
+Must be clean. The expected test and subtest count lives in `CLAUDE.md` and
+nowhere else — a second copy of that number here would rot exactly as the first
+one did.
 
 ### Run the suite against PostgreSQL before declaring a deploy safe
 
@@ -47,12 +49,35 @@ venv resolved to **0.7.0**. The two do not update a client the same way:
   addressed by email whenever the client carries one.
 
 Every test touching the panel client write path was validating a request
-production never sends. `ops/scripts/validate_repository.py` now compares the
-`py3xui` pin in `requirements.txt` against the version installed in the
-interpreter running it, and fails naming both; `verify_scale_closeout.sh` runs
-it under the test venv's python so the check sees the interpreter the suite
-uses. Pin runtime dependencies in `pyproject.toml`, not only in the compiled
-output.
+production never sends. Two things guard it now:
+
+- `ops/scripts/validate_repository.py` compares the `py3xui` pin in
+  `requirements.txt` against the version installed in the interpreter running
+  it, and fails naming both. `verify_scale_closeout.sh` runs the validator under
+  the test venv's python so the check sees the interpreter the suite uses.
+- `apps/servers/test_panel_endpoint_contract.py` asserts the exact endpoint each
+  client operation puts on the wire. The guard compares version strings and so
+  says nothing about a deliberate upgrade of the pin; the contract tests fail on
+  any library that routes differently, whichever version it claims to be.
+
+Pin runtime dependencies in `pyproject.toml`, not only in the compiled output.
+
+**If the guard stops you, rebuild the venv rather than chasing py3xui.** The
+message names one package because only `py3xui` is guarded, but a venv resolved
+from an unpinned `pyproject.toml` drifts across the board — one measured on
+2026-08-13 also carried celery 5.6.3 against the pinned 5.5.3, psycopg 3.3.4
+against 3.2.10, redis 8.1.0 against 6.4.0, gunicorn 26.0.0 against 23.0.0,
+django-environ 0.14.0 against 0.12.0, requests 2.34.2 against 2.32.5 and
+pydantic 2.13.4 against 2.11.9. The fix is one command:
+
+```bash
+uv venv <path> --python 3.13
+uv pip install --python <path>/bin/python -r requirements.txt
+uv pip install --python <path>/bin/python pytest pytest-django
+```
+
+The test runner is deliberately absent from `requirements.txt`: the image does
+not ship it.
 
 ## The deploy itself
 
