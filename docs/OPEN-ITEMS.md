@@ -234,6 +234,40 @@ sake — it is how the `2096` clients were found.
 
 ---
 
+## The test environment is not the production environment
+
+Found 2026-08-13. `ops/scripts/verify_scale_closeout.sh` defaults to
+`$ROOT/.venv/bin/python`, and that interpreter diverges from the deployed image
+on **ten packages**, not one. The one that was caught first:
+
+| | `.venv` (tests) | image (`requirements.txt`) |
+|---|---|---|
+| py3xui | 0.7.0 | **0.5.1** |
+
+Those two versions do not agree on how a client is updated — 0.5.1 posts to
+`panel/api/inbounds/updateClient/{client_uuid}`, 0.7.0 to
+`panel/api/clients/update/{client.email or client_uuid}`. A pin and a guard now
+close that specific gap. The others are unguarded: **celery** 5.6.3/5.5.3,
+**psycopg** 3.3.4/3.2.10, **redis** 8.1.0/6.4.0, **gunicorn** 26.0.0/23.0.0,
+**django-environ** 0.14.0/0.12.0, **requests** 2.34.2/2.32.5, **pydantic**
+2.13.4/2.11.9.
+
+The guard was deliberately kept to py3xui alone: a check that fails on ten lines
+at once is a check people learn to skip. Widening it is the *second* step; the
+first is rebuilding that venv from `requirements.txt` so the ten converge.
+psycopg 3.2→3.3 and celery 5.5→5.6 are the two worth reading release notes for.
+
+**Why it stayed invisible:** downgrading to 0.5.1 broke **no test at all**. Every
+call site mocks `api.client.update` with an `AsyncMock`, and
+`delete_client_by_uuid` builds its own URL on `_post`/`_url`, so the library's
+routing is never reached. This repository could have the panel's entire URL
+scheme swapped underneath it and stay green. Contract tests asserting the exact
+endpoint string are the fix, because a guard compares version strings and only a
+contract test compares behaviour.
+
+**Blocked on:** nothing. It is ordinary work, listed here so the next person does
+not rediscover it.
+
 ## Not built
 
 ### Per-UUID inbound diagnostics
