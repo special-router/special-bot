@@ -236,9 +236,9 @@ sake — it is how the `2096` clients were found.
 
 ## The test environment is not the production environment
 
-Found 2026-08-13. `ops/scripts/verify_scale_closeout.sh` defaults to
-`$ROOT/.venv/bin/python`, and that interpreter diverges from the deployed image
-on **ten packages**, not one. The one that was caught first:
+Found 2026-08-13, **closed 2026-08-13**. `ops/scripts/verify_scale_closeout.sh`
+defaults to `$ROOT/.venv/bin/python`, and that interpreter diverged from the
+deployed image on **ten packages**, not one. The one that was caught first:
 
 | | `.venv` (tests) | image (`requirements.txt`) |
 |---|---|---|
@@ -246,16 +246,33 @@ on **ten packages**, not one. The one that was caught first:
 
 Those two versions do not agree on how a client is updated — 0.5.1 posts to
 `panel/api/inbounds/updateClient/{client_uuid}`, 0.7.0 to
-`panel/api/clients/update/{client.email or client_uuid}`. A pin and a guard now
-close that specific gap. The others are unguarded: **celery** 5.6.3/5.5.3,
-**psycopg** 3.3.4/3.2.10, **redis** 8.1.0/6.4.0, **gunicorn** 26.0.0/23.0.0,
-**django-environ** 0.14.0/0.12.0, **requests** 2.34.2/2.32.5, **pydantic**
-2.13.4/2.11.9.
+`panel/api/clients/update/{client.email or client_uuid}`. The other nine were
+celery, psycopg, redis, gunicorn, django-environ, requests and pydantic among
+them.
 
-The guard was deliberately kept to py3xui alone: a check that fails on ten lines
-at once is a check people learn to skip. Widening it is the *second* step; the
-first is rebuilding that venv from `requirements.txt` so the ten converge.
-psycopg 3.2→3.3 and celery 5.5→5.6 are the two worth reading release notes for.
+Both steps are done. The venv was rebuilt from `requirements.txt` on Python
+3.13.13, matching the image, and `ops/scripts/validate_repository.py` now checks
+**all 44 pins**, not py3xui alone — a drifted package is named with both
+versions and the message says to rebuild, never to loosen a pin. The summary
+line carries `pins=44/44`.
+
+Two rules make that check usable in both places it runs:
+
+- **Absence is not drift.** A package the interpreter does not have says
+  nothing; only a version that contradicts a pin fails.
+- **A system interpreter is skipped entirely** (`pins=skipped-outside-venv/44`).
+  Absence alone is not enough to tell the two contexts apart: this machine's
+  `python3` carries 21 of the 44 as distro packages, at distro versions nobody
+  pinned, and it never runs the suite.
+
+**What is left is a pin nobody wrote, not a version nobody noticed.**
+`pyproject.toml` still pins only `djangorestframework`, `Pillow` and `py3xui`;
+every other dependency is free to resolve to whatever is current the next time
+somebody builds a venv from it. That no longer passes silently — it fails at the
+validator — but the drift will happen again, and the durable fix is pinning the
+rest of `pyproject.toml` to what `requirements.txt` already compiled. psycopg
+3.2→3.3 and celery 5.5→5.6 are the two worth reading release notes for before
+any deliberate bump.
 
 **Why it stayed invisible:** downgrading to 0.5.1 broke **no test at all**. Every
 call site mocks `api.client.update` with an `AsyncMock`, and

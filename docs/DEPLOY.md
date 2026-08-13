@@ -51,10 +51,13 @@ venv resolved to **0.7.0**. The two do not update a client the same way:
 Every test touching the panel client write path was validating a request
 production never sends. Two things guard it now:
 
-- `ops/scripts/validate_repository.py` compares the `py3xui` pin in
-  `requirements.txt` against the version installed in the interpreter running
-  it, and fails naming both. `verify_scale_closeout.sh` runs the validator under
-  the test venv's python so the check sees the interpreter the suite uses.
+- `ops/scripts/validate_repository.py` compares **every** `==` pin in
+  `requirements.txt` against the versions installed in the interpreter running
+  it, and names each drifted package with both versions.
+  `verify_scale_closeout.sh` runs the validator under the test venv's python so
+  the check sees the interpreter the suite uses. A package the interpreter does
+  not have is an absence, not drift; a system interpreter is skipped entirely,
+  because distro packages are nobody's pin and it never runs the suite.
 - `apps/servers/test_panel_endpoint_contract.py` asserts the exact endpoint each
   client operation puts on the wire. The guard compares version strings and so
   says nothing about a deliberate upgrade of the pin; the contract tests fail on
@@ -62,13 +65,12 @@ production never sends. Two things guard it now:
 
 Pin runtime dependencies in `pyproject.toml`, not only in the compiled output.
 
-**If the guard stops you, rebuild the venv rather than chasing py3xui.** The
-message names one package because only `py3xui` is guarded, but a venv resolved
-from an unpinned `pyproject.toml` drifts across the board — one measured on
-2026-08-13 also carried celery 5.6.3 against the pinned 5.5.3, psycopg 3.3.4
-against 3.2.10, redis 8.1.0 against 6.4.0, gunicorn 26.0.0 against 23.0.0,
-django-environ 0.14.0 against 0.12.0, requests 2.34.2 against 2.32.5 and
-pydantic 2.13.4 against 2.11.9. The fix is one command:
+**If the guard stops you, rebuild the venv rather than pick at the packages it
+names.** Drift arrives in bulk, not one package at a time: the venv measured on
+2026-08-13 was 10 packages away from the image — py3xui, celery, psycopg, redis,
+gunicorn, django-environ, requests and pydantic among them — because most of
+`pyproject.toml` is still unpinned and a venv built from it resolves everything
+fresh. Rebuilding is three commands:
 
 ```bash
 uv venv <path> --python 3.13
