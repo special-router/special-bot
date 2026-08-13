@@ -606,7 +606,7 @@ class ExternalSubscriptionTests(SimpleTestCase):
     )
     @patch('apps.subscriptions.views._fetch_upstream_payload')
     def test_backup_links_fetches_and_preserves_upstream_line(self, fetch):
-        fetch.return_value = (self.opaque_link + '\n').encode()
+        fetch.return_value = ({}, (self.opaque_link + '\n').encode())
 
         self.assertEqual(views._backup_links(), [self.opaque_link])
         fetch.assert_called_once_with('https://subscription.example/one')
@@ -674,7 +674,8 @@ class ExternalSubscriptionTests(SimpleTestCase):
         create_connection.return_value = raw_socket
         create_context.return_value.wrap_socket.return_value = tls_socket
 
-        self.assertEqual(views._fetch_upstream_payload('https://subscription.example:8443/path?q=1'), b'1234')
+        self.assertEqual(
+            views._fetch_upstream_payload('https://subscription.example:8443/path?q=1'), ({}, b'1234'))
 
         self.assertEqual(create_connection.call_args.args[0], ('8.8.8.8', 8443))
         request = b''.join(tls_socket.sent).decode('ascii')
@@ -882,7 +883,7 @@ class ExternalSubscriptionTests(SimpleTestCase):
         def delayed_fetch(_url):
             entered.set()
             release.wait(timeout=2)
-            return payload
+            return {}, payload
 
         fetch.side_effect = delayed_fetch
         results = []
@@ -1051,11 +1052,11 @@ class MirrorIngestTests(SimpleTestCase):
     def test_oversized_document_is_capped_at_the_endpoint_limit(self):
         outbounds = [dict(self.plaintext_outbound, server=f'mirror-{index}.example',
                           tag=f'Mirror {index}')
-                     for index in range(views._MIRROR_MAX_ENDPOINTS * 4)]
+                     for index in range(views._MIRROR_MAX_ENDPOINTS * 8)]
 
         links = views._sanitize_upstream_payload(self.singbox(*outbounds))
 
-        self.assertEqual(len(links), views._MIRROR_MAX_ENDPOINTS - 1)
+        self.assertEqual(len(links), views._MIRROR_MAX_ENDPOINTS)
 
     def test_unexpected_content_types_are_ignored(self):
         for payload in (
@@ -1116,9 +1117,216 @@ class MirrorIngestTests(SimpleTestCase):
     def test_plaintext_only_source_aggregates_to_no_links(self, fetch):
         views._clear_backup_cache()
         self.addCleanup(views._clear_backup_cache)
-        fetch.return_value = self.singbox(self.plaintext_outbound)
+        fetch.return_value = ({}, self.singbox(self.plaintext_outbound))
 
         self.assertIsNone(views._backup_links())
+
+
+class MirrorClientIdentityTests(SimpleTestCase):
+    """A provider serves its real configuration only to a client it recognizes."""
+
+    hwid = 'synthetic-installation-hwid-01'
+    refused_headers = {'x-hwid-not-supported': 'true', 'x-hwid-limit': 'true'}
+    accepted_headers = {'x-hwid-active': 'true'}
+    regions = ('Fastest', 'Netherlands', 'Germany', 'Sweden', 'Norway',
+               'USA', 'Kazakhstan', 'Japan', 'Russia')
+
+    def setUp(self):
+        super().setUp()
+        views._clear_backup_cache()
+        self.addCleanup(views._clear_backup_cache)
+
+    def placeholder(self):
+        """The instruction document served to an unidentified client.
+
+        Its outbounds are plaintext and its tags are a message to the user, not
+        endpoint names.
+        """
+        return json.dumps({'outbounds': [
+            {'type': 'selector', 'tag': '→ Remnawave', 'outbounds': ['unsupported']},
+            *({
+                'type': 'vless',
+                'tag': tag,
+                'server': 'notice.example',
+                'server_port': 443,
+                'uuid': 'synthetic-placeholder-id',
+                'tls': {'enabled': False},
+            } for tag in ('Приложение не поддерживается', 'Поддерживаемые приложения:',
+                          'Happ, V2RayTun, INCY, Koala Clash')),
+        ]}).encode()
+
+    def region_document(self, servers_per_region=9, tag=None):
+        """A real multi-region answer: one group per region holding its servers."""
+        tag = tag or (lambda region, index: f'srv-{index}')
+        groups, servers = [], []
+        for region_index, region in enumerate(self.regions):
+            tags = [tag(region, f'{region_index}-{index}') for index in range(servers_per_region)]
+            groups.append({'type': 'selector', 'tag': region, 'outbounds': tags})
+            servers.extend({
+                'type': 'vless',
+                'tag': server_tag,
+                'server': f'server-{region_index}-{index}.example',
+                'server_port': 443,
+                'uuid': f'synthetic-{region_index}-{index}',
+                'tls': {
+                    'enabled': True,
+                    'server_name': 'sni.example',
+                    'reality': {'enabled': True, 'public_key': 'synthetic-pbk', 'short_id': 'ab01'},
+                },
+            } for index, server_tag in enumerate(tags))
+        return json.dumps({'outbounds': [
+            {'type': 'selector', 'tag': '→ Remnawave', 'outbounds': list(self.regions)},
+            *groups, *servers, {'type': 'direct', 'tag': 'direct'},
+        ]}).encode()
+
+    def remarks(self, links):
+        return [unquote(urlsplit(link).fragment) for link in links]
+
+    def test_placeholder_document_is_refused_rather_than_counted_as_empty(self):
+        payload = self.placeholder()
+
+        with self.assertRaises(views._UpstreamPlaceholderDocument):
+            views._sanitize_upstream_payload(payload, self.refused_headers)
+
+    @override_settings(SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS=True)
+    def test_placeholder_is_never_served_even_where_plaintext_is_allowed(self):
+        with self.assertRaises(views._UpstreamPlaceholderDocument):
+            views._sanitize_upstream_payload(self.placeholder(), self.refused_headers)
+
+    def test_a_refused_identity_alone_does_not_condemn_a_real_configuration(self):
+        links = views._sanitize_upstream_payload(self.region_document(servers_per_region=1),
+                                                 self.refused_headers)
+
+        self.assertEqual(len(links), len(self.regions))
+
+    def test_a_plaintext_source_that_accepts_us_stays_an_ordinary_empty_source(self):
+        payload = self.placeholder()
+
+        self.assertEqual(views._sanitize_upstream_payload(payload, self.accepted_headers), [])
+        self.assertEqual(views._sanitize_upstream_payload(payload), [])
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://subscription.example/mirror'],
+    )
+    @patch('apps.subscriptions.views._fetch_upstream_payload')
+    def test_placeholder_and_empty_source_are_recorded_differently(self, fetch):
+        url = 'https://subscription.example/mirror'
+        fetch.return_value = (self.refused_headers, self.placeholder())
+
+        with self.assertLogs('apps.subscriptions.views', 'WARNING') as logged:
+            self.assertEqual(views._cached_upstream_links(url), [])
+
+        self.assertIn('placeholder', logged.output[0])
+        self.assertNotIn(url, logged.output[0])
+        self.assertNotIn('mirror', logged.output[0])
+        fetch.return_value = (self.accepted_headers, self.placeholder())
+        with self.assertNoLogs('apps.subscriptions.views', 'WARNING'):
+            self.assertEqual(views._cached_upstream_links(url), [])
+
+    def test_multi_region_document_keeps_the_provider_region_label(self):
+        links = views._sanitize_upstream_payload(self.region_document(), self.accepted_headers)
+
+        remarks = self.remarks(links)
+        self.assertEqual(len(links), len(self.regions) * 9)
+        self.assertEqual(remarks[0], 'Fastest · srv-0-0')
+        for region in self.regions:
+            self.assertIn(f'{region} · srv-', ' '.join(remarks))
+
+    def test_a_server_already_naming_its_region_is_not_labelled_twice(self):
+        payload = self.region_document(
+            servers_per_region=1, tag=lambda region, index: f'{region} {index}')
+
+        self.assertEqual(self.remarks(views._sanitize_upstream_payload(payload))[0],
+                         'Fastest 0-0')
+
+    def test_a_hostile_region_label_cannot_break_the_uri(self):
+        for label, expected in (
+            ('Japan#x?a=b&c=d/../', 'Japan#x?a=b&c=d/../ · srv-0-0'),
+            ('Japan\r\nX-Injected: 1', 'srv-0-0'),
+            ('Japan' * 100, 'srv-0-0'),
+        ):
+            with self.subTest(label=label):
+                document = json.loads(self.region_document(servers_per_region=1))
+                document['outbounds'][1]['tag'] = label
+                link = views._sanitize_upstream_payload(json.dumps(document).encode())[0]
+
+                parsed = urlsplit(link)
+                self.assertEqual(parsed.hostname, 'server-0-0.example')
+                self.assertEqual(parsed.port, 443)
+                self.assertEqual(unquote(parsed.fragment), expected)
+                self.assertNotIn('\n', link)
+                self.assertNotIn('#', parsed.fragment)
+
+    def test_the_endpoint_cap_still_holds_at_the_real_document_size(self):
+        links = views._sanitize_upstream_payload(self.region_document(servers_per_region=40))
+
+        self.assertEqual(len(links), views._MIRROR_MAX_ENDPOINTS)
+
+    def test_identity_headers_travel_only_with_a_usable_identifier(self):
+        self.assertEqual(views._upstream_client_headers(), [])
+        with self.settings(SUBSCRIPTION_BACKUP_UPSTREAM_HWID=self.hwid,
+                           SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_OS='Android',
+                           SUBSCRIPTION_BACKUP_UPSTREAM_OS_VERSION='14',
+                           SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_MODEL='Pixel 8'):
+            self.assertEqual(views._upstream_client_headers(), [
+                ('x-hwid', self.hwid),
+                ('x-device-os', 'Android'),
+                ('x-ver-os', '14'),
+                ('x-device-model', 'Pixel 8'),
+            ])
+        for value in ('', 'short', 'a' * 65, 'has space', 'inject\r\nX: 1', ['valid-hwid-1234']):
+            with self.subTest(hwid=value), self.settings(
+                SUBSCRIPTION_BACKUP_UPSTREAM_HWID=value,
+                SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_OS='Android',
+            ):
+                self.assertEqual(views._upstream_client_headers(), [])
+        with self.settings(SUBSCRIPTION_BACKUP_UPSTREAM_HWID=self.hwid,
+                           SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_OS='Android\r\nX: 1',
+                           SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_MODEL='м' * 4):
+            self.assertEqual(views._upstream_client_headers(), [('x-hwid', self.hwid)])
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT='Happ/1.0',
+        SUBSCRIPTION_BACKUP_UPSTREAM_HWID=hwid,
+        SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_OS='Android',
+        SUBSCRIPTION_BACKUP_UPSTREAM_OS_VERSION='14',
+        SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_MODEL='Pixel 8',
+    )
+    @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
+    @patch('apps.subscriptions.views.ssl.create_default_context')
+    @patch('apps.subscriptions.views.socket.create_connection')
+    def test_configured_identity_is_sent_to_the_provider(
+        self, create_connection, create_context, resolve,
+    ):
+        tls_socket = _FakeTLSSocket(b'HTTP/1.1 200 OK\r\nx-hwid-active: true\r\n\r\n{}')
+        create_connection.return_value = Mock()
+        create_context.return_value.wrap_socket.return_value = tls_socket
+
+        headers, _payload = views._fetch_upstream_payload('https://subscription.example/opaque')
+
+        request = b''.join(tls_socket.sent).decode('ascii')
+        self.assertIn('User-Agent: Happ/1.0\r\n', request)
+        self.assertIn(f'x-hwid: {self.hwid}\r\n', request)
+        self.assertIn('x-device-os: Android\r\n', request)
+        self.assertIn('x-ver-os: 14\r\n', request)
+        self.assertIn('x-device-model: Pixel 8\r\n', request)
+        self.assertEqual(headers.get('x-hwid-active'), 'true')
+
+    @override_settings(SUBSCRIPTION_BACKUP_UPSTREAM_HWID='')
+    @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
+    @patch('apps.subscriptions.views.ssl.create_default_context')
+    @patch('apps.subscriptions.views.socket.create_connection')
+    def test_an_unset_identity_sends_no_device_headers(
+        self, create_connection, create_context, resolve,
+    ):
+        tls_socket = _FakeTLSSocket(b'HTTP/1.1 200 OK\r\n\r\n{}')
+        create_connection.return_value = Mock()
+        create_context.return_value.wrap_socket.return_value = tls_socket
+
+        views._fetch_upstream_payload('https://subscription.example/opaque')
+
+        self.assertNotIn('x-hwid', b''.join(tls_socket.sent).decode('ascii'))
 
 
 class SubscriptionResponseCacheTests(SimpleTestCase):

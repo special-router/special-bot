@@ -47,12 +47,20 @@ _METADATA_HEADERS = (
 )
 
 
+def valid_hwid(value) -> bool:
+    """Whether a value has the identifier shape Happ publishes.
+
+    Shared with the outbound side: a provider running the same convention
+    rejects an identifier we would reject ourselves, and an invalid one must
+    never reach a request header.
+    """
+    return isinstance(value, str) and bool(_HWID_PATTERN.fullmatch(value))
+
+
 def client_hwid(request) -> str:
     """Return the validated ``x-hwid`` value, or '' when it is unusable."""
     hwid = request.headers.get('x-hwid', '')
-    if not isinstance(hwid, str) or not _HWID_PATTERN.fullmatch(hwid):
-        return ''
-    return hwid
+    return hwid if valid_hwid(hwid) else ''
 
 
 def client_metadata(request) -> dict[str, str]:

@@ -398,6 +398,15 @@ are **not** gated — guessing transport security from an incomplete URI would
 break the byte-for-byte contract tests. Providers pick their format by client
 User-Agent, so `SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT` is configuration.
 
+A provider also picks its *content* by device identity: without an `x-hwid` it
+answers with an "unsupported application" notice shaped like a config, so the
+fetch sends `SUBSCRIPTION_BACKUP_UPSTREAM_HWID` (one stable value per
+installation, never per user) and the optional device headers. A response that
+refuses our identity *and* protects no handshake is recorded as a placeholder
+rather than an empty source, so a misconfigured identity does not read as a bad
+provider. Region labels from the provider's own selector groups are carried into
+each remark, sanitised like every other provider string.
+
 Bearer URLs come only from a mode-0600 JSON file mounted into `web`; a missing,
 malformed, symlinked or over-permissive file yields no endpoints and logs
 nothing. See [`MIRROR-INBOUNDS-SPEC.md`](MIRROR-INBOUNDS-SPEC.md).
