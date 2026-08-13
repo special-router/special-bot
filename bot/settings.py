@@ -502,7 +502,7 @@ SPECIAL_MONITOR_EXPECTED_INBOUNDS = env.json(
 )
 SPECIAL_MONITOR_CANARY_USER_VPN_ID = env.int('SPECIAL_MONITOR_CANARY_USER_VPN_ID', 0)
 SPECIAL_MONITOR_SERVER_ID = env.int('SPECIAL_MONITOR_SERVER_ID', 1)
-# RU relay front used by the subscription proxy to emit the NL Relay endpoint.
+# RU relay front used by the subscription proxy to emit the relayed endpoint.
 SUBSCRIPTION_RELAY_HOST = env.str('SUBSCRIPTION_RELAY_HOST', '')
 SUBSCRIPTION_RELAY_PORT = env.int('SUBSCRIPTION_RELAY_PORT', 443)
 # Inbound id that carries the per-client subscription status label in its remark

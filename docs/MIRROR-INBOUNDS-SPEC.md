@@ -239,29 +239,46 @@ that reaches the URI, the flag included, is composed here from that code:
 
 | Provider label | Rendered to the customer |
 | --- | --- |
-| `→ Remnawave` (root selector) | `🌐 Backup` |
-| `🇸🇪 SWEDEN_VLESS_1` | `🇸🇪 Sweden` |
-| `🇪🇺 Fastest` | `🇪🇺 Europe` |
-| `SWEDEN_VLESS_1`, no flag | `🇸🇪 Sweden` |
-| anything with no country signal | `🌐 Backup` |
+| `→ Remnawave` (root selector) | `🌐 Резерв` |
+| `🇸🇪 SWEDEN_VLESS_1` | `🇸🇪 Швеция` |
+| `🇪🇺 Fastest` | `🇪🇺 Европа` |
+| `SWEDEN_VLESS_1`, no flag | `🇸🇪 Швеция` |
+| anything with no country signal | `🌐 Резерв` |
+
+The names are Russian because the list is: the bot speaks Russian and the status
+line above these entries does too. The **parse** side stays English —
+`_MIRROR_REGION_ENGLISH_NAMES` builds the token table, because `SWEDEN_VLESS_1`
+is what a provider writes and only ASCII runs are read out of a label.
 
 The server's own tag is read before its group's, because a group may be the
 root selector, which names the provider and not a place. A label that is
 oversized or carries control characters is not read at all and its endpoint
-falls back to `🌐 Backup` — the fallback is generic on purpose, never the
+falls back to `🌐 Резерв` — the fallback is generic on purpose, never the
 provider's word for it. A code with no name in the table renders as the code
 (`🇦🇹 AT`). The result is percent-encoded like every other remark, and since it
 is our own text it can no longer lengthen a remark or add URI structure.
+
+### The route is part of the label
+
+A country alone leaves a customer choosing between two lines that are not
+substitutes: our relayed endpoint is reachable from a whitelisted Russian
+network that refuses the direct host, and slower for everyone else. So a label
+is flag + country, plus `белые списки` when the endpoint is reached through the
+RU relay in `Server.client_vpn_host`. The suffix comes from the endpoint's own
+`relayed` flag (`_endpoint_label(code, relayed=...)`, and `relayed` on every
+normalized mirror endpoint), never from a line's position or its host, so a
+second relayed source is labelled correctly the day its parser sets the flag.
+Exactly one rendered line carries it today.
 
 A customer's full list therefore reads:
 
 ```
 📊 Подписка-осталось 24 дней
-🇳🇱 NL Direct
-🇩🇪 Germany
-🇪🇺 Europe
-… one line per region, countries in a fixed order, 🌐 Backup last
-🇳🇱 NL Relay
+🇳🇱 Нидерланды
+🇩🇪 Германия
+🇪🇺 Европа
+… one line per region, countries in Russian alphabetical order, 🌐 Резерв last
+🇳🇱 Нидерланды белые списки
 ```
 
 ### How many, and in what order
@@ -271,20 +288,36 @@ nine of them Sweden. Two caps bound that.
 
 - `SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION` (default **1**) keeps one
   endpoint per country, within one provider document. Raising it appends a
-  numbered suffix — `🇸🇪 Sweden`, `🇸🇪 Sweden 2` — so two entries in one country
+  numbered suffix — `🇸🇪 Швеция`, `🇸🇪 Швеция 2` — so two entries in one country
   stay distinguishable in a client list.
+
+  **The count starts at our own lines.** We always render `🇳🇱 Нидерланды`
+  ourselves, above every mirrored line, so a mirrored Dutch endpoint is
+  `🇳🇱 Нидерланды 2` even at the default cap of 1: two byte-identical entries
+  leave a customer nothing to choose on, and hide that one of them failing
+  means something different from the other failing. Ours keeps the bare label.
+  The number is a disambiguator, never a category — a word like `Резерв` here
+  would leak whose endpoint it is, which is the thing the label policy exists
+  to hide. `_own_rendered_labels()` seeds the counter; it holds constants, not
+  per-request state, which is what lets it run inside the per-source cache.
+  Numbering is per source document: two upstream URLs both offering the
+  Netherlands would each start from `2`. One source is configured, and the
+  aggregate already drops byte-identical lines.
 - `SUBSCRIPTION_BACKUP_MAX_MIRROR_ENTRIES` (default **16**) caps mirrored lines
   across all sources, so a provider that suddenly returns hundreds cannot bury
   our own lines. The tighter of it and `SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES`
   applies.
 
-**Ordering rule:** entries sort by rendered label, then by how many regions the
-host is offered under, then by `(host, port)`. Every key is a property of the
-endpoint set, never of a position in the provider's document, so a provider that
-reorders its outbounds between two refreshes cannot reshuffle a customer's list
-or change which server a region resolves to. Sorting by label puts the countries
-in a fixed sequence and leaves `🌐 Backup` last, because its globe sorts above
-every regional indicator codepoint.
+**Ordering rule:** entries sort by the rendered country name, then by how many
+regions the host is offered under, then by `(host, port)`. Every key is a
+property of the endpoint set, never of a position in the provider's document, so
+a provider that reorders its outbounds between two refreshes cannot reshuffle a
+customer's list or change which server a region resolves to. The name, not the
+label, is the key: a label opens with its flag, whose code points follow the ISO
+alpha-2 code, so sorting on it spelled the list in ISO order — invisible while
+the names were English and coincidentally alphabetic, arbitrary in Russian
+(`🇫🇮 Финляндия` ahead of `🇬🇧 Великобритания`). `🌐 Резерв` is held last because
+it names no country to sort among them.
 
 **Which server a region gets:** the one that belongs to the fewest regions. A
 host the provider lists under nine flags is a front or an aggregate, not the

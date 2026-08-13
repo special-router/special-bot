@@ -4,7 +4,7 @@ display how many days remain or that the subscription has ended.
 Working inbounds (primary + ``MIRROR_INBOUND_IDS``) receive ``expiryTime`` only.
 Their ``email`` is left for ``apps.servers.client_labels`` to fill with the
 attribution label; the subscription remark comes from the inbound, not the
-client, so it stays clean (e.g. ``🇳🇱 NL Direct``).
+client, so it stays clean (e.g. ``🇳🇱 Нидерланды``).
 
 The optional ``STATUS_INBOUND_ID`` inbound additionally carries the per-client
 status in its ``email`` field, producing a remark like

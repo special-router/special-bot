@@ -1,6 +1,6 @@
 """Dial each subscription endpoint through xray and report whether traffic flows.
 
-Includes our own NL Direct line as a control. An instrument that cannot pass a
+Includes our own direct NL line as a control. An instrument that cannot pass a
 known-good endpoint proves nothing about the ones under test, and the first
 version of this probe failed everything because urllib silently ignores a SOCKS
 proxy — hence the control and the explicit socket wiring below.
