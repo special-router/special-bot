@@ -1,9 +1,10 @@
 """Sync 3x-ui client expiryTime and status label so subscription clients (happ)
 display how many days remain or that the subscription has ended.
 
-Working inbounds (primary + ``MIRROR_INBOUND_IDS``) receive ``expiryTime`` only
-and keep an empty ``email`` so the subscription remark stays clean
-(e.g. ``🇳🇱 NL Direct``).
+Working inbounds (primary + ``MIRROR_INBOUND_IDS``) receive ``expiryTime`` only.
+Their ``email`` is left for ``apps.servers.client_labels`` to fill with the
+attribution label; the subscription remark comes from the inbound, not the
+client, so it stays clean (e.g. ``🇳🇱 NL Direct``).
 
 The optional ``STATUS_INBOUND_ID`` inbound additionally carries the per-client
 status in its ``email`` field, producing a remark like
@@ -88,7 +89,8 @@ class Command(BaseCommand):
                 expiry_ms = int(time.time() * 1000) - 86_400_000
                 enabled = False
 
-            # Working inbounds: expiryTime + enable only, keep email empty.
+            # Working inbounds: expiryTime + enable only; the transport supplies
+            # the attribution label in place of the blank passed here.
             for inbound_id in working_ids:
                 try:
                     await self._sync_one(api, inbound_id, row['vpn_uuid'], expiry_ms, '', enabled)

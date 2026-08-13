@@ -1,0 +1,116 @@
+"""The one place that decides what label a 3x-ui client carries.
+
+xray keys its traffic statistics by ``email``, so a client written with an empty
+one accumulates nothing at all.  The label is derived from ``UserVPN.id``: a
+surrogate key that means nothing to whoever reads the panel, unlike a Telegram
+id, username or address.  It is scoped by inbound because
+``client_traffics.email`` is UNIQUE across the whole panel database, so the same
+UUID appearing on a mirror inbound would otherwise want the same row.
+
+``LabelledClientApi`` stamps it inside the panel transport, so no caller has to
+remember it.  Two things are never written: a non-empty label this module did
+not write -- the status inbound's ``осталось N дней``, or a hand-made one -- and
+any label at all on an inbound that is not the one its owner's ``Server`` row
+configures.  The panel hosts a foreign tenant, and a label on their inbound is a
+write we had no business making.
+"""
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from asgiref.sync import sync_to_async
+from django.core.exceptions import ValidationError
+from py3xui.async_api import AsyncClientApi
+
+
+LABEL_PREFIX: str = 'uv'
+
+_LABEL_PATTERN = re.compile(rf'^{LABEL_PREFIX}-\d+-\d+$')
+
+
+def client_label(inbound_id: int, user_vpn_id: int) -> str:
+    """Return the attribution label for one connection on one inbound."""
+    return f'{LABEL_PREFIX}-{int(inbound_id)}-{int(user_vpn_id)}'
+
+
+def is_client_label(value: str | None) -> bool:
+    """Report whether a label was written by this module."""
+    return bool(_LABEL_PATTERN.match(value or ''))
+
+
+def owner_for_uuid(client_uuid: Any) -> tuple[int, int] | None:
+    """Resolve a panel client UUID to ``(UserVPN.id, its server's inbound id)``.
+
+    Returns None when the client has no owner we can name.  Deferred import:
+    the panel transport in ``utils`` reaches this module, and ``utils`` must not
+    depend on Django models at import time.
+    """
+    from apps.vpn.models import UserVPN
+
+    if not client_uuid:
+        return None
+    try:
+        owner = (
+            UserVPN.objects
+            .filter(vpn_uuid=str(client_uuid))
+            .order_by('id')
+            .values_list('id', 'server__inbound_id')
+            .first()
+        )
+    except (ValidationError, ValueError, TypeError):
+        # Not every panel client id is a UUID; a foreign one simply has no owner.
+        return None
+    if owner is None or owner[1] is None:
+        return None
+    return int(owner[0]), int(owner[1])
+
+
+def label_for_client(client: Any, inbound_id: int | None) -> str | None:
+    """Return the label to write, or None to leave the client's email alone.
+
+    A label is written only on an inbound we own, which is the primary inbound
+    configured on the owner's ``Server`` row and nothing else.  Inbounds 10 and
+    13 carry a foreign tenant's clients; the status and mirror inbounds are a
+    different record of the same customer.  Anything this function cannot
+    positively establish as ours is left unlabelled.
+    """
+    if not inbound_id:
+        return None
+    current = getattr(client, 'email', '') or ''
+    if current and not is_client_label(current):
+        return None
+    owner = owner_for_uuid(getattr(client, 'id', None))
+    if owner is None:
+        return None
+    user_vpn_id, primary_inbound_id = owner
+    if primary_inbound_id != int(inbound_id):
+        return None
+    return client_label(inbound_id, user_vpn_id)
+
+
+_alabel_for_client = sync_to_async(label_for_client)
+
+
+class LabelledClientApi(AsyncClientApi):
+    """Panel client API that labels every client it writes.
+
+    Both routes address a client by UUID and carry ``email`` only inside the
+    serialized body, so stamping it changes nothing about how a client is
+    reached.
+    """
+
+    async def add(self, inbound_id: int, clients: list) -> None:
+        for client in clients:
+            await self._stamp(client, inbound_id)
+        await super().add(inbound_id, clients)
+
+    async def update(self, client_uuid: str, client: Any) -> None:
+        await self._stamp(client, getattr(client, 'inbound_id', None))
+        await super().update(client_uuid, client)
+
+    @staticmethod
+    async def _stamp(client: Any, inbound_id: int | None) -> None:
+        label = await _alabel_for_client(client, inbound_id)
+        if label is not None:
+            client.email = label

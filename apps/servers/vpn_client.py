@@ -92,6 +92,9 @@ class APIVPNClient:
             await self._api.client.add(inbound_id, [new_client])
             return
         client.enable = enabled
+        # py3x-ui selects an update route from this field; it also scopes the
+        # attribution label the transport stamps on the way out.
+        client.inbound_id = inbound_id
         await self._api.client.update(str(user_vpn.vpn_uuid), client)
 
     async def get_key(self, user_vpn: UserVPN):
