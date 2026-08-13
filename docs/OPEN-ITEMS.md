@@ -215,10 +215,35 @@ The consequence is measurable: inbound 5 reports **58 TB** moved, and
 that no longer exist on any client. Today, nothing accumulates. **We cannot tell
 who consumes what, cannot detect a shared key, and cannot enforce a quota.**
 
-**Blocked on:** a decision about labels. Restoring a per-client identifier
-restores attribution and no longer reintroduces the deletion hazard, but the
-identifier must not be anything that identifies a customer to whoever reads the
-panel.
+**Decided:** every client we write now carries `uv-<inbound_id>-<UserVPN.id>`,
+stamped inside the panel transport (`apps/servers/client_labels.py`) so no call
+site can forget it. `UserVPN.id` is a surrogate key that identifies nobody to
+whoever reads the panel; the inbound prefix keeps it unique under the panel-wide
+UNIQUE on `client_traffics.email` if the mirror inbounds ever wake. A label the
+transport did not write — the status inbound's `осталось N дней`, or a hand-made
+one — is never overwritten.
+
+**A label is written only on an inbound we own**, which is the primary inbound
+configured on the owner's `Server` row and nothing else — read from the database,
+not from a constant. Inbounds 10 and 13 belong to the foreign tenant above, and
+a write there is one we had no business making; the status, mirror and canary
+inbounds are a second record of a customer we already attribute. Anything the
+transport cannot positively establish as ours stays unlabelled, which costs
+attribution on that client and nothing else. Existing clients are repaired by
+`manage.py backfill_client_labels --server-id N --inbound-id M [--apply]`, which
+is a dry run unless `--apply` is passed and refuses to write a colliding label.
+
+**The consequence: x-ui becomes a second actor able to disable a customer.**
+x-ui enforces `total` and `expiryTime` per client off `client_traffics`, and
+that enforcement is inert today only because no rows exist. Labelling creates
+the rows and switches it on. On day one it agrees with the bot: `total = 0` on
+every client on inbound 5, so no quota can trip, and `sync_expiry_times` pushes
+a fresh `expiryTime` daily. It stops agreeing the moment that daily push does
+not run — if `sync_expiry_times` or `update_user_vpn` stalls past a day, x-ui
+disables paid-up customers on its own, without the bot knowing and without any
+of our logs recording it. A stalled scheduler used to mean "state drifts"; it
+now means "customers get cut off". Anyone who sets a non-zero `total` on a
+client is arming a second, independent kill switch.
 
 Related and worth knowing before any firewall work: **inbound 13 shares its
 Reality SNI with inbound 5**, so a rule aimed at one can silently affect the
