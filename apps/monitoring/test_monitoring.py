@@ -1,24 +1,41 @@
+import asyncio
 import os
 import subprocess
 import sys
+from datetime import timedelta
+from decimal import Decimal
 from io import StringIO
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 from django.core import management
 from django.test import TestCase, override_settings
+from django.utils import timezone
+from telegram.error import BadRequest
 
+from apps.analytics.choices import (
+    CashBasisChoices,
+    DateBasisChoices,
+    EconomicClassChoices,
+    MoneyEventKindChoices,
+)
+from apps.analytics.models import MoneyEvent
 from apps.monitoring.models import MonitorState, MonitorTransition
 from apps.monitoring.notifications import build_transition_payload, send_transition_notification
 from apps.monitoring.probes import (
     LayerResult,
     build_xray_config,
+    cash_gap_days,
+    probe_invoice_link,
+    run_checkout_probe,
     run_control_plane_probe,
     run_host_capacity_probe,
     run_protocol_canary,
     run_regional_probe,
 )
-from apps.monitoring.tasks import _run, _notify_transition
+from apps.monitoring.tasks import _run, _notify_transition, run_checkout_monitor
+from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
+from apps.users.models import TelegramUser
 
 
 class RegionalProbeTests(TestCase):
@@ -55,10 +72,11 @@ class RegionalProbeTests(TestCase):
 class BeatScheduleTests(TestCase):
     project_root = Path(__file__).resolve().parents[2]
 
-    def _schedule_keys(self, *, monitor_enabled: bool, l2_enabled: bool) -> set[str]:
+    def _schedule_keys(self, *, monitor_enabled: bool, l2_enabled: bool, checkout_enabled: bool = False) -> set[str]:
         environment = os.environ | {
             'SPECIAL_MONITOR_ENABLED': str(monitor_enabled).lower(),
             'SPECIAL_MONITOR_L2_ENABLED': str(l2_enabled).lower(),
+            'SPECIAL_MONITOR_CHECKOUT_ENABLED': str(checkout_enabled).lower(),
         }
         result = subprocess.run(
             [
@@ -115,6 +133,16 @@ class BeatScheduleTests(TestCase):
             },
         )
         self.assertEqual(with_l2, without_l2 | {'special_monitor_l2'})
+
+    def test_checkout_schedule_requires_both_monitoring_flags(self):
+        monitoring_off = self._schedule_keys(monitor_enabled=False, l2_enabled=False, checkout_enabled=True)
+        monitoring_on = self._schedule_keys(monitor_enabled=True, l2_enabled=False, checkout_enabled=True)
+
+        self.assertNotIn('special_monitor_checkout', monitoring_off)
+        self.assertEqual(
+            monitoring_on,
+            self._schedule_keys(monitor_enabled=True, l2_enabled=False) | {'special_monitor_checkout'},
+        )
 
 
 class ControlPlaneProbeTests(TestCase):
@@ -379,6 +407,18 @@ class MonitoringStateTests(TestCase):
         self.assertFalse(result.delivered)
         self.assertEqual(result.error_class, 'not_configured')
 
+    def test_checkout_transition_is_a_payable_notification_layer(self):
+        payload = build_transition_payload(
+            layer='checkout',
+            event='opened',
+            error_class='cash_gap',
+            failures=2,
+            created_at=timezone.now(),
+        )
+
+        self.assertEqual(payload['layer'], 'checkout')
+        self.assertEqual(payload['error_class'], 'cash_gap')
+
     def test_status_command_is_read_only_and_excludes_details(self):
         MonitorState.objects.create(
             layer='l2',
@@ -396,3 +436,160 @@ class MonitoringStateTests(TestCase):
         self.assertIn('"layer": "l2"', rendered)
         self.assertNotIn('private', rendered)
         self.assertNotIn('not-rendered', rendered)
+
+
+PROBE_PROVIDER_TOKEN = 'fixture-provider-token'
+PROBE_REJECTION = BadRequest(f'Payment_provider_invalid: {PROBE_PROVIDER_TOKEN}')
+
+
+class CashGapTests(TestCase):
+    def setUp(self):
+        self.user = TelegramUser.objects.create(telegram_id=9001, username='cash-gap')
+
+    def money_event(self, days_ago: int, *, cash: str = '0', credit: str = '0') -> None:
+        occurred_at = timezone.now() - timedelta(days=days_ago)
+        MoneyEvent.objects.create(
+            event_key=f'fixture:{days_ago}:{cash}:{credit}',
+            occurred_at=occurred_at,
+            effective_date=occurred_at.date(),
+            user=self.user,
+            source=TransactionSourceChoices.YOUMONEY,
+            status=TransactionStatusChoices.SUCCESS,
+            kind=MoneyEventKindChoices.TOPUP,
+            economic_class=EconomicClassChoices.CASH_IN,
+            cash_basis=CashBasisChoices.MEASURED,
+            date_basis=DateBasisChoices.CREATED_AT,
+            balance_delta=Decimal(cash) + Decimal(credit),
+            cash_amount=Decimal(cash),
+            credit_amount=Decimal(credit),
+        )
+
+    def test_no_cash_in_at_all_is_unknown_rather_than_zero(self):
+        self.assertIsNone(cash_gap_days())
+
+    def test_cash_in_today_closes_the_gap(self):
+        self.money_event(0, cash='420')
+
+        self.assertEqual(cash_gap_days(), 0)
+
+    def test_gap_counts_from_the_most_recent_cash_in(self):
+        self.money_event(9, cash='420')
+        self.money_event(30, cash='210')
+
+        self.assertEqual(cash_gap_days(), 9)
+
+    def test_issued_credit_does_not_look_like_cash(self):
+        # The nine-day silence came with 3 150 ₽ of credits issued. Counting
+        # those would have hidden exactly the outage this layer exists for.
+        self.money_event(0, credit='3150')
+        self.money_event(9, cash='420')
+
+        self.assertEqual(cash_gap_days(), 9)
+
+
+@override_settings(
+    TELEGRAM_BOT_TOKEN='fixture-bot-token',
+    YOUMONEY_TOKEN=PROBE_PROVIDER_TOKEN,
+    SPECIAL_MONITOR_CHECKOUT_TIMEOUT=1,
+    SPECIAL_MONITOR_CHECKOUT_AMOUNT=10000,
+    SPECIAL_MONITOR_CASH_GAP_DAYS=3,
+)
+class CheckoutProbeTests(TestCase):
+    @override_settings(YOUMONEY_TOKEN='')
+    @patch('apps.monitoring.probes.Bot')
+    def test_missing_provider_token_never_reaches_bot_api(self, bot):
+        self.assertEqual(probe_invoice_link(1.0), 'not_configured')
+        bot.assert_not_called()
+
+    @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
+    def test_provider_rejection_is_reduced_to_a_class(self, invoice):
+        invoice.side_effect = PROBE_REJECTION
+
+        self.assertEqual(probe_invoice_link(1.0), 'BadRequest')
+
+    def test_a_stalled_invoice_call_hands_the_worker_back(self):
+        async def never_returns(_timeout):
+            await asyncio.sleep(5)
+
+        with patch('apps.monitoring.probes.create_probe_invoice_link', never_returns):
+            self.assertEqual(probe_invoice_link(0.05), 'invoice_timeout')
+
+    @patch('apps.monitoring.probes.cash_gap_days', return_value=0)
+    @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
+    def test_working_checkout_and_recent_cash_is_healthy(self, invoice, gap):
+        result = run_checkout_probe()
+
+        self.assertTrue(result.ok)
+        self.assertIsNone(result.error_class)
+        self.assertEqual(result.details['cash_gap_days'], 0)
+
+    @patch('apps.monitoring.probes.cash_gap_days', return_value=0)
+    @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
+    def test_failing_probe_with_zero_gap_is_a_checkout_failure(self, invoice, gap):
+        invoice.side_effect = PROBE_REJECTION
+
+        result = run_checkout_probe()
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_class, 'BadRequest')
+        self.assertFalse(result.details['invoice_ok'])
+        self.assertEqual(result.details['cash_gap_days'], 0)
+
+    @patch('apps.monitoring.probes.cash_gap_days', return_value=9)
+    @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
+    def test_healthy_probe_with_a_grown_gap_is_reported_as_a_gap(self, invoice, gap):
+        result = run_checkout_probe()
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_class, 'cash_gap')
+        self.assertTrue(result.details['invoice_ok'])
+        self.assertEqual(result.details['cash_gap_days'], 9)
+
+    @patch('apps.monitoring.probes.cash_gap_days', return_value=None)
+    @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
+    def test_never_having_taken_cash_does_not_page(self, invoice, gap):
+        result = run_checkout_probe()
+
+        self.assertTrue(result.ok)
+        self.assertIsNone(result.details['cash_gap_days'])
+
+    @patch('apps.monitoring.probes.cash_gap_days', return_value=0)
+    @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
+    def test_state_keeps_neither_the_token_nor_the_rejection_text(self, invoice, gap):
+        invoice.side_effect = PROBE_REJECTION
+
+        task_result = _run('checkout', run_checkout_probe)
+        state = MonitorState.objects.get(layer='checkout')
+        rendered = repr((task_result, state.details, state.error_class))
+
+        self.assertNotIn(PROBE_PROVIDER_TOKEN, rendered)
+        self.assertNotIn('Payment_provider_invalid', rendered)
+        self.assertNotIn('t.me', rendered)
+
+
+class CheckoutMonitorTaskTests(TestCase):
+    @override_settings(SPECIAL_MONITOR_CHECKOUT_ENABLED=False)
+    @patch('apps.monitoring.tasks.run_checkout_probe')
+    def test_disabled_flag_probes_nothing_and_records_nothing(self, probe):
+        result = run_checkout_monitor()
+
+        probe.assert_not_called()
+        self.assertTrue(result['skipped'])
+        self.assertFalse(MonitorState.objects.filter(layer='checkout').exists())
+        self.assertEqual(MonitorTransition.objects.count(), 0)
+
+    @override_settings(SPECIAL_MONITOR_CHECKOUT_ENABLED=True, SPECIAL_MONITOR_FAILURE_THRESHOLD=2)
+    @patch(
+        'apps.monitoring.tasks.run_checkout_probe',
+        return_value=LayerResult(layer='checkout', ok=False, error_class='cash_gap'),
+    )
+    def test_enabled_flag_records_state_and_opens_on_threshold(self, probe):
+        run_checkout_monitor()
+        self.assertFalse(MonitorState.objects.get(layer='checkout').alert)
+
+        self.assertEqual(run_checkout_monitor()['error_class'], 'cash_gap')
+        self.assertTrue(MonitorState.objects.get(layer='checkout').alert)
+        self.assertEqual(
+            list(MonitorTransition.objects.values_list('layer', 'event')),
+            [('checkout', 'opened')],
+        )

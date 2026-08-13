@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from django.conf import settings
 
 ALLOWED_EVENTS = {'opened', 'recovered'}
-ALLOWED_LAYERS = {'l0', 'l1', 'l2', 'host'}
+ALLOWED_LAYERS = {'l0', 'l1', 'l2', 'host', 'checkout'}
 
 
 @dataclass(frozen=True)

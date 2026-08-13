@@ -9,7 +9,14 @@ from django.utils import timezone
 
 from .models import MonitorState, MonitorTransition
 from .notifications import build_transition_payload, send_transition_notification
-from .probes import LayerResult, run_control_plane_probe, run_host_capacity_probe, run_protocol_canary, run_regional_probe
+from .probes import (
+    LayerResult,
+    run_checkout_probe,
+    run_control_plane_probe,
+    run_host_capacity_probe,
+    run_protocol_canary,
+    run_regional_probe,
+)
 
 
 def _notify_transition(transition_id: int) -> None:
@@ -85,6 +92,19 @@ def run_protocol_monitor() -> dict[str, object]:
 @shared_task(name='apps.monitoring.tasks.run_host_capacity_monitor')
 def run_host_capacity_monitor() -> dict[str, object]:
     return _run('host', run_host_capacity_probe)
+
+
+@shared_task(name='apps.monitoring.tasks.run_checkout_monitor')
+def run_checkout_monitor() -> dict[str, object]:
+    """Disabled means nothing is written, not that a green state is written.
+
+    Beat does not schedule this layer while the flag is off, so a run that gets
+    here anyway is a leftover; recording it would leave a state row claiming
+    checkout is watched when nothing is watching it.
+    """
+    if not settings.SPECIAL_MONITOR_CHECKOUT_ENABLED:
+        return {'layer': 'checkout', 'ok': True, 'error_class': None, 'skipped': True}
+    return _run('checkout', run_checkout_probe)
 
 
 @shared_task(name='apps.monitoring.tasks.notify_monitor_transition')
