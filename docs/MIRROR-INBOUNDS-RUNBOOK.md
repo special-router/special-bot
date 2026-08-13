@@ -57,6 +57,44 @@ docker inspect special-bot-web-1 --format '{{range .Mounts}}{{.Source}} {{end}}'
 
 `/dev/null` there means `.env` is missing the path.
 
+### Replacing the URL: never write the secret atomically
+
+Rotating to a different provider subscription is editing that one file — and the
+obvious way to edit it is wrong. Compose bind-mounts a **single file**, and a
+single-file bind mount is bound to the **inode**, not to the path. The safe
+write everyone reaches for —
+
+```python
+os.replace(tmp, path)   # atomic, and it silently breaks the mount
+```
+
+— creates a new inode and points the host path at it. The container keeps
+reading the old, now-orphaned inode, and no longer sees any edit you make by
+path. Nothing errors. The file on the host is correct, the container serves the
+previous provider, and the two disagree until a restart.
+
+Rewriting in place afterwards does not repair it: the path already refers to the
+new inode, so an in-place write updates the file the container is *not* reading.
+
+Two ways out, and both are fine:
+
+- **Write in place from the start** — `os.open(path, O_WRONLY | O_TRUNC)` — so
+  the inode never changes and the container sees the new URL immediately.
+- **Recreate the container**, which re-resolves the bind mount by path. The URL
+  is read at settings import anyway, so a restart is required regardless; the
+  inode question only decides whether you can verify the change *before* that
+  restart.
+
+Confirm which subscription the container actually holds, without printing it:
+
+```bash
+docker exec special-bot-web-1 python3 -c \
+  "import json;u=json.load(open('/run/secrets/subscription-backup.json'))['upstream_urls'][0];print(u[-4:])"
+```
+
+Compare those last four characters against the host file. Equal means the mount
+is live; different means you are looking at two files.
+
 ---
 
 ## 2. Identify as a client, or get an instruction leaflet
