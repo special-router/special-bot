@@ -106,7 +106,16 @@ chmod 600 .environment
 docker build -t vpnbot:latest .
 # This one-shot command is the sole migration owner; all long-running services
 # have RUN_MIGRATIONS=false in Compose.
-docker compose -f "$compose_file" run --rm -e RUN_MIGRATIONS=false web python manage.py migrate --noinput
+#
+# -T and </dev/null are load-bearing, not tidiness. This whole block is fed to
+# `bash -s` through a heredoc, so the script itself lives on stdin. Without -T,
+# `docker compose run` attaches to that stdin and consumes what is left of it:
+# bash then has nothing more to read, every line below this one is silently
+# skipped, and the deploy exits 0 having built an image and migrated without
+# ever recreating a single container. It reports success and changes nothing.
+# Observed 2026-08-13 — the host was on the new commit, the containers on the
+# old image, and no error anywhere.
+docker compose -f "$compose_file" run --rm -T -e RUN_MIGRATIONS=false web python manage.py migrate --noinput </dev/null
 docker compose -f "$compose_file" up -d --no-deps --force-recreate web celery celery_beat monitoring
 if docker run --rm --network vpn_bot_default --env-file .environment \
   -e DJANGO_SETTINGS_MODULE=bot.settings vpnbot:latest python -c 'import django; django.setup(); from apps.telegram_bot.tasks import safe_broadcast_v1; assert safe_broadcast_v1.name == "apps.telegram_bot.tasks.safe_broadcast_v1"' >/dev/null; then
