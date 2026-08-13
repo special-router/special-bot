@@ -15,7 +15,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
@@ -937,10 +937,14 @@ class MirrorIngestTests(SimpleTestCase):
         },
         'transport': {'type': 'grpc', 'service_name': 'synthetic-service'},
     }
+    # No tag in this class names a country, so every endpoint here lands in the
+    # one unnamed group and is rendered with the generic label; what the policy
+    # does with a country signal is asserted in MirrorLabelPolicyTests.
+    generic = quote(views._MIRROR_UNKNOWN_REGION)
     reality_link = (
         'vless://synthetic-reality-id@mirror-two.example:8443?'
         'flow=xtls-rprx-vision&type=grpc&security=reality&pbk=synthetic-pbk&fp=chrome&'
-        'sni=sni.example&sid=ab01&spx=%2F&serviceName=synthetic-service#Mirror%20Reality'
+        f'sni=sni.example&sid=ab01&spx=%2F&serviceName=synthetic-service#{generic}'
     )
 
     def singbox(self, *outbounds):
@@ -1033,9 +1037,10 @@ class MirrorIngestTests(SimpleTestCase):
 
         self.assertEqual(views._sanitize_upstream_payload(self.singbox(outbound)), [
             'vless://synthetic-bare-id@mirror-three.example:8443?'
-            'type=tcp&security=reality&pbk=synthetic-pbk&spx=%2F#Mirror%20Bare',
+            f'type=tcp&security=reality&pbk=synthetic-pbk&spx=%2F#{self.generic}',
         ])
 
+    @override_settings(SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION=3)
     def test_v2ray_array_is_parsed_and_gated_like_singbox(self):
         self.assertEqual(views._sanitize_upstream_payload(self.v2ray_array()), [])
 
@@ -1043,18 +1048,20 @@ class MirrorIngestTests(SimpleTestCase):
 
         self.assertEqual(links, [
             f'vless://synthetic-{index}@mirror-{index}.example:443?'
-            f'type=tcp&security=tls&fp=chrome&sni=sni.example#Mirror%20{index}'
+            f'type=tcp&security=tls&fp=chrome&sni=sni.example'
+            f'#{self.generic}{quote(f" {index + 1}") if index else ""}'
             for index in range(3)
         ])
 
-    @override_settings(SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS=True)
+    @override_settings(SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS=True,
+                       SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION=2)
     def test_plaintext_endpoints_are_served_only_when_explicitly_enabled(self):
         payload = self.singbox(self.plaintext_outbound, self.reality_outbound)
 
         self.assertEqual(views._sanitize_upstream_payload(payload), [
             'vless://synthetic-plain-id@mirror-one.example:443?'
-            'type=tcp&security=none#Mirror%20Plain',
-            self.reality_link,
+            f'type=tcp&security=none#{self.generic}',
+            self.reality_link.replace(f'#{self.generic}', f'#{self.generic}{quote(" 2")}'),
         ])
 
     @override_settings(SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS=True)
@@ -1078,7 +1085,8 @@ class MirrorIngestTests(SimpleTestCase):
             with self.subTest(payload=payload[:40]):
                 self.assertEqual(views._sanitize_upstream_payload(payload), [])
 
-    @override_settings(SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS=True)
+    @override_settings(SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS=True,
+                       SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION=views._MIRROR_MAX_ENDPOINTS)
     def test_oversized_document_is_capped_at_the_endpoint_limit(self):
         outbounds = [dict(self.plaintext_outbound, server=f'mirror-{index}.example',
                           tag=f'Mirror {index}')
@@ -1107,7 +1115,8 @@ class MirrorIngestTests(SimpleTestCase):
 
         self.assertEqual(urlsplit(link).hostname, 'mirror-one.example')
         self.assertEqual(urlsplit(link).username, 'id%40evil.example%2Fx%3Fa%3Db%23frag')
-        self.assertEqual(urlsplit(link).fragment, 'Mirror%23injected')
+        # The tag never reaches the fragment at all now, injected or not.
+        self.assertEqual(urlsplit(link).fragment, self.generic)
 
     def test_opaque_uri_list_sources_keep_their_byte_for_byte_contract(self):
         link = 'vless://synthetic@backup.example:443?type=tcp#Other'
@@ -1254,40 +1263,17 @@ class MirrorClientIdentityTests(SimpleTestCase):
         with self.assertNoLogs('apps.subscriptions.views', 'WARNING'):
             self.assertEqual(views._cached_upstream_links(url), [])
 
-    def test_multi_region_document_keeps_the_provider_region_label(self):
+    def test_multi_region_document_keeps_one_entry_per_region(self):
         links = views._sanitize_upstream_payload(self.region_document(), self.accepted_headers)
 
         remarks = self.remarks(links)
-        self.assertEqual(len(links), len(self.regions) * 9)
-        self.assertEqual(remarks[0], 'Fastest · srv-0-0')
-        for region in self.regions:
-            self.assertIn(f'{region} · srv-', ' '.join(remarks))
+        self.assertEqual(len(links), len(self.regions))
+        self.assertEqual(remarks, [
+            '🇩🇪 Germany', '🇯🇵 Japan', '🇰🇿 Kazakhstan', '🇳🇱 Netherlands', '🇳🇴 Norway',
+            '🇷🇺 Russia', '🇸🇪 Sweden', '🇺🇸 United States', '🌐 Backup',
+        ])
 
-    def test_a_server_already_naming_its_region_is_not_labelled_twice(self):
-        payload = self.region_document(
-            servers_per_region=1, tag=lambda region, index: f'{region} {index}')
-
-        self.assertEqual(self.remarks(views._sanitize_upstream_payload(payload))[0],
-                         'Fastest 0-0')
-
-    def test_a_hostile_region_label_cannot_break_the_uri(self):
-        for label, expected in (
-            ('Japan#x?a=b&c=d/../', 'Japan#x?a=b&c=d/../ · srv-0-0'),
-            ('Japan\r\nX-Injected: 1', 'srv-0-0'),
-            ('Japan' * 100, 'srv-0-0'),
-        ):
-            with self.subTest(label=label):
-                document = json.loads(self.region_document(servers_per_region=1))
-                document['outbounds'][1]['tag'] = label
-                link = views._sanitize_upstream_payload(json.dumps(document).encode())[0]
-
-                parsed = urlsplit(link)
-                self.assertEqual(parsed.hostname, 'server-0-0.example')
-                self.assertEqual(parsed.port, 443)
-                self.assertEqual(unquote(parsed.fragment), expected)
-                self.assertNotIn('\n', link)
-                self.assertNotIn('#', parsed.fragment)
-
+    @override_settings(SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION=views._MIRROR_MAX_ENDPOINTS)
     def test_the_endpoint_cap_still_holds_at_the_real_document_size(self):
         links = views._sanitize_upstream_payload(self.region_document(servers_per_region=40))
 
@@ -1357,6 +1343,179 @@ class MirrorClientIdentityTests(SimpleTestCase):
         views._fetch_upstream_payload('https://subscription.example/opaque')
 
         self.assertNotIn('x-hwid', b''.join(tls_socket.sent).decode('ascii'))
+
+
+class MirrorLabelPolicyTests(SimpleTestCase):
+    """What a paying customer reads on an endpoint we did not build.
+
+    The fixture is shaped like the live answer: a root selector named after the
+    provider, one flagged group per region, and servers whose tags are the
+    provider's own inventory numbering. None of those three strings is
+    something a customer of this deployment may be shown.
+    """
+
+    provider = '→ Remnawave'
+    regions = (('🇪🇺', 'Fastest'), ('🇳🇱', 'Netherlands'), ('🇩🇪', 'Germany'),
+               ('🇸🇪', 'Sweden'), ('🇳🇴', 'Norway'), ('🇺🇸', 'USA'),
+               ('🇰🇿', 'Kazakhstan'), ('🇯🇵', 'Japan'), ('🇷🇺', 'Russia'))
+    expected = ['🇩🇪 Germany', '🇪🇺 Europe', '🇯🇵 Japan', '🇰🇿 Kazakhstan', '🇳🇱 Netherlands',
+                '🇳🇴 Norway', '🇷🇺 Russia', '🇸🇪 Sweden', '🇺🇸 United States']
+
+    def setUp(self):
+        super().setUp()
+        views._clear_backup_cache()
+        self.addCleanup(views._clear_backup_cache)
+
+    def document(self, servers_per_region=9, flags=True, reverse=False):
+        """A provider document in the live shape, optionally reordered."""
+        groups, servers, server_tags = [], [], []
+        for region_index, (flag, region) in enumerate(self.regions):
+            tags = [f'{flag} {region.upper()}_VLESS_{index + 1}' if flags
+                    else f'{region.upper()}_VLESS_{index + 1}'
+                    for index in range(servers_per_region)]
+            server_tags.extend(tags)
+            groups.append({'type': 'selector',
+                           'tag': f'{flag} {region}' if flags else region,
+                           'outbounds': tags})
+            servers.extend({
+                'type': 'vless',
+                'tag': server_tag,
+                'server': f'server-{region_index}-{index}.example',
+                'server_port': 443,
+                'uuid': f'synthetic-{region_index}-{index}',
+                'tls': {
+                    'enabled': True,
+                    'server_name': 'sni.example',
+                    'reality': {'enabled': True, 'public_key': 'synthetic-pbk', 'short_id': 'ab01'},
+                },
+            } for index, server_tag in enumerate(tags))
+        # The root selector names the servers too, which is how the provider's
+        # own product name became every endpoint's region before this policy.
+        outbounds = [
+            {'type': 'selector', 'tag': self.provider,
+             'outbounds': [group['tag'] for group in groups] + server_tags},
+            *groups, *servers, {'type': 'direct', 'tag': 'direct'},
+        ]
+        if reverse:
+            outbounds.reverse()
+        return json.dumps({'outbounds': outbounds}).encode()
+
+    def remarks(self, links):
+        return [unquote(urlsplit(link).fragment) for link in links]
+
+    def test_the_provider_product_name_never_reaches_a_customer(self):
+        links = views._sanitize_upstream_payload(self.document())
+
+        rendered = ' '.join(self.remarks(links))
+        self.assertNotIn('Remnawave', rendered)
+        self.assertNotIn('VLESS', rendered)
+        self.assertEqual(self.remarks(links), self.expected)
+
+    def test_a_raw_inventory_name_is_replaced_by_the_place_it_sits_in(self):
+        remarks = self.remarks(views._sanitize_upstream_payload(self.document(flags=False)))
+
+        self.assertNotIn('SWEDEN_VLESS_1', ' '.join(remarks))
+        self.assertIn('🇸🇪 Sweden', remarks)
+        # 'Fastest' names no place, so it keeps an honest generic label rather
+        # than borrowing the provider's word for it.
+        self.assertIn(views._MIRROR_UNKNOWN_REGION, remarks)
+
+    def test_nine_regions_collapse_to_one_entry_each_and_stay_put(self):
+        links = views._sanitize_upstream_payload(self.document())
+
+        self.assertEqual(len(links), 9)
+        self.assertEqual(self.remarks(links), self.expected)
+        # Same servers, reordered document: identical list, same chosen hosts.
+        self.assertEqual(views._sanitize_upstream_payload(self.document(reverse=True)), links)
+        self.assertEqual([urlsplit(link).hostname for link in links],
+                         [f'server-{index}-0.example' for index in (2, 0, 7, 6, 1, 4, 8, 3, 5)])
+
+    @override_settings(SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION=3)
+    def test_raising_the_per_region_cap_yields_more_entries(self):
+        remarks = self.remarks(views._sanitize_upstream_payload(self.document()))
+
+        self.assertEqual(len(remarks), 27)
+        self.assertEqual(remarks[:3], ['🇩🇪 Germany', '🇩🇪 Germany 2', '🇩🇪 Germany 3'])
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://subscription.example/mirror'],
+        SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION=40,
+        SUBSCRIPTION_BACKUP_MAX_MIRROR_ENTRIES=5,
+    )
+    @patch('apps.subscriptions.views._fetch_upstream_payload')
+    def test_the_overall_cap_bounds_what_a_provider_can_add(self, fetch):
+        fetch.return_value = ({}, self.document(servers_per_region=40))
+
+        self.assertEqual(len(views._backup_links()), 5)
+
+    @override_settings(
+        SUBSCRIPTION_BASE_URL='https://direct.example/sub',
+        SUBSCRIPTION_DIRECT_ADVERTISED_PORT=0,
+        SUBSCRIPTION_STATUS_ENTRY_ENABLED=True,
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_TEST_USER_IDS=[1],
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://subscription.example/mirror'],
+    )
+    @patch('apps.subscriptions.views._fetch_upstream_payload')
+    @patch('apps.subscriptions.views._get_params', return_value={
+        'public_key': 'synthetic-public-key', 'server_name': 'sni.example',
+        'short_ids': ['synthetic-short-id'], 'port': 8443, 'network': 'tcp',
+    })
+    @patch('apps.subscriptions.views.TelegramUser.objects')
+    @patch('apps.subscriptions.views.UserVPN.objects')
+    def test_our_own_three_lines_survive_a_full_provider_document(
+        self, user_vpn_objects, telegram_user_objects, _params, fetch,
+    ):
+        fetch.return_value = ({}, self.document())
+        user_vpn_objects.select_related.return_value.get.return_value = SimpleNamespace(
+            id=1, enabled=True,
+            server=SimpleNamespace(id=1, inbound_id=5, client_vpn_host='relay.example:443', tariff=None),
+            user_id=1, vpn_uuid='synthetic-local-id',
+        )
+        telegram_user_objects.annotate_balance.return_value.filter.return_value.first.return_value = None
+
+        lines = base64.b64decode(views.subscription_proxy(
+            RequestFactory().get('/sub/synthetic'), 'synthetic').content).decode().splitlines()
+
+        self.assertEqual(len(lines), 3 + 9)
+        self.assertEqual(self.remarks(lines[:2]), ['📊 Подписка-подписка окончена', '🇳🇱 NL Direct'])
+        self.assertEqual(self.remarks(lines[-1:]), ['🇳🇱 NL Relay'])
+        self.assertEqual(urlsplit(lines[1]).hostname, 'direct.example')
+        self.assertEqual(urlsplit(lines[-1]).hostname, 'relay.example')
+        self.assertEqual(self.remarks(lines[2:-1]), self.expected)
+
+    def test_a_hostile_label_still_cannot_inject_uri_structure(self):
+        """A label is evidence about a country, never characters to render.
+
+        The two labels that resolve keep their country and lose everything the
+        provider wrote around it; the ones this module refuses to read fall back
+        to the generic label, because the group naming them is the provider's
+        own root selector, which names no place.
+        """
+        backup = views._MIRROR_UNKNOWN_REGION
+        for label, expected in (
+            ('🇯🇵 Japan#x?a=b&c=d/../', '🇯🇵 Japan'),
+            ('../../🇯🇵', '🇯🇵 Japan'),
+            ('🇯🇵 Japan\r\nX-Injected: 1', backup),
+            ('🇯🇵 Japan' * 100, backup),
+            ('🇯🇵\x00Japan', backup),
+        ):
+            with self.subTest(label=label):
+                document = json.loads(self.document(servers_per_region=1))
+                for outbound in document['outbounds']:
+                    if outbound.get('server') == 'server-3-0.example':
+                        outbound['tag'] = label
+
+                link = [candidate for candidate in views._sanitize_upstream_payload(
+                    json.dumps(document).encode())
+                    if urlsplit(candidate).hostname == 'server-3-0.example'][0]
+
+                parsed = urlsplit(link)
+                self.assertEqual(parsed.port, 443)
+                self.assertNotIn('\n', link)
+                self.assertNotIn('#', parsed.fragment)
+                self.assertEqual(unquote(parsed.fragment), expected)
 
 
 class SubscriptionResponseCacheTests(SimpleTestCase):

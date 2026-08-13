@@ -564,6 +564,13 @@ def _backup_links() -> list[str] | None:
     _evict_backup_cache({_backup_cache_key(url) for url in valid_urls})
     line_limit = int(_bounded_number(
         getattr(settings, 'SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES', 256), default=256, lower=1, upper=2048))
+    # Two caps with two jobs: the aggregate limit protects the response size, and
+    # this one protects the list a customer scrolls, so our own status, Direct
+    # and Relay lines stay reachable whatever a provider decides to return. The
+    # tighter of the two decides.
+    line_limit = min(line_limit, int(_bounded_number(
+        getattr(settings, 'SUBSCRIPTION_BACKUP_MAX_MIRROR_ENTRIES', 16),
+        default=16, lower=1, upper=2048)))
     byte_limit = int(_bounded_number(
         getattr(settings, 'SUBSCRIPTION_BACKUP_AGGREGATE_MAX_BYTES', 262144), default=262144,
         lower=1, upper=_BACKUP_RESPONSE_HARD_MAX_BYTES))
@@ -897,6 +904,44 @@ _MIRROR_MAX_ENDPOINTS = 128
 _MIRROR_MAX_DOCUMENT_ENTRIES = 512
 # Group types that a provider uses to collect one region's servers.
 _MIRROR_GROUP_TYPES = ('selector', 'urltest')
+# What a customer is allowed to read on a mirrored endpoint.  A provider's own
+# label names its product, its panel and its inventory ('→ Remnawave',
+# 'SWEDEN_VLESS_1'); a paying customer of this deployment must not learn from a
+# subscription which service it resells or how that service numbers its racks.
+# So no byte of the provider's label is rendered.  It is read for exactly one
+# thing — which country the endpoint sits in — and every character that reaches
+# the URI, the flag included, is regenerated here from the ISO 3166-1 alpha-2
+# code that signal resolved to.
+_MIRROR_REGION_NAMES = {
+    'AE': 'UAE', 'AM': 'Armenia', 'AT': 'Austria', 'AU': 'Australia', 'AZ': 'Azerbaijan',
+    'BE': 'Belgium', 'BG': 'Bulgaria', 'BR': 'Brazil', 'BY': 'Belarus', 'CA': 'Canada',
+    'CH': 'Switzerland', 'CN': 'China', 'CY': 'Cyprus', 'CZ': 'Czechia', 'DE': 'Germany',
+    'DK': 'Denmark', 'EE': 'Estonia', 'ES': 'Spain', 'EU': 'Europe', 'FI': 'Finland',
+    'FR': 'France', 'GB': 'United Kingdom', 'GE': 'Georgia', 'GR': 'Greece',
+    'HK': 'Hong Kong', 'HU': 'Hungary', 'ID': 'Indonesia', 'IE': 'Ireland', 'IL': 'Israel',
+    'IN': 'India', 'IR': 'Iran', 'IS': 'Iceland', 'IT': 'Italy', 'JP': 'Japan',
+    'KG': 'Kyrgyzstan', 'KR': 'South Korea', 'KZ': 'Kazakhstan', 'LT': 'Lithuania',
+    'LU': 'Luxembourg', 'LV': 'Latvia', 'MD': 'Moldova', 'MX': 'Mexico', 'MY': 'Malaysia',
+    'NL': 'Netherlands', 'NO': 'Norway', 'NZ': 'New Zealand', 'PL': 'Poland',
+    'PT': 'Portugal', 'RO': 'Romania', 'RS': 'Serbia', 'RU': 'Russia', 'SE': 'Sweden',
+    'SG': 'Singapore', 'SK': 'Slovakia', 'TH': 'Thailand', 'TR': 'Turkey', 'TW': 'Taiwan',
+    'UA': 'Ukraine', 'US': 'United States', 'UZ': 'Uzbekistan', 'VN': 'Vietnam',
+    'ZA': 'South Africa',
+}
+# Forms a provider writes that are not the name above.
+_MIRROR_REGION_ALIASES = {
+    'USA': 'US', 'UK': 'GB', 'ENGLAND': 'GB', 'KOREA': 'KR', 'HOLLAND': 'NL',
+    'EMIRATES': 'AE', 'TURKIYE': 'TR', 'CZECHREPUBLIC': 'CZ',
+}
+_MIRROR_REGION_TOKENS = {
+    **{name.upper().replace(' ', ''): code for code, name in _MIRROR_REGION_NAMES.items()},
+    **{code: code for code in _MIRROR_REGION_NAMES},
+    **_MIRROR_REGION_ALIASES,
+}
+# An endpoint whose region we cannot name is still worth offering; naming it
+# after the provider's own string is the part we refuse.
+_MIRROR_UNKNOWN_REGION = '🌐 Backup'
+_REGIONAL_INDICATOR_A = 0x1F1E6
 
 
 class _UpstreamPlaceholderDocument(ValueError):
@@ -1006,6 +1051,9 @@ def _structured_upstream_links(payload: bytes,
     tests and on the opaque path. When they are present they decide one further
     case: a document that is really a message to the user, which must not be
     counted as a source with nothing to offer.
+
+    The per-region cap applies within one document, which is where a region is
+    known at all; ``_backup_links`` caps the mirrored total across sources.
     """
     document = _load_upstream_json(payload)
     if document is None:
@@ -1024,15 +1072,15 @@ def _structured_upstream_links(payload: bytes,
     if headers and _is_identity_placeholder(raw_endpoints, headers):
         raise _UpstreamPlaceholderDocument('upstream_client_identity_placeholder')
     allow_plaintext = _plaintext_endpoints_allowed()
-    links = []
+    endpoints = []
     for raw_endpoint in raw_endpoints[:_MIRROR_MAX_ENDPOINTS]:
         endpoint = _normalized_mirror_endpoint(raw_endpoint)
         if endpoint is None:
             continue
         if endpoint['security'] not in _MIRROR_SECURE_TRANSPORTS and not allow_plaintext:
             continue
-        links.append(_build_mirror_vless(endpoint))
-    return links
+        endpoints.append(endpoint)
+    return [_build_mirror_vless(endpoint) for endpoint in _branded_mirror_endpoints(endpoints)]
 
 
 def _is_identity_placeholder(raw_endpoints: list[dict], headers: dict[str, str]) -> bool:
@@ -1195,22 +1243,23 @@ def _normalized_mirror_endpoint(raw: dict) -> dict | None:
     if (not host or not _safe_endpoint_host(host) or port is None or not uuid
             or security not in (*_MIRROR_SECURE_TRANSPORTS, 'none')):
         return None
-    # The provider's own region label is the only thing that tells a user Japan
-    # from Germany once several regions share a subscription. Both halves are
-    # bounded and control-character-free before they meet, and the composed
-    # remark is bounded again, so a label can lengthen a remark but never
-    # replace the URI structure around it.
-    remark = _mirror_field(raw.get('remark')) or host
-    region = _mirror_field(raw.get('region'), limit=64)
-    if region and region not in remark:
-        remark = _mirror_field(f'{region} · {remark}') or remark
+    # The provider's labels are read for one thing: which country this endpoint
+    # sits in.  The server's own tag is tried before its group's, because a
+    # group may be the provider's root selector, which names the provider and
+    # not a place.  Both are bounded and control-character-free before they are
+    # read, and what reaches the URI is text this module composed, so a label
+    # can no longer lengthen a remark, name the upstream, or carry inventory
+    # numbering into a customer's client.
+    label = _mirror_region_label(_mirror_region_code(
+        _mirror_field(raw.get('remark')), _mirror_field(raw.get('region'), limit=64)))
     endpoint = {
         'host': host,
         'port': port,
         # Our own UUIDs are quote-invariant, so quoting costs nothing here and
         # stops a provider from writing URI structure into the userinfo field.
         'uuid': quote(uuid, safe=''),
-        'remark': remark,
+        'label': label,
+        'remark': label,
         'flow': _mirror_field(raw.get('flow'), limit=64),
         'security': security,
         'public_key': _mirror_field(raw.get('public_key')),
@@ -1228,6 +1277,98 @@ def _normalized_mirror_endpoint(raw: dict) -> dict | None:
     if security == 'reality' and not endpoint['public_key']:
         return None
     return endpoint
+
+
+def _region_flag(code: str) -> str:
+    """Compose the flag for an alpha-2 code out of regional indicator letters."""
+    return ''.join(chr(_REGIONAL_INDICATOR_A + ord(letter) - ord('A')) for letter in code)
+
+
+def _flag_region_code(label: str) -> str:
+    """Return the alpha-2 code of the first flag emoji in a label, or ''."""
+    previous = ''
+    for character in label:
+        index = ord(character) - _REGIONAL_INDICATOR_A
+        letter = chr(ord('A') + index) if 0 <= index < 26 else ''
+        if letter and previous:
+            return previous + letter
+        previous = letter
+    return ''
+
+
+def _label_words(label: str) -> list[tuple[str, bool]]:
+    """Split a label into ASCII letter runs, keeping whether each was uppercase."""
+    words, current = [], ''
+    for character in f'{label} ':
+        if character.isascii() and character.isalpha():
+            current += character
+            continue
+        if current:
+            words.append((current.upper(), current.isupper()))
+            current = ''
+    return words
+
+
+def _named_region_code(label: str) -> str:
+    """Resolve a place a provider wrote in words, or ''.
+
+    Two adjacent runs are tried before a single one so 'Hong Kong' and 'United
+    States' resolve at all.  A bare two-letter token resolves only when the
+    provider already wrote it in capitals, which is what stops an ordinary
+    English word in a sentence ('It', 'In', 'Is') from becoming Italy.
+    """
+    words = _label_words(label)
+    for index, (word, capitalized) in enumerate(words):
+        pair = word + words[index + 1][0] if index + 1 < len(words) else ''
+        for candidate in (pair, word):
+            if not candidate or (len(candidate) == 2 and not capitalized):
+                continue
+            code = _MIRROR_REGION_TOKENS.get(candidate)
+            if code:
+                return code
+    return ''
+
+
+def _mirror_region_code(*labels: str) -> str:
+    """Read a country signal out of a provider's labels, most specific first."""
+    for label in labels:
+        code = _flag_region_code(label) or _named_region_code(label)
+        if code:
+            return code
+    return ''
+
+
+def _mirror_region_label(code: str) -> str:
+    return f'{_region_flag(code)} {_MIRROR_REGION_NAMES.get(code, code)}' if code \
+        else _MIRROR_UNKNOWN_REGION
+
+
+def _branded_mirror_endpoints(endpoints: list[dict]) -> list[dict]:
+    """Order one document's endpoints stably and keep a slice of each region.
+
+    Both the order and the selection are computed from the endpoint's own
+    fields and never from its position in the provider's document, so a
+    provider that reorders its outbounds between two refreshes cannot reshuffle
+    a customer's list.  Ordering by the rendered label groups the countries in a
+    fixed sequence and leaves the unnamed group last, because its globe sorts
+    above every regional indicator; ``(host, port)`` decides inside a region.
+    """
+    from django.conf import settings
+    limit = int(_bounded_number(
+        getattr(settings, 'SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION', 1),
+        default=1, lower=1, upper=_MIRROR_MAX_ENDPOINTS))
+    selected, counts = [], {}
+    for endpoint in sorted(endpoints, key=lambda item: (item['label'], item['host'], item['port'])):
+        position = counts.get(endpoint['label'], 0)
+        if position >= limit:
+            continue
+        counts[endpoint['label']] = position + 1
+        # Two endpoints in one region would otherwise be indistinguishable in a
+        # client's list.
+        if position:
+            endpoint['remark'] = f"{endpoint['label']} {position + 1}"
+        selected.append(endpoint)
+    return selected
 
 
 def _mirror_field(value, *, limit: int = 256) -> str:
