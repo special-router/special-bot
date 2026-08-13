@@ -35,6 +35,16 @@ own unused 3x-ui ports.
 
 ## Internal inbound canary (UserVPN 801 only)
 
+> **Stale as of 2026-08-13.** A direct read of the panel database found 801's
+> UUID in inbounds 1, 5 and 14 and in none of 7, 9, 10 or 13. Everything below
+> describes a provisioning state that no longer exists; the flags are off and the
+> renderer fails closed, so nothing is broken, but do not act on this section
+> without re-provisioning and re-verifying first. See
+> [`OPEN-ITEMS.md`](OPEN-ITEMS.md#internal-same-origin-canary--its-memberships-are-gone).
+>
+> Two of those inbounds are also no longer ours to canary: 10 and 13 together
+> hold nine enabled clients that are absent from `UserVPN` and have moved 10.8 TB.
+
 Protected operation `op-20260811T180315Z-533cbef3` later established that
 UserVPN 801 exists exactly once in retained inbounds **7, 9, 13 and 10**, and
 fresh RU sing-box probes passed 3/3 for each: TCP/Reality on public ports

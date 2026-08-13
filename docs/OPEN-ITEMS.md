@@ -69,16 +69,23 @@ Per-user upstream credentials or chaining the provider through our own egress
 each remove both; neither is built. See
 [`MIRROR-INBOUNDS-RUNBOOK.md`](MIRROR-INBOUNDS-RUNBOOK.md#7-rolling-out).
 
-### Internal same-origin canary
+### Internal same-origin canary — its memberships are gone
 
 `SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=false` and
-`SUBSCRIPTION_INTERNAL_MEMBERSHIP_SYNC_ENABLED=false`. Restricted to `UserVPN`
-801 and retained inbounds 7/9/13 (TCP) plus 10 (gRPC on public `:80`).
+`SUBSCRIPTION_INTERNAL_MEMBERSHIP_SYNC_ENABLED=false`, restricted to `UserVPN`
+801 across inbounds 7/9/13 and 10.
 
-**Blocked on:** an owner decision. The earlier blocker — a plaintext-HTTP panel
-control plane — is **resolved**: the panel is HTTPS-only and
-`utils/py3xui/async_api.py` refuses anything else. Enable membership sync before
-rendering, never the other way round.
+**Checked 2026-08-13: 801's UUID is present in inbounds 1, 5 and 14 only.** It is
+in none of 7, 9, 10 or 13. The provisioning that the canary depends on no longer
+exists, so enabling the flag today renders nothing — the code fails closed, which
+is why this is a stale premise rather than an incident. **Re-provision and
+re-verify the memberships before treating any part of the canary section of
+[`MIRROR-INBOUNDS-SPEC.md`](MIRROR-INBOUNDS-SPEC.md) as current.**
+
+**Also blocked on:** an owner decision. The earlier blocker — a plaintext-HTTP
+panel control plane — is resolved for *our* client: the panel is HTTPS-only and
+`utils/py3xui/async_api.py` refuses anything else. The service on `:3000` still
+uses plaintext. Enable membership sync before rendering, never the other way round.
 
 ---
 
@@ -109,10 +116,68 @@ its own reason, and none of them is "nobody got around to it":
 | Port | Why it is still open |
 |---|---|
 | `2096` | Live external clients are connected. Closing it disconnects paying users. Verify current connections before touching it. |
-| `3000` | An unidentified service calling itself `darkcore-connection-service`. Nobody has established what it is or who owns it. Identify before closing. |
-| `8080` | Backend for the gRPC canary path; reachable directly today. Diagnostic-only and never advertised, but still exposed. |
+| `3000` | **Identified 2026-08-13** — see below. A NestJS control plane over our own 3x-ui panel, owned by someone else. |
+| `8080` | Inbound 10. **Not diagnostic-only:** two clients, neither in our database, **9.6 TB** consumed. |
 | `8443` | The primary VLESS/Reality inbound. Not closable — it is the product. |
-| `27914` | A retained alternate inbound used by the internal canary set. |
+| `27914` | Inbound 13. Seven clients, **none in our database**, 1.16 TB. Toggled by the service on `:3000`. |
+
+**Measured 2026-08-13, and only one of these is firewalled.** `iptables -S INPUT`
+on NL carries exactly two rules, both for the panel port `23133`. Ports `2096`,
+`3000`, `8080` and `27914` have no rule at all. The host has been up 9 days, so
+nothing was lost to a reboot — the rules were never added.
+
+### `darkcore-connection-service` on `:3000`
+
+A NestJS application, image built locally on 2026-08-05, deployed over Drone SSH,
+published on `0.0.0.0:3000`. It logs into our 3x-ui panel and drives inbound 13
+(`POST /api/connections`, `POST /api/connections/toggle`). Four separate problems,
+in order of how much they cost if ignored:
+
+1. **Reachable from the internet and unauthenticated.** `POST /api/connections`
+   from an unrelated host answers `500`, not `401` — an outside caller is already
+   executing application code that holds panel credentials.
+2. **It carries the panel username and the secret base path in plain container
+   environment.** That path is bearer access to the whole control plane; this
+   repository treats it as a secret and pins three loggers to `WARNING` to keep
+   it out of logs. It sits in `docker inspect` output.
+3. **It talks to the panel over plaintext HTTP**, which our own client refuses at
+   construction time. Loopback-only, so not on the wire — but it proves the panel
+   still accepts plaintext locally.
+4. **Nobody in this project owns it.**
+
+**Blocked on:** an owner decision about whether this service stays. If it stays,
+it needs authentication and a bind to `127.0.0.1`, and the panel credential it
+holds must be rotated because it has been reachable. If it goes, stopping it
+disables whatever drives inbound 13's seven clients — establish who they are
+first.
+
+### Nine clients that are not ours
+
+Inbounds 10 and 13 hold nine enabled, never-expiring clients. **Not one of their
+UUIDs is in `UserVPN`**, and together they have moved **10.8 TB** — a sixth of
+what our whole product inbound has moved. One is labelled `keenetic1`, i.e. a
+router, and one alone accounts for 9.2 TB. They pay us nothing through this
+system and are invisible to billing.
+
+**Blocked on:** identifying who they belong to before disabling anything —
+the same rule that found the `2096` users.
+
+### No per-client traffic attribution on the product inbound
+
+Every client entry in inbound 5 has an **empty email**, deliberately: py3xui's
+generic `delete()` resolves a client through its email first, and an empty email
+made it delete the wrong client. `delete_client_by_uuid` fixed the deletion
+hazard, but the empty labels stayed and xray keys its statistics by email.
+
+The consequence is measurable: inbound 5 reports **58 TB** moved, and
+`client_traffics` accounts for **13.7 TB**, all of it historical rows for labels
+that no longer exist on any client. Today, nothing accumulates. **We cannot tell
+who consumes what, cannot detect a shared key, and cannot enforce a quota.**
+
+**Blocked on:** a decision about labels. Restoring a per-client identifier
+restores attribution and no longer reintroduces the deletion hazard, but the
+identifier must not be anything that identifies a customer to whoever reads the
+panel.
 
 Related and worth knowing before any firewall work: **inbound 13 shares its
 Reality SNI with inbound 5**, so a rule aimed at one can silently affect the
