@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import sys
+from importlib import metadata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,6 +16,7 @@ MARKDOWN = [
 ]
 SETTINGS_FILE = ROOT / 'bot' / 'settings.py'
 FLAGS_DOC = ROOT / 'docs' / 'FLAGS.md'
+REQUIREMENTS = ROOT / 'requirements.txt'
 SHELL = sorted((ROOT / 'ops' / 'scripts').glob('*.sh'))
 PYTHON_SCRIPTS = sorted((ROOT / 'ops' / 'scripts').glob('*.py'))
 CANONICAL_OPERATOR_SCRIPTS = (
@@ -58,6 +60,15 @@ LINK_PATTERN = re.compile(r'\[[^\]]+\]\(([^)]+)\)')
 # canary JSON helper; a documented flag is the first cell of a FLAGS.md row.
 ENV_SETTING_PATTERN = re.compile(r"(?:env\.\w+|_internal_canary_json)\(\s*'([A-Z][A-Z0-9_]*)'")
 FLAG_ROW_PATTERN = re.compile(r'^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|', re.MULTILINE)
+
+# uv writes one unindented ``name==version`` per pin and indents every comment.
+PIN_PATTERN = re.compile(r'^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;]+)', re.MULTILINE)
+
+# Only py3xui is guarded rather than every pin, because it is the sole runtime
+# dependency whose internals this repository subclasses (``utils/py3xui/``) and
+# whose panel endpoints differ between releases, so a test venv on another
+# version silently asserts a request the image never sends.
+GUARDED_RUNTIME_DEPENDENCIES = ('py3xui',)
 
 
 def fail(message: str) -> None:
@@ -136,14 +147,50 @@ def check_flags() -> int:
     return len(set(ENV_SETTING_PATTERN.findall(settings_text)))
 
 
+def dependency_drift(requirements_text: str, installed: dict[str, str | None]) -> list[str]:
+    """Return one message per guarded dependency this interpreter contradicts."""
+    pinned = dict(PIN_PATTERN.findall(requirements_text))
+    drift = []
+    for name in GUARDED_RUNTIME_DEPENDENCIES:
+        expected = pinned.get(name)
+        if expected is None:
+            drift.append(f'{name} is not pinned in requirements.txt')
+            continue
+        present = installed.get(name)
+        if present is not None and present != expected:
+            drift.append(f'{name}: requirements.txt pins {expected}, this interpreter has {present}')
+    return drift
+
+
+def installed_versions() -> dict[str, str | None]:
+    """A dependency the interpreter lacks is ``None``: an absence, not a drift."""
+    versions: dict[str, str | None] = {}
+    for name in GUARDED_RUNTIME_DEPENDENCIES:
+        try:
+            versions[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            versions[name] = None
+    return versions
+
+
+def check_dependency_pins() -> str:
+    """The suite must exercise the version the image installs, not a later one."""
+    installed = installed_versions()
+    drift = dependency_drift(REQUIREMENTS.read_text(encoding='utf-8'), installed)
+    if drift:
+        fail('; '.join(drift))
+    return ','.join(f'{name}={version or "absent"}' for name, version in sorted(installed.items()))
+
+
 def main() -> None:
     check_markdown()
     check_scripts()
     documented_flags = check_flags()
+    pins = check_dependency_pins()
     print(
         f'repository_validation=passed markdown={len(MARKDOWN)} '
         f'shell={len(SHELL)} python_scripts={len(PYTHON_SCRIPTS)} '
-        f'flags={documented_flags}'
+        f'flags={documented_flags} pins={pins}'
     )
 
 

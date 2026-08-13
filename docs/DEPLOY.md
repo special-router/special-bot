@@ -30,6 +30,30 @@ has already caught a failure the local run could not. Do it as part of the
 deploy, not as an optional extra: build the image, then run pytest in a
 throwaway container pointed at a PostgreSQL test database on the bot host.
 
+### The test venv must hold the versions the image installs
+
+`requirements.txt` is what the image installs; it is compiled from
+`pyproject.toml` by `uv pip compile`. A dependency left unpinned in
+`pyproject.toml` therefore resolves to whatever is current whenever someone
+builds a venv from it, while the image keeps the compiled pin.
+
+That happened with `py3xui`: `requirements.txt` pins **0.5.1** and the running
+container has it, but `pyproject.toml` listed it unpinned, so the project test
+venv resolved to **0.7.0**. The two do not update a client the same way:
+
+- 0.5.1 posts to `panel/api/inbounds/updateClient/{client_uuid}` — addressed by
+  UUID, which is what SPECIAL clients have.
+- 0.7.0 posts to `panel/api/clients/update/{email or uuid}` — a different route,
+  addressed by email whenever the client carries one.
+
+Every test touching the panel client write path was validating a request
+production never sends. `ops/scripts/validate_repository.py` now compares the
+`py3xui` pin in `requirements.txt` against the version installed in the
+interpreter running it, and fails naming both; `verify_scale_closeout.sh` runs
+it under the test venv's python so the check sees the interpreter the suite
+uses. Pin runtime dependencies in `pyproject.toml`, not only in the compiled
+output.
+
 ## The deploy itself
 
 1. Push to `special-router/special-bot` main.

@@ -1,6 +1,6 @@
 import unittest
 
-from ops.scripts.validate_repository import flag_drift
+from ops.scripts.validate_repository import dependency_drift, flag_drift, GUARDED_RUNTIME_DEPENDENCIES, REQUIREMENTS
 
 
 SETTINGS = """
@@ -16,6 +16,15 @@ FLAGS = """
 | `DEBUG` | bool | `False` | `false` | Django debug mode. |
 | `SUPPORT_CHAT_ID` | int | `0` | `0` | Operators' supergroup. |
 | `SUBSCRIPTION_INTERNAL_ENDPOINTS` | json | `[]` | `[]` | Canary endpoints. |
+"""
+
+REQUIREMENTS_TEXT = """
+httpx==0.28.1
+    # via
+    #   py3xui
+    #   python-telegram-bot
+py3xui==0.5.1
+    # via vpnbot (pyproject.toml)
 """
 
 
@@ -42,6 +51,32 @@ class FlagDriftTests(unittest.TestCase):
     def test_prose_mentioning_a_flag_is_not_a_row(self):
         flags = FLAGS + 'Set `RETIRED_FLAG` only after the owner approves.\n'
         self.assertEqual(flag_drift(SETTINGS, flags), ([], []))
+
+
+class DependencyDriftTests(unittest.TestCase):
+    def test_the_pinned_version_reports_no_drift(self):
+        self.assertEqual(dependency_drift(REQUIREMENTS_TEXT, {'py3xui': '0.5.1'}), [])
+
+    def test_another_version_names_both_the_pin_and_the_interpreter(self):
+        (message,) = dependency_drift(REQUIREMENTS_TEXT, {'py3xui': '0.7.0'})
+        self.assertIn('0.5.1', message)
+        self.assertIn('0.7.0', message)
+
+    def test_an_absent_dependency_is_not_drift(self):
+        # The validator also runs on a bare interpreter that installs nothing.
+        self.assertEqual(dependency_drift(REQUIREMENTS_TEXT, {'py3xui': None}), [])
+
+    def test_an_unpinned_dependency_fails(self):
+        drift = dependency_drift('py3xui\n', {'py3xui': '0.5.1'})
+        self.assertEqual(drift, ['py3xui is not pinned in requirements.txt'])
+
+    def test_a_via_comment_is_not_a_pin(self):
+        drift = dependency_drift('    # via py3xui==9.9.9\n', {'py3xui': '0.5.1'})
+        self.assertEqual(drift, ['py3xui is not pinned in requirements.txt'])
+
+    def test_every_guarded_dependency_is_pinned_in_the_real_requirements(self):
+        text = REQUIREMENTS.read_text(encoding='utf-8')
+        self.assertEqual(dependency_drift(text, dict.fromkeys(GUARDED_RUNTIME_DEPENDENCIES)), [])
 
 
 if __name__ == '__main__':
