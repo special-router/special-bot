@@ -11,7 +11,9 @@ SPECIAL_VERIFY_PYTHON=<absolute path to the project test venv python> \
   ./ops/scripts/verify_scale_closeout.sh
 ```
 
-Must be clean. As of 2026-08-12 that is **296 tests and 110 subtests**.
+Must be clean. The expected test and subtest count lives in `CLAUDE.md` and
+nowhere else — a second copy of that number here would rot exactly as the first
+one did.
 
 ### Run the suite against PostgreSQL before declaring a deploy safe
 
@@ -29,6 +31,53 @@ Running the suite against a real PostgreSQL test database inside the container
 has already caught a failure the local run could not. Do it as part of the
 deploy, not as an optional extra: build the image, then run pytest in a
 throwaway container pointed at a PostgreSQL test database on the bot host.
+
+### The test venv must hold the versions the image installs
+
+`requirements.txt` is what the image installs; it is compiled from
+`pyproject.toml` by `uv pip compile`. A dependency left unpinned in
+`pyproject.toml` therefore resolves to whatever is current whenever someone
+builds a venv from it, while the image keeps the compiled pin.
+
+That happened with `py3xui`: `requirements.txt` pins **0.5.1** and the running
+container has it, but `pyproject.toml` listed it unpinned, so the project test
+venv resolved to **0.7.0**. The two do not update a client the same way:
+
+- 0.5.1 posts to `panel/api/inbounds/updateClient/{client_uuid}` — addressed by
+  UUID, which is what SPECIAL clients have.
+- 0.7.0 posts to `panel/api/clients/update/{email or uuid}` — a different route,
+  addressed by email whenever the client carries one.
+
+Every test touching the panel client write path was validating a request
+production never sends. Two things guard it now:
+
+- `ops/scripts/validate_repository.py` compares the `py3xui` pin in
+  `requirements.txt` against the version installed in the interpreter running
+  it, and fails naming both. `verify_scale_closeout.sh` runs the validator under
+  the test venv's python so the check sees the interpreter the suite uses.
+- `apps/servers/test_panel_endpoint_contract.py` asserts the exact endpoint each
+  client operation puts on the wire. The guard compares version strings and so
+  says nothing about a deliberate upgrade of the pin; the contract tests fail on
+  any library that routes differently, whichever version it claims to be.
+
+Pin runtime dependencies in `pyproject.toml`, not only in the compiled output.
+
+**If the guard stops you, rebuild the venv rather than chasing py3xui.** The
+message names one package because only `py3xui` is guarded, but a venv resolved
+from an unpinned `pyproject.toml` drifts across the board — one measured on
+2026-08-13 also carried celery 5.6.3 against the pinned 5.5.3, psycopg 3.3.4
+against 3.2.10, redis 8.1.0 against 6.4.0, gunicorn 26.0.0 against 23.0.0,
+django-environ 0.14.0 against 0.12.0, requests 2.34.2 against 2.32.5 and
+pydantic 2.13.4 against 2.11.9. The fix is one command:
+
+```bash
+uv venv <path> --python 3.13
+uv pip install --python <path>/bin/python -r requirements.txt
+uv pip install --python <path>/bin/python pytest pytest-django
+```
+
+The test runner is deliberately absent from `requirements.txt`: the image does
+not ship it.
 
 ## The deploy itself
 
