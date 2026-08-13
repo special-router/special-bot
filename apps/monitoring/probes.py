@@ -500,6 +500,11 @@ def classify_invoice_error(error: Exception) -> str:
     the useful split: ``InvalidToken`` is the bot token, ``NetworkError`` and
     ``TimedOut`` are Telegram, and neither is the provider.
     """
+    # SECRET. On ``InvalidToken`` this string is
+    # "The token `<bot token>` was rejected by the server." — the live bot token
+    # in full. It exists to be matched against and nothing else: never log it,
+    # never return it, never put it in ``details`` or a notification payload.
+    # It reads like an ordinary error message, which is the whole danger.
     description = str(error).upper()
     for identifier, error_class in INVOICE_REJECTIONS:
         if identifier in description:
