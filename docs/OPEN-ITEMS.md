@@ -379,6 +379,13 @@ and reload (`nginx -t` first, which fails closed on a bad config), or leave
 credential is the security-critical half; rotating the path is defence in depth
 and is what pulls nginx in.
 
+**Deferred by owner decision, 2026-08-13, to a quiet hour.** The reason is the
+`x-ui restart`, not the credential: at the time of the decision inbound 5 was
+carrying roughly 180 MB/min, so every paying customer was mid-session. Nothing
+about the exposure changed — the credential is still to be treated as disclosed,
+and the service that held it is firewalled rather than removed. Do this before
+assuming the panel is safe.
+
 ## Not built
 
 ### Per-UUID inbound diagnostics
