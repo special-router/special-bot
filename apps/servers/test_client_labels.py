@@ -189,6 +189,41 @@ class LabelledClientApiTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(client.email, 'осталось 28 дней')
 
+    async def test_a_reused_client_object_does_not_carry_its_label_to_a_mirror(self):
+        """One Client, several inbounds: the primary's label must not ride along.
+
+        ``add_user`` builds a single Client and sends it to the primary inbound
+        and then to every MIRROR_INBOUND_IDS entry. The label the primary earned
+        would otherwise claim the primary's client_traffics row from the mirror.
+        """
+        client = self.client(inbound_id=None)
+        with patch('apps.servers.client_labels.owner_for_uuid', return_value=(42, 5)), \
+                patch.object(AsyncClientApi, 'add', new=AsyncMock()):
+            await self.api().add(5, [client])
+            self.assertEqual(client.email, 'uv-5-42')
+
+            await self.api().add(14, [client])
+
+        self.assertEqual(client.email, '')
+
+    async def test_our_label_for_another_inbound_is_cleared_not_left(self):
+        client = self.client(email='uv-5-42', inbound_id=14)
+        with patch('apps.servers.client_labels.owner_for_uuid', return_value=(42, 5)), \
+                patch.object(AsyncClientApi, 'update', new=AsyncMock()) as update:
+            await self.api().update(client.id, client)
+
+        self.assertEqual(client.email, '')
+        update.assert_awaited_once()
+
+    async def test_an_unscoped_write_does_not_discard_a_label(self):
+        """Not knowing which inbound is being written is not grounds to clear."""
+        client = self.client(email='uv-5-42', inbound_id=None)
+        with patch('apps.servers.client_labels.owner_for_uuid', return_value=(42, 5)), \
+                patch.object(AsyncClientApi, 'update', new=AsyncMock()):
+            await self.api().update(client.id, client)
+
+        self.assertEqual(client.email, 'uv-5-42')
+
     async def test_a_write_to_an_inbound_we_do_not_own_carries_no_label(self):
         for foreign_inbound in (7, 10, 13):
             client = self.client(inbound_id=foreign_inbound)

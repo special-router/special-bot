@@ -8,13 +8,20 @@ id, username or address.  It is scoped by inbound because
 UUID appearing on a mirror inbound would otherwise want the same row.
 
 ``LabelledClientApi`` stamps it inside the panel transport, so no caller has to
-remember it.  Three things are never written: anything at all while
-``CLIENT_TRAFFIC_LABELS_ENABLED`` is off, which is the default and reproduces
-the historical behaviour byte for byte; a non-empty label this module did not
-write -- the status inbound's ``осталось N дней``, or a hand-made one -- and any
-label on an inbound that is not the one its owner's ``Server`` row configures.
-The panel hosts a foreign tenant, and a label on their inbound is a write we had
-no business making.
+remember it.  Nothing at all is written while ``CLIENT_TRAFFIC_LABELS_ENABLED``
+is off, which is the default and reproduces the historical behaviour byte for
+byte.  With it on, each write to an inbound resolves to one of three outcomes:
+
+* the inbound is the one its owner's ``Server`` row configures -- write the
+  label;
+* it is not, and the client carries one of our labels -- **clear it**, because
+  callers reuse one ``Client`` object across inbounds and a label must never
+  travel to an inbound it was not issued for;
+* it is not, and the value is foreign or empty -- leave it exactly as found.
+  The status inbound's ``осталось N дней`` and any hand-set value are safe.
+
+The panel hosts a foreign tenant on inbounds 10 and 13, and a label on their
+inbound is a write we had no business making.
 """
 from __future__ import annotations
 
@@ -121,6 +128,22 @@ class LabelledClientApi(AsyncClientApi):
 
     @staticmethod
     async def _stamp(client: Any, inbound_id: int | None) -> None:
+        """Decide this client's ``email`` for this inbound, in three branches.
+
+        Callers reuse one ``Client`` object across several inbounds, so a label
+        earned on the primary inbound would otherwise ride along to a mirror and
+        claim the primary's ``client_traffics`` row -- the panel's UNIQUE on
+        ``email`` is global.  A label we did not authorise for the inbound being
+        written is therefore removed rather than merely left unwritten.
+        """
+        if not labelling_enabled():
+            # Off is a complete no-op: the field is not ours to manage at all.
+            return
         label = await _alabel_for_client(client, inbound_id)
         if label is not None:
             client.email = label
+        elif inbound_id and is_client_label(getattr(client, 'email', '') or ''):
+            # Ours, but not for this inbound.  A write with no inbound to
+            # compare against is left alone: not knowing is not grounds to
+            # discard a valid label.
+            client.email = ''
