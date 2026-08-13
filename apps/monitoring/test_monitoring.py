@@ -35,6 +35,7 @@ from apps.monitoring.probes import (
 )
 from apps.monitoring.tasks import _run, _notify_transition, run_checkout_monitor
 from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
+from apps.servers.models import TariffServer
 from apps.users.models import TelegramUser
 
 
@@ -501,11 +502,31 @@ class CashGapTests(TestCase):
     SPECIAL_MONITOR_CASH_GAP_DAYS=3,
 )
 class CheckoutProbeTests(TestCase):
+    def setUp(self):
+        # The one row the top-up handler's bare `aget()` needs to survive.
+        TariffServer.objects.create(name='base', price=Decimal('7.00'))
+
     @override_settings(YOUMONEY_TOKEN='')
     @patch('apps.monitoring.probes.Bot')
     def test_missing_provider_token_never_reaches_bot_api(self, bot):
         self.assertEqual(probe_invoice_link(1.0), 'not_configured')
         bot.assert_not_called()
+
+    def test_a_revoked_bot_token_still_shuts_the_client_down(self):
+        # `initialize` fails on `get_me` before the invoice call is reached.
+        # Without shutdown, every run leaks a live client onto a closed loop.
+        bot = Mock()
+        bot.initialize = AsyncMock(side_effect=InvalidToken('The token `secret` was rejected by the server.'))
+        bot.create_invoice_link = AsyncMock()
+        bot.shutdown = AsyncMock()
+
+        with patch('apps.monitoring.probes.Bot', return_value=bot):
+            error_class = probe_invoice_link(1.0)
+
+        self.assertEqual(error_class, 'InvalidToken')
+        self.assertNotIn('secret', error_class)
+        bot.shutdown.assert_awaited_once()
+        bot.create_invoice_link.assert_not_awaited()
 
     @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
     def test_a_revoked_provider_token_is_named_as_such(self, invoice):
@@ -594,6 +615,43 @@ class CheckoutProbeTests(TestCase):
 
         self.assertTrue(result.ok)
         self.assertIsNone(result.details['cash_gap_days'])
+
+    @patch('apps.monitoring.probes.cash_gap_days', return_value=0)
+    @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
+    def test_an_empty_tariff_table_is_a_checkout_failure_not_a_green_probe(self, invoice, gap):
+        # The customer taps an amount and the handler's bare `aget()` raises
+        # before `send_invoice`. The provider is fine; checkout is not.
+        TariffServer.objects.all().delete()
+
+        result = run_checkout_probe()
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_class, 'tariff_missing')
+        self.assertFalse(result.details['tariff_ok'])
+        self.assertTrue(result.details['invoice_ok'])
+
+    @patch('apps.monitoring.probes.cash_gap_days', return_value=0)
+    @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
+    def test_a_second_tariff_row_breaks_checkout_just_as_loudly(self, invoice, gap):
+        TariffServer.objects.create(name='second', price=Decimal('9.00'))
+
+        result = run_checkout_probe()
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_class, 'tariff_ambiguous')
+
+    @patch('apps.monitoring.probes.cash_gap_days', return_value=0)
+    @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
+    def test_our_own_lookup_is_blamed_before_the_provider(self, invoice, gap):
+        # Both broken at once: the operator must not be sent to the provider
+        # for a failure that is ours, and must still see the provider verdict.
+        TariffServer.objects.all().delete()
+        invoice.side_effect = PROVIDER_REJECTION
+
+        result = run_checkout_probe()
+
+        self.assertEqual(result.error_class, 'tariff_missing')
+        self.assertEqual(result.details['invoice_error_class'], 'provider_token_rejected')
 
     @patch('apps.monitoring.probes.cash_gap_days', return_value=0)
     @patch('apps.monitoring.probes.create_probe_invoice_link', new_callable=AsyncMock)
