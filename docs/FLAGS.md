@@ -104,10 +104,14 @@ environment; they come from a mode-0600 JSON file on the host.
 | `SUBSCRIPTION_BACKUP_RESPONSE_MAX_BYTES` | int | `262144` | ? | Per-source response cap. |
 | `SUBSCRIPTION_BACKUP_CACHE_TTL_SECONDS` | int | `300` | ? | Upstream cache TTL. |
 | `SUBSCRIPTION_BACKUP_MAX_SOURCES` | int | `8` | ? | Maximum configured sources. |
-| `SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES` | int | `128` | ? | Cap across all sources. |
+| `SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES` | int | `256` | ? | Cap across all sources. Raised from 128 because one real multi-region provider document carries roughly 80 servers, so two sources would have been truncated silently. |
 | `SUBSCRIPTION_BACKUP_AGGREGATE_MAX_BYTES` | int | `262144` | ? | Cap across all sources. |
 | `SUBSCRIPTION_BACKUP_FETCH_DEADLINE_SECONDS` | float | `8` | ? | Deadline for the whole fetch phase of one request. |
 | `SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT` | str | empty | ? | Providers serve a different document per User-Agent and reject unknown ones (`SFI/1.9` → sing-box JSON, `v2rayNG/1.8.5` and `Happ/1.0` → v2ray array, `clash-verge/1.5` → YAML). Empty keeps the neutral agent, so upgrading does not change a configured source's format. |
+| `SUBSCRIPTION_BACKUP_UPSTREAM_HWID` | str | empty | ? | Device identifier sent as `x-hwid`. A provider running the Remnawave device convention serves an instruction document instead of a configuration without it. Must match `^[a-zA-Z0-9=-]{10,64}$`; anything else sends no identity headers at all. **One stable value per installation** — a per-user or per-request value spends a device slot per subscription refresh and reads as a device flood. Never commit a value. |
+| `SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_OS` | str | empty | ? | Optional `x-device-os`, ≤32 printable ASCII. Sent only with a usable `SUBSCRIPTION_BACKUP_UPSTREAM_HWID`. |
+| `SUBSCRIPTION_BACKUP_UPSTREAM_OS_VERSION` | str | empty | ? | Optional `x-ver-os`, ≤32 printable ASCII. Same condition. |
+| `SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_MODEL` | str | empty | ? | Optional `x-device-model`, ≤64 printable ASCII. Same condition. |
 | `SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS` | bool | `False` | `false` | Serve provider endpoints with neither TLS nor Reality. Off because plain VLESS carries the client UUID on the wire and is trivially fingerprinted — the same reason inbounds 11 and 12 were disabled. |
 
 ## Internal same-origin transport canary

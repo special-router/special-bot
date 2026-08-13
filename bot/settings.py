@@ -412,13 +412,26 @@ SUBSCRIPTION_BACKUP_RESPONSE_MAX_BYTES = env.int(
 SUBSCRIPTION_BACKUP_CACHE_TTL_SECONDS = env.int(
     'SUBSCRIPTION_BACKUP_CACHE_TTL_SECONDS', 300)
 SUBSCRIPTION_BACKUP_MAX_SOURCES = env.int('SUBSCRIPTION_BACKUP_MAX_SOURCES', 8)
-SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES = env.int('SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES', 128)
+# One real multi-region provider document carries roughly 80 servers, so a
+# 128-line aggregate would silently truncate a second source.
+SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES = env.int('SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES', 256)
 SUBSCRIPTION_BACKUP_AGGREGATE_MAX_BYTES = env.int('SUBSCRIPTION_BACKUP_AGGREGATE_MAX_BYTES', 262144)
 SUBSCRIPTION_BACKUP_FETCH_DEADLINE_SECONDS = env.float('SUBSCRIPTION_BACKUP_FETCH_DEADLINE_SECONDS', 8)
 # Some providers serve a different document per client User-Agent and reject
 # unknown ones. An empty value keeps the neutral agent used before format-aware
 # ingestion existed, so configured sources do not change format on upgrade.
 SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT = env.str('SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT', '')
+# Providers running the same device convention as this deployment answer a
+# request without a device identifier with an instruction document instead of a
+# configuration. One stable identifier per installation is what keeps our
+# fetches inside the provider's device limit: a per-user or per-request value
+# would read as a device flood and get this deployment blocked. It is
+# configuration, never a constant here, and an empty value sends no identity
+# headers at all. The device description is optional and travels only with it.
+SUBSCRIPTION_BACKUP_UPSTREAM_HWID = env.str('SUBSCRIPTION_BACKUP_UPSTREAM_HWID', '')
+SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_OS = env.str('SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_OS', '')
+SUBSCRIPTION_BACKUP_UPSTREAM_OS_VERSION = env.str('SUBSCRIPTION_BACKUP_UPSTREAM_OS_VERSION', '')
+SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_MODEL = env.str('SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_MODEL', '')
 # Plain VLESS carries the client UUID on the wire and is trivially
 # fingerprinted and blocked. Endpoints a provider offers without TLS or Reality
 # stay out of subscriptions until an operator accepts that specific trade-off.

@@ -17,6 +17,7 @@ import binascii
 import hashlib
 import ipaddress
 import json
+import logging
 import socket
 import ssl
 import subprocess
@@ -30,11 +31,14 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
 from apps.servers.models import Server
-from apps.subscriptions.devices import client_hwid, client_metadata, hwid_strict, register_device
+from apps.subscriptions.devices import (
+    client_hwid, client_metadata, hwid_strict, register_device, valid_hwid)
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 from utils.py3xui.async_api import AsyncApi
 
+
+logger = logging.getLogger(__name__)
 
 # In-process cache of inbound Reality params: (fetched_at, params).
 _PARAM_TTL_SECONDS = 300
@@ -559,7 +563,7 @@ def _backup_links() -> list[str] | None:
         return None
     _evict_backup_cache({_backup_cache_key(url) for url in valid_urls})
     line_limit = int(_bounded_number(
-        getattr(settings, 'SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES', 128), default=128, lower=1, upper=2048))
+        getattr(settings, 'SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES', 256), default=256, lower=1, upper=2048))
     byte_limit = int(_bounded_number(
         getattr(settings, 'SUBSCRIPTION_BACKUP_AGGREGATE_MAX_BYTES', 262144), default=262144,
         lower=1, upper=_BACKUP_RESPONSE_HARD_MAX_BYTES))
@@ -639,7 +643,8 @@ def _cached_upstream_links(url: str) -> list[str]:
             return cached[1] if cached and cached[0] > time.monotonic() else []
 
     try:
-        links = _sanitize_upstream_payload(_fetch_upstream_payload(url))
+        response_headers, payload = _fetch_upstream_payload(url)
+        links = _sanitize_upstream_payload(payload, response_headers)
         if not links:
             return []
         ttl = _bounded_number(getattr(settings, 'SUBSCRIPTION_BACKUP_CACHE_TTL_SECONDS', 300),
@@ -652,6 +657,14 @@ def _cached_upstream_links(url: str) -> list[str]:
             active_keys = set(_BACKUP_CACHE)
         _evict_backup_cache(active_keys)
         return links
+    except _UpstreamPlaceholderDocument:
+        # Identified by a truncated digest of the URL: enough for an operator to
+        # tell two configured sources apart, useless as the bearer URL itself.
+        logger.warning(
+            'subscription backup source %s served a client-identification placeholder '
+            'instead of a configuration; check the configured client identity',
+            key[:12])
+        return []
     except (ValueError, UnicodeError, OSError):
         return []
     finally:
@@ -733,12 +746,16 @@ def _host_header(host: str, port: int) -> str:
     return host if port == 443 else f'{host}:{port}'
 
 
-def _fetch_upstream_payload(url: str) -> bytes:
+def _fetch_upstream_payload(url: str) -> tuple[dict[str, str], bytes]:
     """Fetch identity bytes over TLS pinned to one pre-resolved public IP.
 
     A single absolute monotonic deadline starts before DNS. Every blocking
     receive is bounded by the remaining time, so a slow-drip response cannot
     extend the request by repeatedly resetting a per-read timeout.
+
+    Response headers travel back with the body because a provider says whether
+    it accepted our client identity there, and a document alone cannot be told
+    apart from the instructions it serves to a client it does not recognize.
     """
     from django.conf import settings
     deadline_seconds = _bounded_number(getattr(settings, 'SUBSCRIPTION_BACKUP_FETCH_DEADLINE_SECONDS', 8),
@@ -770,10 +787,13 @@ def _fetch_upstream_payload(url: str) -> bytes:
                 or not _is_public_unicast(peer_ip)):
             raise ValueError('upstream_peer_mismatch')
 
+        identity = ''.join(
+            f'{name}: {value}\r\n' for name, value in _upstream_client_headers())
         request = (
             f'GET {target} HTTP/1.1\r\n'
             f'Host: {_host_header(host, port)}\r\n'
             f'User-Agent: {_upstream_user_agent()}\r\n'
+            f'{identity}'
             'Accept-Encoding: identity\r\n'
             'Connection: close\r\n\r\n'
         ).encode('ascii')
@@ -798,7 +818,7 @@ def _fetch_upstream_payload(url: str) -> bytes:
             raise ValueError('upstream_response_too_large')
         if declared_size is not None and len(body) != declared_size:
             raise ValueError('upstream_incomplete_response')
-        return bytes(body)
+        return headers, bytes(body)
     finally:
         if tls_socket is not None:
             tls_socket.close()
@@ -854,13 +874,80 @@ def _read_upstream_response(socket_, deadline: float, read_timeout: float,
 
 
 _DEFAULT_UPSTREAM_USER_AGENT = 'SPECIAL-subscription-backup/1'
+# Optional device description, sent only alongside a usable identifier. Each is
+# capped at the width the same header has on our own subscription endpoint.
+_UPSTREAM_DEVICE_HEADERS = (
+    ('x-device-os', 'SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_OS', 32),
+    ('x-ver-os', 'SUBSCRIPTION_BACKUP_UPSTREAM_OS_VERSION', 32),
+    ('x-device-model', 'SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_MODEL', 64),
+)
+# How a provider running the same device convention as this deployment says it
+# did not accept our client identity.
+_UPSTREAM_IDENTITY_REFUSED_HEADERS = ('x-hwid-not-supported', 'x-hwid-limit')
 # Only transports that keep the client UUID off the wire may be advertised by
 # default. Plain VLESS exposes it on every handshake and is trivially
 # fingerprinted, which is why our own plaintext inbounds were withdrawn.
 _MIRROR_SECURE_TRANSPORTS = ('reality', 'tls')
 # A provider document is attacker-controlled input; parsing it must cost a
-# bounded amount of work regardless of how many entries it declares.
-_MIRROR_MAX_ENDPOINTS = 64
+# bounded amount of work regardless of how many entries it declares. A real
+# multi-region document carries roughly 80 servers, so the endpoint budget is
+# the working capacity and the entry budget only bounds the parse: one document
+# interleaves its servers with the selector groups that name their regions.
+_MIRROR_MAX_ENDPOINTS = 128
+_MIRROR_MAX_DOCUMENT_ENTRIES = 512
+# Group types that a provider uses to collect one region's servers.
+_MIRROR_GROUP_TYPES = ('selector', 'urltest')
+
+
+class _UpstreamPlaceholderDocument(ValueError):
+    """The provider answered a client it did not recognize, not our request.
+
+    Distinct from an empty result on purpose: it means our own identification
+    is wrong and an operator can fix it, while an empty result means the source
+    has nothing this deployment will serve.
+    """
+
+
+def _upstream_client_headers() -> list[tuple[str, str]]:
+    """Identify this installation to a provider as one supported client device.
+
+    The identifier is deliberately one stable configured value for the whole
+    installation rather than something derived per user or per request. A
+    provider counts distinct identifiers against a device limit, so a value that
+    changed per subscription refresh would read as a device flood and get this
+    deployment limited or blocked; one value plus the response cache keeps our
+    fetch rate at what a single client would produce. The value is configuration
+    and never a constant here.
+
+    An unset or malformed identifier sends no identity headers at all, and the
+    device description rides along only with a usable identifier, because it
+    describes that device and means nothing without it.
+    """
+    from django.conf import settings
+    hwid = getattr(settings, 'SUBSCRIPTION_BACKUP_UPSTREAM_HWID', '')
+    if not valid_hwid(hwid):
+        return []
+    headers = [('x-hwid', hwid)]
+    for name, setting_name, limit in _UPSTREAM_DEVICE_HEADERS:
+        value = _upstream_header_value(getattr(settings, setting_name, ''), limit)
+        if value:
+            headers.append((name, value))
+    return headers
+
+
+def _upstream_header_value(value, limit: int) -> str:
+    """Return a bounded printable-ASCII header value, or '' for anything else."""
+    if not isinstance(value, str):
+        return ''
+    value = value.strip()
+    if not value or len(value) > limit or not all(' ' <= character <= '~' for character in value):
+        return ''
+    return value
+
+
+def _upstream_identity_refused(headers: dict[str, str]) -> bool:
+    return any(str(headers.get(name, '')).strip().casefold() == 'true'
+               for name in _UPSTREAM_IDENTITY_REFUSED_HEADERS)
 
 
 def _upstream_user_agent() -> str:
@@ -881,9 +968,9 @@ def _upstream_user_agent() -> str:
     return value
 
 
-def _sanitize_upstream_payload(payload: bytes) -> list[str]:
+def _sanitize_upstream_payload(payload: bytes, headers: dict[str, str] | None = None) -> list[str]:
     """Decode payload framing while retaining accepted VLESS line bytes exactly."""
-    structured = _structured_upstream_links(payload)
+    structured = _structured_upstream_links(payload, headers)
     if structured is not None:
         return structured
     decoded = _decode_subscription_payload(payload)
@@ -905,7 +992,8 @@ def _decode_subscription_payload(payload: bytes) -> bytes:
         return payload
 
 
-def _structured_upstream_links(payload: bytes) -> list[str] | None:
+def _structured_upstream_links(payload: bytes,
+                               headers: dict[str, str] | None = None) -> list[str] | None:
     """Render links from a JSON provider document, or decline the payload.
 
     ``None`` means "not a document I parse" and hands the bytes back to the
@@ -913,6 +1001,11 @@ def _structured_upstream_links(payload: bytes) -> list[str] | None:
     offered nothing servable. Callers must keep that distinction, otherwise a
     provider that answers YAML would silently look like a provider with no
     endpoints.
+
+    Response headers are optional because the same parse runs on bytes alone in
+    tests and on the opaque path. When they are present they decide one further
+    case: a document that is really a message to the user, which must not be
+    counted as a source with nothing to offer.
     """
     document = _load_upstream_json(payload)
     if document is None:
@@ -923,9 +1016,13 @@ def _structured_upstream_links(payload: bytes) -> list[str] | None:
     else:
         # v2rayNG/Happ answer with an array of whole client configs rather than
         # one config holding every outbound.
-        for element in document[:_MIRROR_MAX_ENDPOINTS]:
+        for element in document[:_MIRROR_MAX_DOCUMENT_ENTRIES]:
             if isinstance(element, dict):
                 raw_endpoints.extend(_v2ray_endpoints(element))
+            if len(raw_endpoints) >= _MIRROR_MAX_ENDPOINTS:
+                break
+    if headers and _is_identity_placeholder(raw_endpoints, headers):
+        raise _UpstreamPlaceholderDocument('upstream_client_identity_placeholder')
     allow_plaintext = _plaintext_endpoints_allowed()
     links = []
     for raw_endpoint in raw_endpoints[:_MIRROR_MAX_ENDPOINTS]:
@@ -936,6 +1033,22 @@ def _structured_upstream_links(payload: bytes) -> list[str] | None:
             continue
         links.append(_build_mirror_vless(endpoint))
     return links
+
+
+def _is_identity_placeholder(raw_endpoints: list[dict], headers: dict[str, str]) -> bool:
+    """Whether this document is the provider's "unsupported client" message.
+
+    Two independent signals must agree: the provider says it did not accept our
+    identity, and nothing it sent protects a handshake. Either alone is
+    ordinary — a provider may refuse the identity and still serve real Reality
+    endpoints, and a provider may genuinely offer only plaintext. Classifying on
+    the parsed outbounds rather than the normalized ones keeps the verdict
+    intact when the placeholder points at hosts we would drop anyway.
+    """
+    if not raw_endpoints or not _upstream_identity_refused(headers):
+        return False
+    return all(endpoint.get('security') not in _MIRROR_SECURE_TRANSPORTS
+               for endpoint in raw_endpoints)
 
 
 def _load_upstream_json(payload: bytes):
@@ -968,18 +1081,25 @@ def _singbox_endpoints(document: dict) -> list[dict]:
     outbounds = document.get('outbounds')
     if not isinstance(outbounds, list):
         return []
+    entries = [outbound for outbound in outbounds[:_MIRROR_MAX_DOCUMENT_ENTRIES]
+               if isinstance(outbound, dict)]
+    regions = _singbox_regions(entries)
     endpoints = []
-    for outbound in outbounds[:_MIRROR_MAX_ENDPOINTS]:
-        if not isinstance(outbound, dict) or str(outbound.get('type', '')).lower() != 'vless':
+    for outbound in entries:
+        if str(outbound.get('type', '')).lower() != 'vless':
             continue
+        if len(endpoints) >= _MIRROR_MAX_ENDPOINTS:
+            break
         tls = _dict_field(outbound, 'tls')
         reality = _dict_field(tls, 'reality')
         transport = _dict_field(outbound, 'transport')
+        tag = outbound.get('tag')
         endpoints.append({
             'host': outbound.get('server'),
             'port': outbound.get('server_port'),
             'uuid': outbound.get('uuid'),
-            'remark': outbound.get('tag'),
+            'remark': tag,
+            'region': regions.get(tag) if isinstance(tag, str) else None,
             'flow': outbound.get('flow'),
             'security': _singbox_security(tls, reality),
             'public_key': reality.get('public_key'),
@@ -991,6 +1111,27 @@ def _singbox_endpoints(document: dict) -> list[dict]:
             'path': transport.get('path'),
         })
     return endpoints
+
+
+def _singbox_regions(outbounds: list[dict]) -> dict[str, str]:
+    """Map each server tag to the group tag that names its region.
+
+    A provider document lists one group per region holding that region's server
+    tags, and a root group holding the region groups. Only a group that names a
+    server directly labels it, which is what keeps the root group — whose
+    members are other groups — from becoming every endpoint's region.
+    """
+    regions: dict[str, str] = {}
+    for outbound in outbounds:
+        if str(outbound.get('type', '')).lower() not in _MIRROR_GROUP_TYPES:
+            continue
+        label, members = outbound.get('tag'), outbound.get('outbounds')
+        if not isinstance(label, str) or not isinstance(members, list):
+            continue
+        for member in members[:_MIRROR_MAX_DOCUMENT_ENTRIES]:
+            if isinstance(member, str) and member not in regions:
+                regions[member] = label
+    return regions
 
 
 def _singbox_security(tls: dict, reality: dict) -> str:
@@ -1054,13 +1195,22 @@ def _normalized_mirror_endpoint(raw: dict) -> dict | None:
     if (not host or not _safe_endpoint_host(host) or port is None or not uuid
             or security not in (*_MIRROR_SECURE_TRANSPORTS, 'none')):
         return None
+    # The provider's own region label is the only thing that tells a user Japan
+    # from Germany once several regions share a subscription. Both halves are
+    # bounded and control-character-free before they meet, and the composed
+    # remark is bounded again, so a label can lengthen a remark but never
+    # replace the URI structure around it.
+    remark = _mirror_field(raw.get('remark')) or host
+    region = _mirror_field(raw.get('region'), limit=64)
+    if region and region not in remark:
+        remark = _mirror_field(f'{region} · {remark}') or remark
     endpoint = {
         'host': host,
         'port': port,
         # Our own UUIDs are quote-invariant, so quoting costs nothing here and
         # stops a provider from writing URI structure into the userinfo field.
         'uuid': quote(uuid, safe=''),
-        'remark': _mirror_field(raw.get('remark')) or host,
+        'remark': remark,
         'flow': _mirror_field(raw.get('flow'), limit=64),
         'security': security,
         'public_key': _mirror_field(raw.get('public_key')),

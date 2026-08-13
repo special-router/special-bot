@@ -163,6 +163,66 @@ query parameters or fragments, so hashes cover their exact original bytes.
 Rotate or revoke a provider bearer immediately with the provider and replace
 the host secret file; never store provider lines or bearer URLs in Git.
 
+### Client identity, and the placeholder it prevents
+
+**Corrected 2026-08-13.** An earlier reading of the configured provider
+concluded it offered only plaintext VLESS and therefore nothing servable. That
+conclusion was wrong, and the mistake is worth keeping: the document it was
+based on was not a configuration at all.
+
+A provider running Remnawave decides what to serve from the *device* identity,
+not only the `User-Agent`. Asked without one, it answers with three plaintext
+`vless` outbounds whose tags are a message to the user («Приложение не
+поддерживается», «Поддерживаемые приложения:», «Happ, V2RayTun, INCY, Koala
+Clash») and sets `x-hwid-not-supported: true` and `x-hwid-limit: true` on the
+response. The classifier behaved correctly; the input was the wrong document.
+
+Asked *with* a valid `x-hwid` and a supported `User-Agent`, the same source
+returns the real configuration: `x-hwid-active: true` alone, ~113 KB, 9 regions
+each holding several servers, every one `security=reality`, `network=tcp`.
+
+So the ingestion sends `x-hwid` plus the optional `x-device-os`, `x-ver-os` and
+`x-device-model` alongside the configured agent, all from
+`SUBSCRIPTION_BACKUP_UPSTREAM_*` settings and never from this repository. The
+identifier is **one stable value for the whole installation**: a provider counts
+distinct identifiers against a device limit, so a per-user or per-request value
+would spend a slot on every subscription refresh and read as a device flood.
+One value plus the response cache keeps the fetch rate at what a single client
+produces.
+
+Detection stays independent of configuration, because a provider can serve an
+instruction document even when headers are set. Two signals must agree — the
+response says our identity was refused (`x-hwid-not-supported` or
+`x-hwid-limit`), and no parsed outbound protects its handshake. Either alone is
+ordinary: a provider may refuse the identity and still serve Reality endpoints,
+and a provider may genuinely offer only plaintext. When both hold, the source is
+recorded as a placeholder — a warning naming a truncated digest of the source,
+never its URL — and contributes nothing, which is what lets an operator tell
+"we are not authenticating properly" from "this provider is bad".
+
+### Capacity
+
+The real document is ~113 KB with roughly 80 endpoints, so the bounds were
+re-checked against it: the per-source response cap (256 KB), the hard response
+ceiling (1 MB), the aggregate byte cap (256 KB, against ~20 KB of rendered
+lines), the 8-second fetch deadline and the 300-second cache TTL all hold
+unchanged. Two were too small and were raised, not removed: the per-source
+endpoint cap 64 → 128, and `SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES` 128 → 256.
+Parsing a document is separately bounded at 512 entries, because one document
+interleaves its servers with the selector groups that name their regions.
+
+### Region labels
+
+Endpoints carry meaningful names, and a subscription spanning 9 regions is
+useless if a user cannot tell Japan from Germany. Each server tag is mapped to
+the group that lists it directly — the root selector (`→ Remnawave`) lists other
+groups, so it never becomes a label — and the rendered remark becomes
+`«<region> · <tag>»`, or the tag alone when it already names its region. Both
+halves are third-party input: each is length-bounded and rejected outright if it
+carries control characters, and the composed remark is percent-encoded like
+every other provider string, so a label can lengthen a remark but never add URI
+structure.
+
 ### Feature gate
 
 `SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED` (bool, default false). Allowlist
