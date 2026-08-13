@@ -416,6 +416,15 @@ SUBSCRIPTION_BACKUP_MAX_SOURCES = env.int('SUBSCRIPTION_BACKUP_MAX_SOURCES', 8)
 # 128-line aggregate would silently truncate a second source.
 SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES = env.int('SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES', 256)
 SUBSCRIPTION_BACKUP_AGGREGATE_MAX_BYTES = env.int('SUBSCRIPTION_BACKUP_AGGREGATE_MAX_BYTES', 262144)
+# What a customer actually picks from. A provider lists every server it owns,
+# so one region arrives nine times over; nine identical Swedens are a scrolling
+# problem, not a choice. One endpoint per region is served and the rest stay
+# one setting away for an operator who wants them.
+SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION = env.int(
+    'SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION', 1)
+# Our own status, Direct and Relay lines must stay findable whatever a provider
+# returns, so mirrored lines are capped across all sources as well.
+SUBSCRIPTION_BACKUP_MAX_MIRROR_ENTRIES = env.int('SUBSCRIPTION_BACKUP_MAX_MIRROR_ENTRIES', 16)
 SUBSCRIPTION_BACKUP_FETCH_DEADLINE_SECONDS = env.float('SUBSCRIPTION_BACKUP_FETCH_DEADLINE_SECONDS', 8)
 # Some providers serve a different document per client User-Agent and reject
 # unknown ones. An empty value keeps the neutral agent used before format-aware

@@ -118,8 +118,11 @@ Render order:
 
 1. **Status** — `127.0.0.1:1` (non-working, remaining days)
 2. **SPECIAL Direct** — `sub.special-wifi.ru:8443` (primary, our NL)
-3. **SPECIAL Relay** — `201.34.132.118:443` (our RU relay → NL)
-4. **Backup mirrors** — one VLESS line per external backup service
+3. **Backup mirrors** — one VLESS line per region per external backup service
+4. **SPECIAL Relay** — `201.34.132.118:443` (our RU relay → NL)
+
+Our own three lines keep this content and this relative order whatever a
+provider returns; mirrors only ever appear between Direct and Relay.
 
 ### Backup service configuration
 
@@ -211,17 +214,63 @@ endpoint cap 64 → 128, and `SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES` 128 → 2
 Parsing a document is separately bounded at 512 entries, because one document
 interleaves its servers with the selector groups that name their regions.
 
-### Region labels
+### Region labels — what a customer actually sees
 
-Endpoints carry meaningful names, and a subscription spanning 9 regions is
-useless if a user cannot tell Japan from Germany. Each server tag is mapped to
-the group that lists it directly — the root selector (`→ Remnawave`) lists other
-groups, so it never becomes a label — and the rendered remark becomes
-`«<region> · <tag>»`, or the tag alone when it already names its region. Both
-halves are third-party input: each is length-bounded and rejected outright if it
-carries control characters, and the composed remark is percent-encoded like
-every other provider string, so a label can lengthen a remark but never add URI
-structure.
+A subscription spanning 9 regions is useless if a user cannot tell Japan from
+Germany, and unshippable if it tells them who we buy from. The provider's own
+label does both: `→ Remnawave` names the service and the panel software it runs,
+and `🇸🇪 SWEDEN_VLESS_1` is its rack inventory. **No byte of a provider label is
+rendered.** It is read for exactly one thing — an ISO 3166-1 alpha-2 country
+code, taken from a flag emoji or from a place written in words — and everything
+that reaches the URI, the flag included, is composed here from that code:
+
+| Provider label | Rendered to the customer |
+| --- | --- |
+| `→ Remnawave` (root selector) | `🌐 Backup` |
+| `🇸🇪 SWEDEN_VLESS_1` | `🇸🇪 Sweden` |
+| `🇪🇺 Fastest` | `🇪🇺 Europe` |
+| `SWEDEN_VLESS_1`, no flag | `🇸🇪 Sweden` |
+| anything with no country signal | `🌐 Backup` |
+
+The server's own tag is read before its group's, because a group may be the
+root selector, which names the provider and not a place. A label that is
+oversized or carries control characters is not read at all and its endpoint
+falls back to `🌐 Backup` — the fallback is generic on purpose, never the
+provider's word for it. A code with no name in the table renders as the code
+(`🇦🇹 AT`). The result is percent-encoded like every other remark, and since it
+is our own text it can no longer lengthen a remark or add URI structure.
+
+A customer's full list therefore reads:
+
+```
+📊 Подписка-осталось 24 дней
+🇳🇱 NL Direct
+🇩🇪 Germany
+🇪🇺 Europe
+… one line per region, countries in a fixed order, 🌐 Backup last
+🇳🇱 NL Relay
+```
+
+### How many, and in what order
+
+A provider lists every server it owns: 9 regions arrived as 31 mirrored lines,
+nine of them Sweden. Two caps bound that.
+
+- `SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION` (default **1**) keeps one
+  endpoint per country, within one provider document. Raising it appends a
+  numbered suffix — `🇸🇪 Sweden`, `🇸🇪 Sweden 2` — so two entries in one country
+  stay distinguishable in a client list.
+- `SUBSCRIPTION_BACKUP_MAX_MIRROR_ENTRIES` (default **16**) caps mirrored lines
+  across all sources, so a provider that suddenly returns hundreds cannot bury
+  our own lines. The tighter of it and `SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES`
+  applies.
+
+**Ordering rule:** entries sort by rendered label, then by `(host, port)`. Both
+keys are properties of the endpoint, never of its position in the provider's
+document, so a provider that reorders its outbounds between two refreshes
+cannot reshuffle a customer's list or change which server a region resolves to.
+Sorting by label puts the countries in a fixed sequence and leaves `🌐 Backup`
+last, because its globe sorts above every regional indicator codepoint.
 
 ### Feature gate
 
