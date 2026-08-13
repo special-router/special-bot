@@ -265,14 +265,18 @@ Two rules make that check usable in both places it runs:
   `python3` carries 21 of the 44 as distro packages, at distro versions nobody
   pinned, and it never runs the suite.
 
-**What is left is a pin nobody wrote, not a version nobody noticed.**
-`pyproject.toml` still pins only `djangorestframework`, `Pillow` and `py3xui`;
-every other dependency is free to resolve to whatever is current the next time
-somebody builds a venv from it. That no longer passes silently — it fails at the
-validator — but the drift will happen again, and the durable fix is pinning the
-rest of `pyproject.toml` to what `requirements.txt` already compiled. psycopg
-3.2→3.3 and celery 5.5→5.6 are the two worth reading release notes for before
-any deliberate bump.
+**The pin nobody wrote is written now.** All eleven dependencies in
+`pyproject.toml` carry the version `requirements.txt` had already compiled, so
+the resolver has no freedom left to drift into: a venv built from either file
+lands on the same tree. Recompiling with the pins in place changes no version —
+the only diff is cosmetic (`Pillow`→`pillow`, sort order, and the Windows-only
+`colorama`, which a Linux compile drops because the committed file carries it
+without its marker).
+
+Upgrading is now an explicit edit to `pyproject.toml` followed by
+`uv pip compile pyproject.toml -o requirements.txt`, which is the point rather
+than the cost. psycopg 3.2→3.3 and celery 5.5→5.6 are the two worth reading
+release notes for before any deliberate bump.
 
 **Why it stayed invisible:** downgrading to 0.5.1 broke **no test at all**. Every
 call site mocks `api.client.update` with an `AsyncMock`, and

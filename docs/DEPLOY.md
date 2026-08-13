@@ -63,14 +63,18 @@ production never sends. Two things guard it now:
   says nothing about a deliberate upgrade of the pin; the contract tests fail on
   any library that routes differently, whichever version it claims to be.
 
-Pin runtime dependencies in `pyproject.toml`, not only in the compiled output.
+Every dependency in `pyproject.toml` now carries the version
+`requirements.txt` already compiled, so building a venv from either file lands
+on the same tree and an upgrade takes an explicit edit. Keep it that way: pin
+runtime dependencies where the resolver reads them, not only in the compiled
+output.
 
 **If the guard stops you, rebuild the venv rather than pick at the packages it
 names.** Drift arrives in bulk, not one package at a time: the venv measured on
 2026-08-13 was 10 packages away from the image — py3xui, celery, psycopg, redis,
-gunicorn, django-environ, requests and pydantic among them — because most of
-`pyproject.toml` is still unpinned and a venv built from it resolves everything
-fresh. Rebuilding is three commands:
+gunicorn, django-environ, requests and pydantic among them — because it had been
+resolved when `pyproject.toml` was still open-ended. Rebuilding is three
+commands:
 
 ```bash
 uv venv <path> --python 3.13
