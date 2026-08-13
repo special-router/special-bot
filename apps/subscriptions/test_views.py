@@ -1481,12 +1481,12 @@ class MirrorLabelPolicyTests(SimpleTestCase):
             RequestFactory().get('/sub/synthetic'), 'synthetic').content).decode().splitlines()
 
         self.assertEqual(len(lines), 3 + 9)
-        self.assertEqual(self.remarks(lines[:2]),
-                         ['📊 Подписка-подписка окончена', '🇳🇱 Нидерланды'])
-        self.assertEqual(self.remarks(lines[-1:]), ['🇳🇱 Нидерланды белые списки'])
+        self.assertEqual(self.remarks(lines[:3]),
+                         ['📊 Подписка-подписка окончена', '🇳🇱 Нидерланды',
+                          '🇳🇱 Нидерланды белые списки'])
         self.assertEqual(urlsplit(lines[1]).hostname, 'direct.example')
-        self.assertEqual(urlsplit(lines[-1]).hostname, 'relay.example')
-        self.assertEqual(self.remarks(lines[2:-1]), self.expected)
+        self.assertEqual(urlsplit(lines[2]).hostname, 'relay.example')
+        self.assertEqual(self.remarks(lines[3:]), self.expected)
 
     def test_a_hostile_label_still_cannot_inject_uri_structure(self):
         """A label is evidence about a country, never characters to render.
@@ -1585,10 +1585,11 @@ class EndpointLabelTests(SimpleTestCase):
         self.assertEqual(self.remarks(self.subscription())[1], '🇳🇱 Нидерланды')
 
     def test_the_relayed_line_names_the_same_country_and_its_route(self):
+        """Both endpoints we operate sit at the top, ours before any fallback."""
         lines = self.subscription()
 
-        self.assertEqual(self.remarks(lines)[-1], '🇳🇱 Нидерланды белые списки')
-        self.assertEqual(urlsplit(lines[-1]).hostname, 'relay.example')
+        self.assertEqual(self.remarks(lines)[2], '🇳🇱 Нидерланды белые списки')
+        self.assertEqual(urlsplit(lines[2]).hostname, 'relay.example')
 
     def test_a_server_with_no_relay_renders_no_suffixed_line(self):
         self.assertEqual(self.remarks(self.subscription(client_vpn_host='')),
@@ -1603,19 +1604,24 @@ class EndpointLabelTests(SimpleTestCase):
         """Two identical entries would leave a customer nothing to choose on.
 
         The number disambiguates and says nothing about whose endpoint it is.
-        Ours is the unsuffixed one because the view renders it above every
-        mirrored line; this pins that, so a later ordering change cannot quietly
-        demote our own endpoint to the numbered position.
+        Ours is the unsuffixed one because the view renders both endpoints we
+        operate above every mirrored line; this pins the whole order, so a later
+        change cannot quietly demote our own endpoint to the numbered position
+        or push it back below a provider's.
         """
         remarks = self.remarks(
             self.subscription(document=self.provider_document(('🇳🇱', 'Netherlands'),
                                                               ('🇸🇪', 'Sweden'))))
 
         self.assertEqual(remarks, ['📊 Подписка-подписка окончена', '🇳🇱 Нидерланды',
-                                   '🇳🇱 Нидерланды 2', '🇸🇪 Швеция',
-                                   '🇳🇱 Нидерланды белые списки'])
+                                   '🇳🇱 Нидерланды белые списки', '🇳🇱 Нидерланды 2',
+                                   '🇸🇪 Швеция'])
         self.assertEqual(remarks.count('🇳🇱 Нидерланды'), 1)
         self.assertLess(remarks.index('🇳🇱 Нидерланды'), remarks.index('🇳🇱 Нидерланды 2'))
+        # The seed counts both of our labels, so moving the relayed line above
+        # the mirrors cannot renumber one of them onto a mirrored endpoint.
+        self.assertEqual(remarks.count('🇳🇱 Нидерланды белые списки'), 1)
+        self.assertEqual(remarks.count('🇳🇱 Нидерланды 2'), 1)
         for remark in remarks[1:]:
             self.assertNotIn('Резерв', remark)
             self.assertNotIn('Backup', remark)

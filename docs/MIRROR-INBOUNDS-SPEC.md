@@ -131,11 +131,15 @@ Render order:
 
 1. **Status** — `127.0.0.1:1` (non-working, remaining days)
 2. **SPECIAL Direct** — `sub.special-wifi.ru:8443` (primary, our NL)
-3. **Backup mirrors** — one VLESS line per region per external backup service
-4. **SPECIAL Relay** — `201.34.132.118:443` (our RU relay → NL)
+3. **SPECIAL Relay** — `201.34.132.118:443` (our RU relay → NL)
+4. **Backup mirrors** — one VLESS line per region per external backup service
 
-Our own three lines keep this content and this relative order whatever a
-provider returns; mirrors only ever appear between Direct and Relay.
+Both endpoints we operate come first, directly after the status line. They are
+the two we are accountable for and the two a customer should reach first when
+scanning the list; a mirror is a fallback and belongs below them. Mirrors were
+previously rendered between Direct and Relay — they are now strictly last, and
+nothing may be inserted between our own lines. Our three lines keep this content
+and this relative order whatever a provider returns.
 
 ### Backup service configuration
 
@@ -270,15 +274,24 @@ normalized mirror endpoint), never from a line's position or its host, so a
 second relayed source is labelled correctly the day its parser sets the flag.
 Exactly one rendered line carries it today.
 
+`relayed` is False in every parser, and that is a measured fact rather than an
+untested default. **The check:** probe each rendered line and compare the
+address you dial against the address the far end shows as your egress. All nine
+mirrored endpoints answered with entry equal to exit — a plain server, not a
+front. Ours is the only line where they differ: entry `201.34.132.118` (RU),
+exit `195.66.213.74` (NL). Re-run it when a provider is swapped; a mirror whose
+entry and exit disagree is a relayed endpoint and needs the flag set in its
+parser, or its customer is told it is direct when it is not.
+
 A customer's full list therefore reads:
 
 ```
 📊 Подписка-осталось 24 дней
 🇳🇱 Нидерланды
+🇳🇱 Нидерланды белые списки
 🇩🇪 Германия
 🇪🇺 Европа
 … one line per region, countries in Russian alphabetical order, 🌐 Резерв last
-🇳🇱 Нидерланды белые списки
 ```
 
 ### How many, and in what order
@@ -293,6 +306,7 @@ nine of them Sweden. Two caps bound that.
 
   **The count starts at our own lines.** We always render `🇳🇱 Нидерланды`
   ourselves, above every mirrored line, so a mirrored Dutch endpoint is
+  numbered against it whatever position the relayed line takes —
   `🇳🇱 Нидерланды 2` even at the default cap of 1: two byte-identical entries
   leave a customer nothing to choose on, and hide that one of them failing
   means something different from the other failing. Ours keeps the bare label.

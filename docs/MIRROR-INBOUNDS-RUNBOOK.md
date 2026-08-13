@@ -219,6 +219,21 @@ Two properties of that script are not decoration:
 
 Final state: 10/10 OK, distinct egress per region.
 
+### Checking a provider's country labels — use two services and read the ASN
+
+The flags we render come from the provider's labels, so "is this server really
+in Sweden" is worth answering before trusting the list. One geolocation service
+placed four of the provider's servers in Germany; a second placed the same four
+in Sandefjord, Frankfurt, Stockholm and Amsterdam, matching their flags. The
+four share one IP block, and the service that lumped them together returned an
+**empty ASN field** for that block — which is the tell: a service that cannot
+name the network operator is guessing the location from the block's registration
+and will collapse a whole prefix into one city.
+
+So: query two independent services, and treat an empty or missing ASN as "this
+answer is a guess". Agreement between two services with a populated ASN is
+evidence; a single service is not.
+
 ---
 
 ## 7. Rolling out
