@@ -85,6 +85,32 @@ when a region's mobile internet is cut to a whitelist so that payments and
 shops keep working. A Reality connection announcing that SNI passes inspection
 that blocks everything else.
 
+**The camouflage is the name only, and that is its ceiling.** `id.x5.ru`
+resolves to `91.206.100.36`, which is X5's own network; the node announcing it
+sits on `194.26.229.158`, which is Aeza. The two have nothing to do with each
+other. So this defeats a filter that decides from the SNI in the ClientHello and
+does nothing against one that decides from the destination address — no provider
+can fake being inside an allowed network.
+
+Worth reading next to the ordinary nodes: `cloudrynth.com` is **the provider's
+own domain**, and its A records point at their own servers, so there SNI and
+address genuinely agree. That is plain Reality camouflage against generic DPI
+and has nothing to do with whitelists. **A mirrored country endpoint carries no
+bypass of any kind** — measured, not assumed: no `detour`, an ordinary foreign
+address, and an SNI naming the provider.
+
+**We already use this exact technique, on our own ingress.** The relay line is
+`201.34.132.118` (Timeweb, Moscow) announcing
+`core-renderer-tiles.maps.yandex.net`, whose real address is `87.250.251.89`
+(Yandex) — the same name-only camouflage, on a name kept reachable so navigation
+keeps working. There is nothing here to copy.
+
+**And bypass is a property of the ingress, never of the mirror.** It cannot be
+"switched on" for someone else's German endpoint, because the first packet still
+goes to a German address. The only lever is more Russian ingress of our own in
+front of our own origin, each with its own whitelisted SNI, so that losing one
+entry does not lose the route.
+
 **The exit is Russian.** These nodes restore *access*, not a foreign address —
 `L1` exits at its own Russian IP. Sold as "a foreign IP around blocks" it would
 be a lie; sold as "the internet works when it is being jammed" it is accurate.
