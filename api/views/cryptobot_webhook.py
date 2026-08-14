@@ -39,7 +39,9 @@ def cryptobot_webhook(request):
     except CryptoBotInvoice.DoesNotExist:
         return JsonResponse({'ok': True})
 
-    if invoice.paid:
+    # Atomic: flip paid False→True; zero rows = already processed (retry or dup).
+    claimed = CryptoBotInvoice.objects.filter(id=invoice.id, paid=False).update(paid=True)
+    if not claimed:
         return JsonResponse({'ok': True})
 
     Transaction.objects.create(
@@ -48,9 +50,6 @@ def cryptobot_webhook(request):
         status=TransactionStatusChoices.SUCCESS,
         source=TransactionSourceChoices.CRYPTO,
     )
-
-    invoice.paid = True
-    invoice.save(update_fields=['paid'])
 
     logger.info(
         'cryptobot_webhook invoice_id=%s user_id=%s amount_rub=%s',
