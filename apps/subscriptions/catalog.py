@@ -40,11 +40,12 @@ _TRAILING_NUMBER = re.compile(r'\s+\d+$')
 
 @dataclass(frozen=True)
 class SubscriptionCatalog:
-    """Страны подписки в порядке выдачи и подписи, переживающие белый список.
+    """Страны подписки в порядке выдачи и те из них, что держат белый список.
 
-    `whitelisted` хранит подпись целиком, а не страну: клиент ищет её глазами
-    в списке своего приложения, и назвать её иначе, чем она там написана,
-    значит отправить его искать то, чего он не найдёт.
+    `whitelisted` — подмножество `countries`, а не отдельные подписи: в списке
+    приложения такая строка называется «<страна> белые списки», так что страны
+    хватает, чтобы её там найти, а подпись целиком читалась бы на экране как
+    ещё одна страна с непонятным хвостом.
     """
 
     countries: tuple[str, ...] = ()
@@ -89,8 +90,8 @@ def _catalog_from_labels(labels: list[str]) -> SubscriptionCatalog:
         if country not in countries:
             countries.append(country)
         # Суффикс отделился — значит эта строка и есть обход белых списков.
-        if bare != country and bare not in whitelisted:
-            whitelisted.append(bare)
+        if bare != country and country not in whitelisted:
+            whitelisted.append(country)
     return SubscriptionCatalog(tuple(countries), tuple(whitelisted))
 
 

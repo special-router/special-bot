@@ -93,6 +93,11 @@ def code(value: str) -> str:
     return f'<code>{html.escape(str(value))}</code>'
 
 
+def bold(value: str) -> str:
+    """Подпись перед перечислением — чтобы список читался с одного взгляда."""
+    return f'<b>{html.escape(str(value))}</b>'
+
+
 async def answer_query(update: Update, text: str | None = None) -> None:
     """Снять «часики» с нажатой кнопки, по желанию показав короткий тост.
 

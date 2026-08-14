@@ -16,16 +16,11 @@ from typing import Final
 from asgiref.sync import sync_to_async
 
 from apps.subscriptions.catalog import SubscriptionCatalog, subscription_catalog
+from apps.telegram_bot.ui import bold
 
 
-COUNTRIES_PREFIX: Final[str] = 'Страны в подписке: '
-
-# Что именно даёт строка с пометкой. Без этой фразы пометка выглядит как ещё
-# одна страна, и клиент выбирает её последней — то есть ровно тогда, когда она
-# уже не поможет.
-WHITELIST_HINT: Final[str] = (
-    'продолжает работать, когда мобильный интернет режут до списка разрешённых сайтов.'
-)
+COUNTRIES_LABEL: Final[str] = 'Страны:'
+WHITELIST_LABEL: Final[str] = 'Белые списки:'
 
 
 async def acatalog(user_vpn=None) -> SubscriptionCatalog:
@@ -34,7 +29,11 @@ async def acatalog(user_vpn=None) -> SubscriptionCatalog:
 
 
 def catalog_body(catalog: SubscriptionCatalog) -> list[str]:
-    """Блоки экрана: страны и, отдельной строкой, обход белых списков.
+    """Один блок в две строки: страны и те из них, что держат белые списки.
+
+    Подпись выделена, дальше перечисление — экран перечисляет, а не объясняет.
+    Что даёт вторая строка, клиент видит по самой подписке; абзац про глушилки
+    здесь был текстом, который читают один раз и пролистывают всегда.
 
     Пустой каталог даёт пустой список блоков, а не оговорку: экран, которому
     нечего сказать, молчит — обещать «страны появятся позже» значит обещать
@@ -42,6 +41,7 @@ def catalog_body(catalog: SubscriptionCatalog) -> list[str]:
     """
     if not catalog:
         return []
-    blocks = [COUNTRIES_PREFIX + ', '.join(catalog.countries) + '.']
-    blocks += [f'«{label}» {WHITELIST_HINT}' for label in catalog.whitelisted]
-    return blocks
+    lines = [f'{bold(COUNTRIES_LABEL)} ' + ', '.join(catalog.countries)]
+    if catalog.whitelisted:
+        lines.append(f'{bold(WHITELIST_LABEL)} ' + ', '.join(catalog.whitelisted))
+    return ['\n'.join(lines)]

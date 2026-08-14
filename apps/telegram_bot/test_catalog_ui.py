@@ -22,23 +22,23 @@ class AsyncItems:
 
 FULL = SubscriptionCatalog(
     countries=('🇳🇱 Нидерланды', '🇩🇪 Германия', '🇯🇵 Япония'),
-    whitelisted=('🇳🇱 Нидерланды белые списки',),
+    whitelisted=('🇳🇱 Нидерланды',),
 )
 
 
 class CatalogBodyTests(IsolatedAsyncioTestCase):
-    def test_countries_and_the_bypass_line_are_separate_blocks(self):
+    def test_one_block_of_two_labelled_lines(self):
         blocks = catalog_body(FULL)
 
-        self.assertEqual(blocks[0], 'Страны в подписке: 🇳🇱 Нидерланды, 🇩🇪 Германия, 🇯🇵 Япония.')
-        self.assertIn('🇳🇱 Нидерланды белые списки', blocks[1])
-        self.assertIn('мобильный интернет', blocks[1])
+        self.assertEqual(blocks, [
+            '<b>Страны:</b> 🇳🇱 Нидерланды, 🇩🇪 Германия, 🇯🇵 Япония\n'
+            '<b>Белые списки:</b> 🇳🇱 Нидерланды',
+        ])
 
     def test_a_catalog_without_a_bypass_line_says_nothing_about_one(self):
         blocks = catalog_body(SubscriptionCatalog(countries=('🇳🇱 Нидерланды',)))
 
-        self.assertEqual(len(blocks), 1)
-        self.assertNotIn('белые списки', blocks[0])
+        self.assertEqual(blocks, ['<b>Страны:</b> 🇳🇱 Нидерланды'])
 
     def test_an_empty_catalog_promises_nothing_at_all(self):
         self.assertEqual(catalog_body(SubscriptionCatalog()), [])
@@ -69,7 +69,7 @@ class CatalogScreenTests(IsolatedAsyncioTestCase):
 
         self.assertIn('🇩🇪 Германия', message)
         self.assertIn('🇯🇵 Япония', message)
-        self.assertIn('🇳🇱 Нидерланды белые списки', message)
+        self.assertIn('<b>Белые списки:</b> 🇳🇱 Нидерланды', message)
         # Каталог витрины описывает подписку, которой ещё нет: она без id.
         catalog.assert_awaited_once_with()
 
@@ -87,7 +87,7 @@ class CatalogScreenTests(IsolatedAsyncioTestCase):
         message, _keyboard = await build_main_menu_screen(self.user)
 
         self.assertIn('SPECIAL VPN', message)
-        self.assertNotIn('Страны в подписке', message)
+        self.assertNotIn('Страны:', message)
 
     @patch('apps.telegram_bot.handlers.show_keys.get_reply_markup_manage_keys', new_callable=AsyncMock)
     @patch('apps.telegram_bot.handlers.show_keys.get_user_access_url', new_callable=AsyncMock)
@@ -103,7 +103,7 @@ class CatalogScreenTests(IsolatedAsyncioTestCase):
 
         message, _keyboard = await build_keys_screen(self.user)
 
-        self.assertIn('Страны в подписке:', message)
+        self.assertIn('<b>Страны:</b>', message)
         self.assertIn('🇩🇪 Германия', message)
         # Имя сервера называло одну страну из девяти — строка подписки о стране
         # больше не заявляет ничего.
@@ -124,5 +124,5 @@ class CatalogScreenTests(IsolatedAsyncioTestCase):
 
         message, _keyboard = await build_keys_screen(self.user)
 
-        self.assertIn('Страны в подписке:', message)
+        self.assertIn('<b>Страны:</b>', message)
         catalog.assert_awaited_once_with(None)

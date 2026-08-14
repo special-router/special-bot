@@ -48,12 +48,12 @@ class SubscriptionCatalogTests(SimpleTestCase):
 
     @override_settings(**ROLLED_OUT)
     @patch('apps.subscriptions.catalog._backup_links')
-    def test_a_whitelist_line_keeps_its_full_label_and_still_counts_as_a_country(self, backup_links):
+    def test_a_whitelist_line_marks_its_country_without_becoming_a_second_one(self, backup_links):
         backup_links.return_value = []
 
         catalog = subscription_catalog(self.connection)
 
-        self.assertEqual(catalog.whitelisted, ('🇳🇱 Нидерланды белые списки',))
+        self.assertEqual(catalog.whitelisted, ('🇳🇱 Нидерланды',))
         self.assertEqual(catalog.countries, ('🇳🇱 Нидерланды',))
 
     @override_settings(**ROLLED_OUT)
