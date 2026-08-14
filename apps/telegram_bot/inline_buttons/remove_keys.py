@@ -12,8 +12,11 @@ async def get_reply_markup_remove_keys(user: TelegramUser) -> InlineKeyboardMark
     async for vpn_connection in UserVPN.objects.with_related_server().filter_by_user(user_id=user.id):
         buttons += [
             [
+                # Дата, а не имя сервера: удаляют подписку целиком, со всеми
+                # её странами, и назвать кнопку одной из них значит обещать,
+                # что остальные останутся.
                 button(
-                    f'{vpn_connection.server.name} от {vpn_connection.created_at.strftime("%d.%m.%Y")}',
+                    f'Подписка от {vpn_connection.created_at.strftime("%d.%m.%Y")}',
                     f'remove_key:{vpn_connection.id}',
                     icon=icons.TRASH,
                 ),

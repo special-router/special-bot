@@ -3,6 +3,7 @@ from typing import Final
 from telegram import InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from apps.telegram_bot.catalog import acatalog, catalog_body
 from apps.telegram_bot.inline_buttons.start import get_reply_markup_main_menu
 from apps.telegram_bot.ui import render_screen, screen
 from apps.telegram_bot.utils import get_user
@@ -19,13 +20,20 @@ WELCOME_BODY: Final[str] = (
 
 async def build_main_menu_screen(user: TelegramUser, *, greeting: bool = False) -> tuple[str, InlineKeyboardMarkup]:
     """Главный экран. Баланс и число подписок вынесены сюда, чтобы за ними не
-    приходилось открывать профиль."""
+    приходилось открывать профиль.
+
+    Страны показываются и без приветствия: это витрина, и на ней стоит цена, а
+    вопрос «за что» задаётся раньше, чем открывается «Оплата». Каталог здесь
+    описывает подписку, которой ещё нет, — на этом экране решают, покупать ли;
+    что уже куплено, показывает экран «Подписки».
+    """
     active_keys = await UserVPN.objects.filter_by_user(user_id=user.id).filter_by_enabled(True).acount()
+    catalog = await acatalog()
 
     text = screen(
         'SPECIAL VPN',
         state=[f'Баланс: {user.balance} руб.', f'Активных подписок: {active_keys}'],
-        body=[WELCOME_BODY] if greeting else None,
+        body=[*([WELCOME_BODY] if greeting else []), *catalog_body(catalog)],
     )
 
     return text, await get_reply_markup_main_menu()
