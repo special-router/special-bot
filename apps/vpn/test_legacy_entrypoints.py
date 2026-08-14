@@ -80,9 +80,10 @@ class AddKeyLimitTests(IsolatedAsyncioTestCase):
         user = SimpleNamespace(id=10, balance=100)
         server = SimpleNamespace(tariff=SimpleNamespace(price=7))
         get_user.return_value = user
-        server_objects.with_related_tariffs.return_value.order_by_random.return_value.afirst = AsyncMock(
-            return_value=server
-        )
+        # Серверы, где у аккаунта уже есть работающая подписка, отсеиваются до
+        # выбора: иначе нажатие списывало сутки и возвращало ту же подписку.
+        server_objects.with_related_tariffs.return_value.exclude.return_value \
+            .order_by_random.return_value.afirst = AsyncMock(return_value=server)
         redis_client = redis_from_url.return_value
         redis_client.get.return_value = None
         active_query = user_vpn_objects.filter_by_user.return_value.filter_by_enabled.return_value
@@ -95,6 +96,6 @@ class AddKeyLimitTests(IsolatedAsyncioTestCase):
 
         await add_key(update, MagicMock())
 
-        user_vpn_objects.filter_by_user.return_value.filter_by_enabled.assert_called_once_with(True)
+        user_vpn_objects.filter_by_user.return_value.filter_by_enabled.assert_called_with(True)
         callback_query.answer.assert_awaited_once()
         self.assertIn('максимальное количество', callback_query.answer.await_args.kwargs['text'])

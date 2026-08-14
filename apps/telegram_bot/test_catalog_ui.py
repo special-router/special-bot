@@ -44,6 +44,16 @@ class CatalogBodyTests(IsolatedAsyncioTestCase):
         self.assertEqual(catalog_body(SubscriptionCatalog()), [])
 
 
+class Devices:
+    """`vpn_connection.devices.order_by(...)` — асинхронный менеджер привязок."""
+
+    def __init__(self, items):
+        self._items = items
+
+    def order_by(self, *_fields):
+        return AsyncItems(self._items)
+
+
 class CatalogScreenTests(IsolatedAsyncioTestCase):
     def setUp(self):
         self.user = SimpleNamespace(id=10, telegram_id=1001, balance=100)
@@ -52,6 +62,10 @@ class CatalogScreenTests(IsolatedAsyncioTestCase):
             server=SimpleNamespace(name='Нидерланды', client_vpn_host='relay.example:443'),
             enabled=True,
             created_at=SimpleNamespace(strftime=lambda _fmt: '01.01.2026'),
+            devices=Devices([
+                SimpleNamespace(device_model='iPhone 15 Pro', device_os='iOS'),
+                SimpleNamespace(device_model='', device_os='Android'),
+            ]),
         )
 
     @patch('apps.telegram_bot.handlers.main_menu.get_reply_markup_main_menu', new_callable=AsyncMock)
@@ -110,6 +124,41 @@ class CatalogScreenTests(IsolatedAsyncioTestCase):
         self.assertNotIn('✅ Нидерланды, с', message)
         self.assertIn('✅ Подписка, с 01.01.2026', message)
         catalog.assert_awaited_once_with(self.connection)
+
+    @patch('apps.telegram_bot.handlers.show_keys.get_reply_markup_manage_keys', new_callable=AsyncMock)
+    @patch('apps.telegram_bot.handlers.show_keys.get_user_access_url', new_callable=AsyncMock)
+    @patch('apps.telegram_bot.handlers.show_keys.acatalog', new_callable=AsyncMock)
+    @patch('apps.telegram_bot.handlers.show_keys.UserVPN')
+    async def test_bound_devices_are_named_next_to_the_subscription_they_occupy(
+        self, user_vpn, catalog, get_access_url, get_markup
+    ):
+        user_vpn.objects.with_related_server.return_value.filter.return_value = AsyncItems([self.connection])
+        get_access_url.return_value = 'https://sub.example.test/sub/stable'
+        catalog.return_value = FULL
+        get_markup.return_value = object()
+
+        message, _keyboard = await build_keys_screen(self.user)
+
+        # Устройство без модели называется своей ОС, а не пропадает из списка:
+        # место оно занимает такое же.
+        self.assertIn('<b>Устройства (2 из 2):</b> iPhone 15 Pro, Android', message)
+
+    @patch('apps.telegram_bot.handlers.show_keys.get_reply_markup_manage_keys', new_callable=AsyncMock)
+    @patch('apps.telegram_bot.handlers.show_keys.get_user_access_url', new_callable=AsyncMock)
+    @patch('apps.telegram_bot.handlers.show_keys.acatalog', new_callable=AsyncMock)
+    @patch('apps.telegram_bot.handlers.show_keys.UserVPN')
+    async def test_a_subscription_nobody_has_opened_yet_says_so(
+        self, user_vpn, catalog, get_access_url, get_markup
+    ):
+        self.connection.devices = Devices([])
+        user_vpn.objects.with_related_server.return_value.filter.return_value = AsyncItems([self.connection])
+        get_access_url.return_value = 'https://sub.example.test/sub/stable'
+        catalog.return_value = FULL
+        get_markup.return_value = object()
+
+        message, _keyboard = await build_keys_screen(self.user)
+
+        self.assertIn('<b>Устройства (0 из 2):</b> ещё ни одного, подключите приложение', message)
 
     @patch('apps.telegram_bot.handlers.show_keys.get_reply_markup_manage_keys', new_callable=AsyncMock)
     @patch('apps.telegram_bot.handlers.show_keys.get_user_access_url', new_callable=AsyncMock)

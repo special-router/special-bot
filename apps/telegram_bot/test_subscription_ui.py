@@ -32,6 +32,7 @@ class SubscriptionUiTests(IsolatedAsyncioTestCase):
             vpn_key='vless://legacy-rollback',
             enabled=True,
             created_at=SimpleNamespace(strftime=lambda _fmt: '01.01.2026'),
+            devices=SimpleNamespace(order_by=lambda *_fields: AsyncItems([])),
         )
 
     @patch('apps.telegram_bot.handlers.show_keys.get_reply_markup_manage_keys', new_callable=AsyncMock)

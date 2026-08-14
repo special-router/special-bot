@@ -19,7 +19,6 @@ from apps.vpn.services.add_vpn_to_user import add_vpn_to_user
 
 async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user: TelegramUser = await get_user(update)
-    server: Server = await Server.objects.with_related_tariffs().order_by_random().afirst()
 
     random_key: int = int(update.callback_query.data.split(':')[1])
 
@@ -34,6 +33,22 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     redis_client.set(redis_key, 1, 15)
+
+    # Только сервер, на котором у пользователя ещё нет работающей подписки.
+    # `add_vpn_to_user` возвращает уже существующую подписку сервера, а сервер
+    # выбирался случайно из всех: при одном сервере каждое следующее нажатие
+    # списывало сутки и возвращало ту же подписку. Ключ в Redis это не ловил —
+    # он живёт 15 секунд и привязан к номеру нажатой кнопки, а экран после
+    # добавления перерисовывается с новым номером.
+    #
+    # Отключённая подписка сервер не занимает: для неё нажатие — оплата
+    # возобновления, и это единственный способ вернуть её в строй, потому что
+    # ежедневное списание умеет только отключать.
+    engaged = UserVPN.objects.filter_by_user(user_id=user.id).filter_by_enabled(True).values('server_id')
+    server: Server = await Server.objects.with_related_tariffs().exclude(id__in=engaged).order_by_random().afirst()
+    if server is None:
+        await answer_query(update, 'Подписка уже активна, платить второй раз не нужно.')
+        return
 
     # Денег не хватает — сразу показываем экран пополнения, а не отдельное
     # сообщение о балансе: следующий шаг пользователя всё равно там.

@@ -86,6 +86,11 @@ class ScreenGuaranteesTests(IsolatedAsyncioTestCase):
             server=SimpleNamespace(name='SPECIAL'),
             enabled=True,
             created_at=SimpleNamespace(strftime=lambda _fmt: '01.01.2026'),
+            devices=SimpleNamespace(
+                order_by=lambda *_fields: AsyncItems([
+                    SimpleNamespace(device_model='iPhone 15 Pro', device_os='iOS'),
+                ]),
+            ),
         )
 
     async def build_every_screen(self) -> dict[str, tuple[str, object]]:

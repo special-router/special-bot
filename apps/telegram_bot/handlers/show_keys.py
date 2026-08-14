@@ -1,12 +1,14 @@
+import html
 from typing import Final
 
 from django.conf import settings
 from telegram import InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from apps.subscriptions.devices import device_limit_for
 from apps.telegram_bot.catalog import acatalog, catalog_body
 from apps.telegram_bot.inline_buttons.manage_keys import get_reply_markup_manage_keys
-from apps.telegram_bot.ui import STATUS_ACTIVE, STATUS_INACTIVE, code, render_screen, screen
+from apps.telegram_bot.ui import STATUS_ACTIVE, STATUS_INACTIVE, bold, code, render_screen, screen
 from apps.telegram_bot.utils import get_user
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
@@ -19,6 +21,12 @@ COPY_HINT: Final[str] = (
 )
 
 EMPTY_HINT: Final[str] = 'Подписок пока нет. Нажмите «Добавить» — спишется стоимость одних суток.'
+
+# Устройство, назвавшееся при привязке пустыми заголовками. Слот оно занимает
+# такой же, как любое другое, поэтому в списке ему нужно имя.
+UNNAMED_DEVICE: Final[str] = 'без названия'
+
+DEVICES_EMPTY: Final[str] = 'ещё ни одного, подключите приложение'
 
 
 async def build_keys_screen(user: TelegramUser, *, notice: str | None = None) -> tuple[str, InlineKeyboardMarkup]:
@@ -46,7 +54,8 @@ async def build_keys_screen(user: TelegramUser, *, notice: str | None = None) ->
         # девяти значило бы прятать остальные восемь.
         entries.append(
             f'{marker} Подписка, с {vpn_connection.created_at.strftime("%d.%m.%Y")}\n'
-            f'{code(access_url)}'
+            f'{code(access_url)}\n'
+            f'{await _devices_line(vpn_connection)}'
         )
 
     catalog = await acatalog(first_connection)
@@ -61,6 +70,23 @@ async def build_keys_screen(user: TelegramUser, *, notice: str | None = None) ->
     )
 
     return text, await get_reply_markup_manage_keys(user)
+
+
+async def _devices_line(vpn_connection) -> str:
+    """Какие устройства заняли места этой подписки и сколько мест осталось.
+
+    Раньше об этом не говорил ни один экран: кнопка «Отвязать» стояла рядом с
+    подпиской, про которую нельзя было узнать, привязано ли к ней хоть что-то,
+    — и нажимали её вслепую. Имена берутся из заголовков клиента, поэтому
+    экранируются; идентификатор устройства не показывается никогда, он не для
+    чтения человеком и опознаёт устройство за пределами этой подписки.
+    """
+    names = [
+        html.escape(device.device_model or device.device_os or UNNAMED_DEVICE)
+        async for device in vpn_connection.devices.order_by('first_seen_at')
+    ]
+    limit = device_limit_for(vpn_connection)
+    return f'{bold(f"Устройства ({len(names)} из {limit}):")} ' + (', '.join(names) or DEVICES_EMPTY)
 
 
 async def show_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
