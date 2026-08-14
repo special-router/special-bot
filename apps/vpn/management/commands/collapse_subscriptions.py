@@ -14,15 +14,20 @@
 Лишние подписки удаляются вместе с их клиентами в панели: оставить их
 включёнными значило бы и дальше списывать за них деньги, а выключенными — дать
 бесплатный доступ по ссылке, которая продолжает работать.
+
+Остаётся та подписка, на которой уже сидит устройство: ссылка у каждой своя, и
+удаление занятой оборвала бы клиенту работающее подключение. При прочих равных
+остаётся самая старая.
 """
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 from django.core.management.base import BaseCommand
 
 from apps.subscriptions.devices import set_device_limit
+from apps.subscriptions.models import SubscriptionDevice
 from apps.subscriptions.pricing import free_device_slots
 from apps.vpn.models import UserVPN
 from apps.vpn.services.remove_vpn_user_from_server import remove_vpn_user_from_server
@@ -36,9 +41,16 @@ class Command(BaseCommand):
                             help='Actually collapse. Without it nothing is written or deleted.')
 
     def handle(self, *args, **options):
+        # Остаётся подписка, на которой уже сидит устройство, и только при
+        # прочих равных — самая старая. Ссылка у оставшейся своя, поэтому выбор
+        # старшинством отобрал бы у двух клиентов работающий прямо сейчас
+        # клиент, а выбор по устройству не отбирает ни у кого.
+        occupancy = Counter(SubscriptionDevice.objects.values_list('subscription_id', flat=True))
         by_user: dict[int, list[UserVPN]] = defaultdict(list)
-        for user_vpn in UserVPN.objects.with_related_server().order_by('created_at', 'id'):
+        for user_vpn in UserVPN.objects.with_related_server():
             by_user[user_vpn.user_id].append(user_vpn)
+        for items in by_user.values():
+            items.sort(key=lambda item: (-occupancy[item.id], item.created_at, item.id))
 
         crowded = {user_id: items for user_id, items in by_user.items() if len(items) > 1}
         if not crowded:
