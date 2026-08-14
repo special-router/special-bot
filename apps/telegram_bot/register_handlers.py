@@ -6,11 +6,16 @@ from apps.telegram_bot.error_handler import on_error
 from apps.telegram_bot.handlers.add_key import add_key
 from apps.telegram_bot.handlers.balance import show_balance
 from apps.telegram_bot.handlers.bind_device import bind_device
+from apps.telegram_bot.handlers.devices import (
+    add_device_slot,
+    drop_device_slot,
+    show_devices,
+    unbind_one_device,
+)
 from apps.telegram_bot.handlers.faq import faq
 from apps.telegram_bot.handlers.main_menu import main_menu
 from apps.telegram_bot.handlers.profile import show_profile
 from apps.telegram_bot.handlers.referral import referral
-from apps.telegram_bot.handlers.remove_key import remove_key, show_keys_for_remove
 from apps.telegram_bot.handlers.reset_devices import reset_devices
 from apps.telegram_bot.handlers.show_keys import show_keys
 from apps.telegram_bot.handlers.start import start
@@ -45,7 +50,6 @@ def register_handlers():
     telegram_bot_app.add_handler(CommandHandler('faq', faq))
 
     # callbacks
-    telegram_bot_app.add_handler(CallbackQueryHandler(remove_key, pattern=r'^remove_key:\d+$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(show_balance, pattern=r'^show_balance$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(top_up_balance_promo, pattern=r'^top_up_balance_promo$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(top_up_balance_one_month, pattern=r'^top_up_balance_one_month'))
@@ -60,7 +64,15 @@ def register_handlers():
     telegram_bot_app.add_handler(CallbackQueryHandler(main_menu, pattern=r'^main_menu$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(show_keys, pattern=r'^show_keys$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(add_key, pattern=r'^add_key:\d+$'))
-    telegram_bot_app.add_handler(CallbackQueryHandler(show_keys_for_remove, pattern=r'^show_keys_for_remove'))
+    # Подписку из бота больше не удаляют — она у аккаунта одна. Оба callback'а
+    # остались в разосланных раньше сообщениях, поэтому нажатие уводит на
+    # экран подписок: без обработчика кнопка крутилась бы до таймаута.
+    telegram_bot_app.add_handler(CallbackQueryHandler(show_keys, pattern=r'^show_keys_for_remove'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(show_keys, pattern=r'^remove_key:\d+$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(show_devices, pattern=r'^show_devices$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(add_device_slot, pattern=r'^add_device_slot$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(drop_device_slot, pattern=r'^drop_device_slot$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(unbind_one_device, pattern=r'^unbind_device:\d+$'))
     # Кнопки привязки в клавиатуре больше нет, но она осталась в сообщениях,
     # разосланных раньше: без обработчика такое нажатие уходит в никуда.
     telegram_bot_app.add_handler(CallbackQueryHandler(bind_device, pattern=r'^bind_device$'))

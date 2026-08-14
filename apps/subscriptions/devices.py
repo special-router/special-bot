@@ -187,6 +187,37 @@ def reset_devices(user_id: int) -> tuple[bool, timedelta | None]:
     return True, None
 
 
+def bound_devices(user_vpn) -> list:
+    """Привязанные устройства подписки в порядке появления."""
+    return list(SubscriptionDevice.objects.filter(
+        subscription_id=user_vpn.id).order_by('first_seen_at', 'id'))
+
+
+def unbind_device(user_id: int, device_id: int) -> bool:
+    """Освободить место, занятое одним устройством этого аккаунта.
+
+    Точечная отвязка, в отличие от `reset_devices`, не расходует суточный
+    лимит сбросов и никому не мешает: пользователь называет, какое устройство
+    убрать, и остальные продолжают работать не заметив. Окно привязки при этом
+    открывается — иначе освобождённое место нечем занять, пока окно требуется.
+
+    Чужой `device_id` не удаляется и не отличается в ответе от несуществующего.
+    """
+    with transaction.atomic():
+        deleted, _ = SubscriptionDevice.objects.filter(
+            id=device_id, subscription__user_id=user_id).delete()
+        if not deleted:
+            return False
+        open_binding_window(user_id)
+    return True
+
+
+def set_device_limit(user_vpn, limit: int) -> None:
+    """Записать число мест подписки, не трогая уже привязанные устройства."""
+    user_vpn.device_limit = _bounded_limit(limit)
+    user_vpn.save(update_fields=['device_limit', 'updated_at'])
+
+
 def _spend_registration_budget(subscription_id: int) -> bool:
     """Consume one registration from this subscription's rolling allowance.
 

@@ -24,7 +24,7 @@ async def build_profile_screen(user: TelegramUser) -> tuple[str, InlineKeyboardM
         'Профиль',
         state=[
             *await balance_state_lines(user_with_balance),
-            f'Активных подписок: {active_keys} из {settings.MAX_KEYS}',
+            'Подписка активна' if active_keys else 'Подписка не подключена',
             f'ID: {code(user.telegram_id)}',
         ],
         body=[f'Вы с нами с {user.created_at.strftime("%d.%m.%Y")}.'],

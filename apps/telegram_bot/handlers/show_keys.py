@@ -1,7 +1,6 @@
 import html
 from typing import Final
 
-from django.conf import settings
 from telegram import InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
@@ -17,10 +16,10 @@ from apps.vpn.services.subscription_delivery import get_user_access_url
 
 COPY_HINT: Final[str] = (
     'Нажмите на ссылку — она скопируется, — и вставьте её в приложение. '
-    'Одна подписка работает на двух устройствах.'
+    'Сколько устройств она обслуживает — на экране «Устройства».'
 )
 
-EMPTY_HINT: Final[str] = 'Подписок пока нет. Нажмите «Добавить» — спишется стоимость одних суток.'
+EMPTY_HINT: Final[str] = 'Подписки пока нет. Нажмите «Подключить» — спишется стоимость одних суток.'
 
 # Устройство, назвавшееся при привязке пустыми заголовками. Слот оно занимает
 # такой же, как любое другое, поэтому в списке ему нужно имя.
@@ -64,12 +63,12 @@ async def build_keys_screen(user: TelegramUser, *, notice: str | None = None) ->
         'Подписки',
         state=[
             f'Баланс: {user.balance} руб.',
-            f'Активных подписок: {active_keys} из {settings.MAX_KEYS}',
+            'Подписка активна' if active_keys else 'Подписка не подключена',
         ],
         body=[notice, *entries, *catalog_body(catalog), COPY_HINT if entries else EMPTY_HINT],
     )
 
-    return text, await get_reply_markup_manage_keys(user)
+    return text, await get_reply_markup_manage_keys(connected=bool(active_keys))
 
 
 async def _devices_line(vpn_connection) -> str:

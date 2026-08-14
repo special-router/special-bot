@@ -67,4 +67,4 @@ class SubscriptionUiTests(IsolatedAsyncioTestCase):
 
         self.assertNotIn('vless://legacy-rollback', message)
         self.assertNotIn('sub.example.test', message)
-        self.assertIn('Активных подписок: 1', message)
+        self.assertIn('Подписка активна', message)

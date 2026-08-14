@@ -7,7 +7,7 @@ from telegram.ext import ContextTypes
 from apps.analytics.funnel import subscription_created, subscription_refused_no_funds
 from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
 from apps.payments.models import Transaction
-from apps.servers.models import Server, TariffServer
+from apps.servers.models import Server
 from apps.telegram_bot.handlers.balance import build_balance_screen
 from apps.telegram_bot.handlers.show_keys import build_keys_screen
 from apps.telegram_bot.ui import answer_query, render_screen
@@ -53,32 +53,25 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Денег не хватает — сразу показываем экран пополнения, а не отдельное
     # сообщение о балансе: следующий шаг пользователя всё равно там.
     if user.balance < server.tariff.price:
-        text, keyboard = await build_balance_screen(user, notice='Недостаточно средств для новой подписки.')
+        text, keyboard = await build_balance_screen(user, notice='Недостаточно средств для подписки.')
         await render_screen(update, context, text, keyboard)
         await sync_to_async(subscription_refused_no_funds)(user.id, amount=server.tariff.price)
-        return
-
-    active_keys = await UserVPN.objects.filter_by_user(user_id=user.id).filter_by_enabled(True).acount()
-    if active_keys >= settings.MAX_KEYS:
-        await answer_query(
-            update,
-            f"Зарегистрировано максимальное количество подписок на аккаунт ({settings.MAX_KEYS}).",
-        )
         return
 
     user_vpn = await add_vpn_to_user(user, server)
     await sync_to_async(subscription_created)(user.id, user_vpn.id)
 
-    tariff: TariffServer = await TariffServer.objects.aget()
-
+    # Цена берётся с сервера — та же, что проверил баланс выше. Отдельный запрос
+    # `TariffServer.objects.aget()` списывал цену, которую никто не проверял, и
+    # упал бы с `MultipleObjectsReturned`, появись вторая тарифная строка.
     await Transaction.objects.acreate(
         user=user,
-        amount=-tariff.price,
+        amount=-server.tariff.price,
         status=TransactionStatusChoices.SUCCESS,
         source=TransactionSourceChoices.BUY,
     )
 
     # Баланс аннотирован до списания, поэтому пользователь перечитывается —
     # иначе экран показал бы сумму, которой уже нет.
-    text, keyboard = await build_keys_screen(await get_user(update), notice='Подписка добавлена.')
-    await render_screen(update, context, text, keyboard, toast='Подписка добавлена.')
+    text, keyboard = await build_keys_screen(await get_user(update), notice='Подписка подключена.')
+    await render_screen(update, context, text, keyboard, toast='Подписка подключена.')

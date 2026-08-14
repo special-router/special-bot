@@ -28,7 +28,6 @@ from apps.telegram_bot.handlers.faq import faq
 from apps.telegram_bot.handlers.main_menu import main_menu
 from apps.telegram_bot.handlers.profile import show_profile
 from apps.telegram_bot.handlers.referral import referral
-from apps.telegram_bot.handlers.remove_key import remove_key, show_keys_for_remove
 from apps.telegram_bot.handlers.reset_devices import RESET_DONE_TEXT, reset_devices
 from apps.telegram_bot.handlers.show_keys import show_keys
 from apps.telegram_bot.handlers.top_up_balance import (
@@ -162,7 +161,6 @@ class CallbackAnswerTests(TestCase):
             (show_balance, 'show_balance'),
             (show_profile, 'profile'),
             (referral, 'referral'),
-            (show_keys_for_remove, 'show_keys_for_remove'),
             (faq, 'faq'),
         ):
             with self.subTest(callback_data=data):
@@ -179,13 +177,6 @@ class CallbackAnswerTests(TestCase):
             await add_key(update, self.context)
 
         update.callback_query.answer.assert_awaited_once_with(text='Подписка уже добавляется.')
-
-    async def test_removing_a_subscription_that_is_gone_answers(self):
-        update = _callback_update('remove_key:4242')
-
-        await remove_key(update, self.context)
-
-        update.callback_query.answer.assert_awaited_once_with(text='Подписка не найдена.')
 
 
 @override_settings(YOUMONEY_TOKEN='')
@@ -255,14 +246,19 @@ class DeviceActionTests(TestCase):
     def setUp(self):
         self.context = _context()
 
-    async def test_the_keyboard_offers_unbinding_and_never_binding(self):
-        user = await TelegramUser.objects.acreate(telegram_id=CLIENT_ID, username='client')
-
-        keyboard = await get_reply_markup_manage_keys(user)
-        actions = {key.callback_data: key.text for row in keyboard.inline_keyboard for key in row}
+    async def test_the_keyboard_never_offers_binding_and_never_a_second_subscription(self):
+        connected = await get_reply_markup_manage_keys(connected=True)
+        actions = {key.callback_data: key.text for row in connected.inline_keyboard for key in row}
 
         self.assertNotIn('bind_device', actions)
-        self.assertIn('Отвязать', actions['reset_devices'])
+        # Пока подписка работает, покупать нечего: раньше на этом месте стояло
+        # «Добавить», и каждое нажатие списывало сутки за ту же подписку.
+        self.assertNotIn('add_key', ' '.join(actions))
+        self.assertIn('Устройства', actions['show_devices'])
+
+        idle = await get_reply_markup_manage_keys(connected=False)
+        idle_actions = {key.callback_data for row in idle.inline_keyboard for key in row}
+        self.assertTrue(any(action.startswith('add_key:') for action in idle_actions))
 
     async def test_unbinding_opens_the_binding_window(self):
         """Фаза 2 включит окно привязки: без него отвязка стала бы тупиком."""

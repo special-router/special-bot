@@ -23,15 +23,15 @@ from apps.telegram_bot.handlers.faq import build_faq_screen
 from apps.telegram_bot.handlers.main_menu import build_main_menu_screen
 from apps.telegram_bot.handlers.profile import build_profile_screen
 from apps.telegram_bot.handlers.referral import build_referral_screen
-from apps.telegram_bot.handlers.remove_key import build_remove_keys_screen
+from apps.telegram_bot.handlers.devices import build_devices_screen
 from apps.telegram_bot.handlers.show_keys import build_keys_screen
 from apps.telegram_bot.handlers.subscription import build_subscription_screen
 from apps.telegram_bot.ui import render_screen
 
 
 # Набор `callback_data`, на который завязана диспетчеризация в
-# register_handlers. Переменная часть (nonce у add_key, id подписки у
-# remove_key) нормализуется — сверяется имя, а не значение.
+# register_handlers. Переменная часть (nonce у add_key, id устройства у
+# unbind_device) нормализуется — сверяется имя, а не значение.
 EXPECTED_CALLBACK_DATA = frozenset(
     {
         'add_key:*',
@@ -39,11 +39,12 @@ EXPECTED_CALLBACK_DATA = frozenset(
         'main_menu',
         'profile',
         'referral',
-        'remove_key:*',
-        'reset_devices',
+        'add_device_slot',
+        'drop_device_slot',
         'show_balance',
         'show_keys',
-        'show_keys_for_remove',
+        'show_devices',
+        'unbind_device:*',
         'top_up_balance_one_month',
         'top_up_balance_promo',
         'top_up_balance_six_month',
@@ -83,7 +84,8 @@ class ScreenGuaranteesTests(IsolatedAsyncioTestCase):
         self.split = BalanceSplit(real=Decimal('100.00'), bonus=Decimal('0.00'))
         self.connection = SimpleNamespace(
             id=7,
-            server=SimpleNamespace(name='SPECIAL'),
+            device_limit=3,
+            server=SimpleNamespace(name='SPECIAL', tariff=SimpleNamespace(price=Decimal('7.00'))),
             enabled=True,
             created_at=SimpleNamespace(strftime=lambda _fmt: '01.01.2026'),
             devices=SimpleNamespace(
@@ -127,8 +129,12 @@ class ScreenGuaranteesTests(IsolatedAsyncioTestCase):
                 return_value='https://sub.example.test/sub/stable',
             )
 
-            remove_objects = patched('apps.telegram_bot.inline_buttons.remove_keys.UserVPN').objects
-            remove_objects.with_related_server.return_value.filter_by_user.return_value = AsyncItems(connections)
+            device_objects = patched('apps.telegram_bot.handlers.devices.UserVPN').objects
+            device_objects.select_related.return_value.filter.return_value.order_by.return_value.afirst = \
+                AsyncMock(return_value=self.connection)
+            patched('apps.telegram_bot.handlers.devices.bound_devices', return_value=[
+                SimpleNamespace(id=31, device_model='iPhone 15 Pro', device_os='iOS'),
+            ])
 
             tariffs = patched('apps.telegram_bot.handlers.balance.TariffServer').objects
             tariffs.afirst = AsyncMock(return_value=SimpleNamespace(price=7))
@@ -151,13 +157,22 @@ class ScreenGuaranteesTests(IsolatedAsyncioTestCase):
                 'start': await build_main_menu_screen(self.user, greeting=True),
                 'profile': await build_profile_screen(self.user),
                 'keys': await build_keys_screen(self.user),
-                'keys_notice': await build_keys_screen(self.user, notice='Подписка добавлена.'),
-                'remove_keys': await build_remove_keys_screen(self.user),
+                'keys_notice': await build_keys_screen(self.user, notice='Подписка подключена.'),
+                'keys_disconnected': await self._disconnected_keys_screen(),
+                'devices': await build_devices_screen(self.user),
                 'balance': await build_balance_screen(self.user),
                 'referral': await build_referral_screen(self.user),
                 'faq': await build_faq_screen(),
                 'subscription': await build_subscription_screen(self.user),
             }
+
+    async def _disconnected_keys_screen(self):
+        """Кнопка «Подключить» есть только пока подписка не работает."""
+        self.connection.enabled = False
+        try:
+            return await build_keys_screen(self.user)
+        finally:
+            self.connection.enabled = True
 
     @override_settings(TELEGRAM_BUTTON_ICONS_ENABLED=False)
     async def test_every_screen_builds_with_icons_disabled(self):
@@ -242,7 +257,7 @@ class ScreenGuaranteesTests(IsolatedAsyncioTestCase):
         """Привязка и сброс возвращались сообщением без клавиатуры — тупиком."""
         text, keyboard = (await self.build_every_screen())['keys_notice']
 
-        self.assertIn('Подписка добавлена.', text)
+        self.assertIn('Подписка подключена.', text)
         self.assertTrue(keyboard.inline_keyboard)
 
     @override_settings(TELEGRAM_BUTTON_ICONS_ENABLED=False)

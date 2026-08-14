@@ -14,6 +14,7 @@ from telegram import Bot
 from apps.analytics.funnel import subscription_disabled_no_funds
 from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
 from apps.payments.models import Transaction
+from apps.subscriptions.pricing import daily_price
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 from apps.vpn.services.remove_vpn_user_from_server import disable_vpn_user_from_server
@@ -78,7 +79,10 @@ def _charge_user(user_id: int, subscriptions: list[UserVPN], charge_date: dateti
             .filter(charge_date=charge_date, user_vpn__in=subscriptions)
             .values_list('user_vpn_id', flat=True)
         )
-        prices = {user_vpn.id: user_vpn.server.tariff.price for user_vpn in subscriptions}
+        # Цена подписки — тариф плюс её платные места. Считается один раз здесь,
+        # чтобы решение по каждой подписке принималось по той же сумме, которую
+        # спишет транзакция.
+        prices = {user_vpn.id: daily_price(user_vpn) for user_vpn in subscriptions}
 
         for position, user_vpn in enumerate(subscriptions):
             if user_vpn.id in already_charged:
