@@ -1,6 +1,4 @@
 from datetime import timedelta
-from hashlib import sha256
-from uuid import uuid4
 
 from django import forms
 from django.contrib import admin, messages
@@ -12,6 +10,7 @@ from django.template.response import TemplateResponse
 from django.utils import timezone
 from django.utils.html import format_html
 
+from . import broadcast_ops
 from .models import Broadcast, BroadcastDelivery
 
 
@@ -25,10 +24,10 @@ class BroadcastForm(forms.ModelForm):
 
     def clean_message(self):
         message = self.cleaned_data.get('message', '').strip()
-        if len(message) < 10:
-            raise ValidationError('Сообщение должно содержать минимум 10 символов')
-        if len(message) > 4096:
-            raise ValidationError('Сообщение не должно превышать 4096 символов')
+        if len(message) < broadcast_ops.MESSAGE_MIN_LENGTH:
+            raise ValidationError(f'Сообщение должно содержать минимум {broadcast_ops.MESSAGE_MIN_LENGTH} символов')
+        if len(message) > broadcast_ops.MESSAGE_MAX_LENGTH:
+            raise ValidationError(f'Сообщение не должно превышать {broadcast_ops.MESSAGE_MAX_LENGTH} символов')
         return message
 
 
@@ -144,32 +143,11 @@ class BroadcastAdmin(admin.ModelAdmin):
     @staticmethod
     def _confirmation_digest(broadcast):
         """Bind confirmation to content, audience controls, and immutable recipient snapshot."""
-        values = (
-            str(broadcast.pk), broadcast.message, broadcast.audience,
-            str(broadcast.include_subscription_button), str(broadcast.preview_snapshot_id),
-            str(broadcast.total_users),
-        )
-        return sha256('\0'.join(values).encode()).hexdigest()
+        return broadcast_ops.confirmation_digest(broadcast)
 
     def _create_preview_snapshot(self, broadcast_id):
         """Atomically replace any old preview with a fixed recipient ledger."""
-        with transaction.atomic():
-            broadcast = Broadcast.objects.select_for_update().filter(pk=broadcast_id, status='draft').first()
-            if not broadcast:
-                return None
-            BroadcastDelivery.objects.filter(broadcast=broadcast).delete()
-            BroadcastDelivery.objects.bulk_create(
-                [BroadcastDelivery(broadcast=broadcast, user=user) for user in broadcast.recipient_queryset().iterator()],
-                batch_size=1000,
-            )
-            broadcast.preview_snapshot_id = uuid4()
-            broadcast.total_users = BroadcastDelivery.objects.filter(broadcast=broadcast).count()
-            broadcast.status = 'confirming'
-            broadcast.error_message = ''
-            broadcast.save(update_fields=[
-                'preview_snapshot_id', 'total_users', 'status', 'error_message', 'updated_at',
-            ])
-            return broadcast
+        return broadcast_ops.create_preview_snapshot(broadcast_id)
 
     def _confirmation(self, request, broadcast, action, heading, warning):
         context = {
@@ -189,8 +167,7 @@ class BroadcastAdmin(admin.ModelAdmin):
         return request.POST.get('confirmation_digest', '') == self._confirmation_digest(broadcast)
 
     def _enqueue_after_commit(self, broadcast_id):
-        from .tasks import safe_broadcast_v1
-        transaction.on_commit(lambda: safe_broadcast_v1.delay(broadcast_id))
+        broadcast_ops.enqueue_after_commit(broadcast_id)
 
     @admin.action(description='Поставить рассылку в очередь')
     def send_broadcast(self, request, queryset):
@@ -199,14 +176,7 @@ class BroadcastAdmin(admin.ModelAdmin):
         if not selected:
             return
         if request.POST.get('cancel'):
-            with transaction.atomic():
-                broadcast = Broadcast.objects.select_for_update().filter(pk=selected.pk, status='confirming').first()
-                if broadcast:
-                    BroadcastDelivery.objects.filter(broadcast=broadcast).delete()
-                    broadcast.status = 'draft'
-                    broadcast.preview_snapshot_id = None
-                    broadcast.total_users = 0
-                    broadcast.save(update_fields=['status', 'preview_snapshot_id', 'total_users', 'updated_at'])
+            broadcast_ops.cancel_confirming_broadcast(selected.pk)
             self.message_user(request, 'Подтверждение отменено; снимок получателей удалён.', level=messages.SUCCESS)
             return
         if 'post' not in request.POST:
@@ -221,20 +191,14 @@ class BroadcastAdmin(admin.ModelAdmin):
                 request, broadcast, 'send_broadcast', 'Подтвердите отправку',
                 'Получатели уже зафиксированы в снимке. Неопределённые доставки не повторяются.',
             )
-        with transaction.atomic():
-            broadcast = Broadcast.objects.select_for_update().filter(pk=selected.pk, status='confirming').first()
-            if not broadcast or not broadcast.preview_snapshot_id or not self._confirmation_is_current(request, broadcast):
-                self.message_user(request, 'Рассылка или снимок получателей изменились; создайте подтверждение заново.', level=messages.ERROR)
-                return
-            snapshot_count = BroadcastDelivery.objects.filter(broadcast=broadcast).count()
-            if snapshot_count != broadcast.total_users:
-                self.message_user(request, 'Снимок получателей повреждён; создайте подтверждение заново.', level=messages.ERROR)
-                return
-            broadcast.status = 'queued'
-            broadcast.error_message = ''
-            broadcast.heartbeat_at = None
-            broadcast.save(update_fields=['status', 'error_message', 'heartbeat_at', 'updated_at'])
-            self._enqueue_after_commit(broadcast.id)
+        digest = request.POST.get('confirmation_digest', '')
+        result = broadcast_ops.queue_confirmed_broadcast(selected.pk, digest)
+        if result.error == 'stale':
+            self.message_user(request, 'Рассылка или снимок получателей изменились; создайте подтверждение заново.', level=messages.ERROR)
+            return
+        if result.error == 'snapshot_corrupt':
+            self.message_user(request, 'Снимок получателей повреждён; создайте подтверждение заново.', level=messages.ERROR)
+            return
         self.message_user(request, 'Зафиксированная рассылка поставлена в очередь.', level=messages.SUCCESS)
 
     @admin.action(description='Возобновить ожидающие доставки')
