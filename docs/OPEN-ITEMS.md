@@ -48,9 +48,20 @@ failure count and timestamp.
 **Blocked on:** an approved external destination and a named on-call owner. Do
 not describe paging as live before both exist.
 
-### External backup endpoints, beyond the first user
+### External backup endpoints — live for everyone
 
-**Live since 2026-08-13, for `UserVPN` 801 alone.**
+**Rolled out to every subscription on 2026-08-14 by owner decision**, through
+`SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED=true` rather than by pasting the current
+ids into the allowlist, so a customer created tomorrow gets the same document as
+one created yesterday. All 58 active subscriptions render 11 lines; a
+non-owner's endpoints were probed individually and every one completed a real
+Reality handshake.
+
+The concerns below were raised before the decision and remain true; the owner
+accepted them. They are recorded because each has a symptom worth recognising
+early, not to relitigate the call.
+
+**Previously, and until 2026-08-14: live for `UserVPN` 801 alone.**
 `SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=true` with
 `SUBSCRIPTION_BACKUP_TEST_USER_IDS=[801]`. One provider is configured; its 9
 regions render as 8 country lines, each verified by a real Reality handshake with
