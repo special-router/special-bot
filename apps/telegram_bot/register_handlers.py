@@ -4,6 +4,21 @@ from telegram.ext import CallbackQueryHandler, CommandHandler, filters, MessageH
 from apps.telegram_bot.bot_app import telegram_bot_app
 from apps.telegram_bot.error_handler import on_error
 from apps.telegram_bot.handlers.add_key import add_key
+from apps.telegram_bot.handlers.admin.broadcast import admin_broadcast, admin_broadcast_audience, admin_broadcast_cancel, admin_broadcast_send
+from apps.telegram_bot.handlers.admin.client import admin_client, admin_client_view
+from apps.telegram_bot.handlers.admin.common import ADMIN_PENDING_INPUT
+from apps.telegram_bot.handlers.admin.menu import admin_command, admin_menu
+from apps.telegram_bot.handlers.admin.money import (
+    admin_credit_execute,
+    admin_credit_start,
+    admin_vpn_disable_confirm,
+    admin_vpn_disable_execute,
+    admin_vpn_issue_confirm,
+    admin_vpn_issue_execute,
+    admin_vpn_issue_start,
+)
+from apps.telegram_bot.handlers.admin.monitoring import admin_monitor, admin_monitor_layer
+from apps.telegram_bot.handlers.admin.text_input import admin_text_input
 from apps.telegram_bot.handlers.balance import show_balance
 from apps.telegram_bot.handlers.bind_device import bind_device
 from apps.telegram_bot.handlers.devices import (
@@ -48,6 +63,39 @@ def register_handlers():
     telegram_bot_app.add_handler(CommandHandler('start', start))
     telegram_bot_app.add_handler(CommandHandler('balance', show_balance))
     telegram_bot_app.add_handler(CommandHandler('faq', faq))
+    # Not in `post_init_handler`'s public command list on purpose — it still
+    # works when typed, it is just not suggested to every user.
+    telegram_bot_app.add_handler(CommandHandler('admin', admin_command))
+
+    # admin panel
+    telegram_bot_app.add_handler(CallbackQueryHandler(admin_menu, pattern=r'^admin_menu$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(admin_client, pattern=r'^admin_client$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(admin_client_view, pattern=r'^admin_client_view:\d+$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(admin_monitor, pattern=r'^admin_monitor$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(admin_monitor_layer, pattern=r'^admin_monitor_layer:\w+$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(admin_broadcast, pattern=r'^admin_broadcast$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(admin_broadcast_audience, pattern=r'^admin_broadcast_audience:\w+$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(admin_broadcast_send, pattern=r'^admin_broadcast_send$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(admin_broadcast_cancel, pattern=r'^admin_broadcast_cancel$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(admin_credit_start, pattern=r'^admin_credit:\d+$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(admin_credit_execute, pattern=r'^admin_credit_execute$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(admin_vpn_issue_start, pattern=r'^admin_vpn_issue:\d+$'))
+    telegram_bot_app.add_handler(
+        CallbackQueryHandler(admin_vpn_issue_confirm, pattern=r'^admin_vpn_issue_confirm:\d+:\d+$')
+    )
+    telegram_bot_app.add_handler(
+        CallbackQueryHandler(admin_vpn_issue_execute, pattern=r'^admin_vpn_issue_execute:\d+:\d+$')
+    )
+    telegram_bot_app.add_handler(CallbackQueryHandler(admin_vpn_disable_confirm, pattern=r'^admin_vpn_disable:\d+$'))
+    telegram_bot_app.add_handler(
+        CallbackQueryHandler(admin_vpn_disable_execute, pattern=r'^admin_vpn_disable_execute:\d+$')
+    )
+    # Registered before the support text handler below: on the rare overlap —
+    # an admin mid-prompt who also has an open support ticket — the admin flow
+    # they explicitly started takes priority. `ADMIN_PENDING_INPUT` itself only
+    # matches an admin with a pending prompt, so this never swallows an
+    # ordinary customer's message.
+    telegram_bot_app.add_handler(MessageHandler(ADMIN_PENDING_INPUT, admin_text_input))
 
     # callbacks
     telegram_bot_app.add_handler(CallbackQueryHandler(show_balance, pattern=r'^show_balance$'))
