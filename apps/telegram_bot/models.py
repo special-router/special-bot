@@ -24,8 +24,10 @@ class Broadcast(models.Model):
     ]
     AUDIENCE_ALL = 'all'
     AUDIENCE_SUBSCRIPTION_READY = 'subscription_ready'
+    AUDIENCE_WITHOUT_SUBSCRIPTION = 'without_subscription'
     AUDIENCE_CHOICES = [
         (AUDIENCE_SUBSCRIPTION_READY, 'Владельцы готовых оплаченных подписок'),
+        (AUDIENCE_WITHOUT_SUBSCRIPTION, 'Все, кроме владельцев подписок'),
         (AUDIENCE_ALL, 'Все пользователи'),
     ]
 
@@ -147,9 +149,24 @@ class Broadcast(models.Model):
             has_prepared_subscription=True
         )
 
+    @classmethod
+    def without_subscription_recipients(cls):
+        """Дополнение к готовым подписчикам, посчитанное тем же предикатом.
+
+        Не «у кого нет UserVPN»: тогда в аудиторию попал бы владелец подписки,
+        которой не хватает баланса, и получил бы письмо для тех, кто ничего не
+        покупал. Дополнение считается вычитанием того же самого набора, поэтому
+        два письма не могут прийти одному человеку и никто не остаётся без обоих.
+        """
+        return cls.canonical_recipients().exclude(
+            pk__in=cls.subscription_ready_recipients().values('pk')
+        )
+
     def recipient_queryset(self):
         if self.audience == self.AUDIENCE_ALL:
             return self.canonical_recipients()
+        if self.audience == self.AUDIENCE_WITHOUT_SUBSCRIPTION:
+            return self.without_subscription_recipients()
         return self.subscription_ready_recipients()
 
     @property
