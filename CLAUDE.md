@@ -5,6 +5,14 @@ per-account balance daily, and renders one per-user subscription document that
 VPN clients import. The transport itself is 3x-ui/xray on a separate host; this
 repository never owns the tunnel, only who is entitled to it.
 
+**One account, one subscription, many devices** (since 2026-08-14). The bot has
+no control over how many subscriptions exist — it connects the single one and
+sells *device slots* against it. The daily charge is
+`tariff × (1 + slots above SUBSCRIPTION_FREE_DEVICE_SLOTS)`, computed only in
+`apps/subscriptions/pricing.py`. Before this, a second device meant a second
+subscription, and nine accounts had done exactly that; `manage.py
+collapse_subscriptions` is the one-off that merged them at an unchanged price.
+
 Read this file, then [`docs/CONTEXT-MAP.md`](docs/CONTEXT-MAP.md) for the task
 you were actually given. Together they are two minutes and replace an hour of
 searching.

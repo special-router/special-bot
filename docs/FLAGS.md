@@ -82,7 +82,8 @@ Rollout phase lives here. See [`OPEN-ITEMS.md`](OPEN-ITEMS.md#device-binding-pha
 
 | Setting | Type | Default | Prod | What it does |
 |---|---|---|---|---|
-| `SUBSCRIPTION_DEVICE_LIMIT` | int | `2` | `2` | Distinct `x-hwid` values per subscription. `UserVPN.device_limit` overrides it per record. |
+| `SUBSCRIPTION_DEVICE_LIMIT` | int | `2` | `2` | Distinct `x-hwid` values per subscription. `UserVPN.device_limit` overrides it per record, and since 2026-08-14 that override is what a customer buys — it is no longer only a support lever. |
+| `SUBSCRIPTION_FREE_DEVICE_SLOTS` | int | `2` | unset | Slots included in the tariff. Every slot above this multiplies the daily charge: `daily_price = tariff × (1 + max(0, limit − free))`. Raising it makes existing paid slots free retroactively, because the daily run reads it fresh. |
 | `SUBSCRIPTION_HWID_STRICT` | bool | `False` | `false` | Refuse clients that send no usable identifier. Keep false until the fleet sends one. |
 | `SUBSCRIPTION_DEVICE_BINDING_WINDOW_REQUIRED` | bool | **`True`** | **`false`** | Whether binding a *new* device needs a window opened from the bot. **The code default is `true`; phase 1 is running only because `.environment` explicitly sets it false.** False is a launch state, never the steady state — it is what lets a leaked `sub_id` spend the slots. |
 | `SUBSCRIPTION_DEVICE_BINDING_WINDOW_MINUTES` | int | `15` | ? | Window length. |
