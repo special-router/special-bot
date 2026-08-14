@@ -78,11 +78,11 @@ class BackfillTests(TestCase):
         self.assertEqual(MoneyEvent.objects.get().cash_amount, Decimal('420.00'))
 
     def test_unknown_source_is_reported_rather_than_dropped(self):
-        self.make_transaction('CRYPTO', '1000', datetime.date(2026, 7, 5))
+        self.make_transaction('FUTURE_SOURCE', '1000', datetime.date(2026, 7, 5))
 
         result = backfill_money_events()
 
-        self.assertEqual(result.unknown_sources, {'CRYPTO': 1})
+        self.assertEqual(result.unknown_sources, {'FUTURE_SOURCE': 1})
         self.assertEqual(MoneyEvent.objects.get().economic_class, 'UNKNOWN')
 
     def test_window_limits_the_rows_examined(self):

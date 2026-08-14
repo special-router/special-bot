@@ -182,6 +182,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 TELEGRAM_BOT_TOKEN = env.str('TELEGRAM_BOT_TOKEN', '')
 YOUMONEY_TOKEN = env.str('YOUMONEY_TOKEN', '')
 
+CRYPTOBOT_TOKEN = env.str('CRYPTOBOT_TOKEN', default='')
+CRYPTOBOT_USDT_RATE = env.str('CRYPTOBOT_USDT_RATE', default='90')  # RUB per 1 USDT; converted to Decimal at use
+CRYPTOBOT_WEBHOOK_PATH = env.str('CRYPTOBOT_WEBHOOK_PATH', default='/api/webhook/cryptobot/')
+
 # Redis / Celery
 # No credential is hardcoded. Provide REDIS_URL, or REDIS_PASSWORD plus optional
 # REDIS_HOST/REDIS_PORT/REDIS_DB. An empty password yields a passwordless local

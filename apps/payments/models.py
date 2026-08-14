@@ -99,6 +99,19 @@ class Transaction(models.Model):
         return f"{self.user.username} - {self.amount} - {self.status}"
 
 
+class CryptoBotInvoice(models.Model):
+    invoice_id = models.BigIntegerField(unique=True)
+    user = models.ForeignKey(
+        'users.TelegramUser',
+        on_delete=models.CASCADE,
+        related_name='cryptobot_invoices',
+    )
+    amount_rub = models.DecimalField(max_digits=12, decimal_places=2)
+    amount_usdt = models.DecimalField(max_digits=12, decimal_places=6)
+    paid = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class CompensationGrant(models.Model):
     """One auditable grant per user for each named outage campaign."""
 

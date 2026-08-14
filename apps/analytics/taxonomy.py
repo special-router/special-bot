@@ -248,6 +248,20 @@ def _classify_purchase(amount: Decimal, measured_cash: Decimal | None) -> Classi
     )
 
 
+def _classify_crypto(amount: Decimal, measured_cash: Decimal | None) -> Classification:
+    if amount < ZERO:
+        return _reversal(amount)
+    # No bonus ladder: the credited RUB amount is exactly what the user paid
+    # (converted from USDT at a fixed rate), so the full amount is cash.
+    return Classification(
+        economic_class=EconomicClassChoices.CASH_IN,
+        kind=MoneyEventKindChoices.TOPUP,
+        cash_basis=CashBasisChoices.DERIVED,
+        balance_delta=amount,
+        cash_amount=amount,
+    )
+
+
 def _reversal(amount: Decimal) -> Classification:
     """Строка с неожиданным знаком: возврат или отмена, но не новая выручка."""
     return Classification(
@@ -266,6 +280,7 @@ _HANDLERS: Final[dict[str, Callable[[Decimal, Decimal | None], Classification]]]
     TransactionSourceChoices.REFERRAL: _classify_referral,
     TransactionSourceChoices.EVERYDAY_SYSTEM: _classify_daily_charge,
     TransactionSourceChoices.BUY: _classify_purchase,
+    TransactionSourceChoices.CRYPTO: _classify_crypto,
 }
 
 

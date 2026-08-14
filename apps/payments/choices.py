@@ -15,3 +15,4 @@ class TransactionSourceChoices(models.TextChoices):
     MANUAL = 'MANUAL', 'Руками проставили'
     REFERRAL = 'REFERRAL', 'Реферальная система'
     COMPENSATION = 'COMPENSATION', 'Компенсация простоя'
+    CRYPTO = 'CRYPTO', 'Криптовалюта'

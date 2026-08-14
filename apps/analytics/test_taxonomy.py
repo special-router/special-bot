@@ -59,6 +59,11 @@ class TaxonomyTests(SimpleTestCase):
                 MoneyEventKindChoices.SUBSCRIPTION_PURCHASE,
                 Decimal('-7'),
             ),
+            TransactionSourceChoices.CRYPTO: (
+                EconomicClassChoices.CASH_IN,
+                MoneyEventKindChoices.TOPUP,
+                Decimal('300'),
+            ),
         }
         self.assertEqual(set(expected), set(TransactionSourceChoices.values))
         self.assertEqual(set(expected), set(known_sources()))
@@ -78,6 +83,7 @@ class TaxonomyTests(SimpleTestCase):
             TransactionSourceChoices.REFERRAL: (Decimal('63'), 'payout_amount', Decimal('63')),
             TransactionSourceChoices.EVERYDAY_SYSTEM: (Decimal('-7'), 'revenue_amount', Decimal('7')),
             TransactionSourceChoices.BUY: (Decimal('-7'), 'revenue_amount', Decimal('7')),
+            TransactionSourceChoices.CRYPTO: (Decimal('300'), 'cash_amount', Decimal('300')),
         }
         for source, (amount, field, expected) in cases.items():
             with self.subTest(source=source):
@@ -113,7 +119,7 @@ class TaxonomyTests(SimpleTestCase):
         self.assertEqual(result.kind, MoneyEventKindChoices.NO_OP)
 
     def test_future_source_is_flagged_not_silently_counted(self):
-        result = classify('CRYPTO', Decimal('1000'))
+        result = classify('FUTURE_UNKNOWN', Decimal('1000'))
         self.assertEqual(result.economic_class, EconomicClassChoices.UNKNOWN)
         self.assertEqual(result.kind, MoneyEventKindChoices.UNCLASSIFIED)
         self.assertEqual(result.cash_amount, Decimal('0.00'))

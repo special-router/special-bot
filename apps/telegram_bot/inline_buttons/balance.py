@@ -1,3 +1,4 @@
+from django.conf import settings
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from apps.payments.choices import TransactionSourceChoices
@@ -41,6 +42,9 @@ async def get_reply_markup_balance(user: TelegramUser) -> InlineKeyboardMarkup:
         .aexists()
     ):
         buttons.insert(0, [button('Бесплатно 7 дней', 'top_up_balance_promo', icon=icons.CELEBRATION)])
+
+    if getattr(settings, 'CRYPTOBOT_TOKEN', ''):
+        buttons.append([button('Криптовалютой (USDT)', 'crypto_topup')])
 
     buttons.append([back_button()])
 

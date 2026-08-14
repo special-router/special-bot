@@ -32,6 +32,9 @@ Shipped-but-inert features are listed together in
 |---|---|---|---|---|
 | `TELEGRAM_BOT_TOKEN` | str | empty | set | Bot API token. |
 | `YOUMONEY_TOKEN` | str | empty | set | Payment provider token. |
+| `CRYPTOBOT_TOKEN` | str | empty | unset | CryptoBot API token. Empty disables the crypto top-up path entirely — the button does not appear and handlers are not registered. |
+| `CRYPTOBOT_USDT_RATE` | str | `90` | unset | RUB per 1 USDT used for invoice amount conversion. Fixed rate — no external API is consulted. |
+| `CRYPTOBOT_WEBHOOK_PATH` | str | `/api/webhook/cryptobot/` | unset | URL path CryptoBot POSTs payment notifications to. Must match the URL registered with CryptoBot (ops task, not code). |
 | `BOT_LINK` | str | `https://t.me/SpecialVPNbot` | ? | Referral link base. |
 | `SUPPORT_CHAT_ID` | int | `0` | `0` | Operators' forum supergroup. **Zero registers no support handler at all** — the menu button stays a plain link and the bot does not read private text messages. Enabling requires two manual Telegram steps first; see [`OPEN-ITEMS.md`](OPEN-ITEMS.md#support-tickets). |
 | `ADMIN_BASE_URL` | str | `https://sub.special-wifi.ru/admin/` | ? | Where the «Карточка клиента» button in a support topic points. Only the scheme and host are used: the path comes from `reverse('admin:users_telegramuser_change')`, so moving the admin off `/admin/` does not break the button. Empty removes the button entirely — Bot API rejects a whole keyboard over one invalid URL, and that would take the close button with it. |
