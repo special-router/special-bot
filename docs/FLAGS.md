@@ -98,6 +98,7 @@ environment; they come from a mode-0600 JSON file on the host.
 |---|---|---|---|---|
 | `SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED` | bool | `False` | **`true`** | Master gate for third-party endpoints in a subscription. |
 | `SUBSCRIPTION_BACKUP_TEST_USER_IDS` | json | `[]` | **`[801]`** | Allowlist of `UserVPN.id` during rollout. |
+| `SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED` | bool | `False` | ? | Every subscription receives third-party endpoints, and `SUBSCRIPTION_BACKUP_TEST_USER_IDS` stops mattering. Full rollout is its own state because an allowlist listing today's customers silently excludes tomorrow's — the day nobody remembers to extend it, a new customer gets a shorter subscription than the person beside them and nothing reports it. |
 | `SUBSCRIPTION_BACKUP_SECRET_FILE` | str | empty | container path | Path to the JSON secret inside the container. Compose binds `/dev/null` when the host path is unset, and settings rejects that non-regular file. Only a regular mode-0600 file is accepted. |
 | `SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS` | json | `None` | one provider host | Exact DNS hostname allowlist. Absent permits a controlled rollout; present but malformed denies everything. |
 | `SUBSCRIPTION_BACKUP_CONNECT_TIMEOUT_SECONDS` | float | `3` | ? | Per-source connect timeout. |

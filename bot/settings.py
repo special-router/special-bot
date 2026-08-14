@@ -364,6 +364,12 @@ SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED = env.bool(
     'SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED', False)
 SUBSCRIPTION_BACKUP_TEST_USER_IDS = env.json(
     'SUBSCRIPTION_BACKUP_TEST_USER_IDS', default=[])
+# Full rollout is a state of its own, not an allowlist that happens to contain
+# every id there is today: such a list has to be rewritten for every new
+# customer, and the first time it is not, that customer quietly receives a
+# smaller subscription than the person beside them.
+SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED = env.bool(
+    'SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED', default=False)
 # Bearer URLs may be supplied only through an owner-readable JSON mount in the
 # web service. A missing, malformed, symlinked, or overly-permissive file fails
 # open without ever logging its contents.

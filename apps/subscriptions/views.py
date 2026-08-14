@@ -535,9 +535,19 @@ def _endpoint(client_vpn_host: str, default_port: int) -> tuple[str, int]:
 
 
 def _is_backup_test_user(user_vpn_id: int) -> bool:
+    """Whether this subscription receives third-party endpoints.
+
+    Full rollout is its own state rather than an allowlist holding every id
+    there happens to be today.  A list has to be rewritten for each new
+    customer, and the day it is not, that customer silently gets a smaller
+    subscription than the one beside them — a rollout nobody notices is
+    incomplete is worse than one that never started.
+    """
     from django.conf import settings
     if not getattr(settings, 'SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED', False):
         return False
+    if getattr(settings, 'SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED', False):
+        return True
     test_ids = getattr(settings, 'SUBSCRIPTION_BACKUP_TEST_USER_IDS', [])
     # Empty or malformed allowlists during rollout = no one receives backups.
     return isinstance(test_ids, list) and bool(test_ids) and user_vpn_id in test_ids

@@ -258,6 +258,33 @@ class BackupGateTests(SimpleTestCase):
 
     @override_settings(
         SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_TEST_USER_IDS=[],
+        SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED=True,
+    )
+    def test_full_rollout_reaches_an_id_no_allowlist_ever_named(self):
+        # The point of the state: a customer created after the rollout is not
+        # waiting on somebody to remember to extend a list.
+        self.assertTrue(_is_backup_test_user(1))
+        self.assertTrue(_is_backup_test_user(999999))
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=False,
+        SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED=True,
+    )
+    def test_full_rollout_still_obeys_the_master_gate(self):
+        self.assertFalse(_is_backup_test_user(1))
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_TEST_USER_IDS=[5],
+        SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED=False,
+    )
+    def test_full_rollout_off_leaves_the_allowlist_in_charge(self):
+        self.assertTrue(_is_backup_test_user(5))
+        self.assertFalse(_is_backup_test_user(6))
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
         SUBSCRIPTION_BACKUP_TEST_USER_IDS=[5, 9],
     )
     def test_allowlist_includes_only_listed(self):
