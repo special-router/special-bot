@@ -280,6 +280,10 @@ LIMIT_IP = env.int('LIMIT_IP', 2)
 # here (xray sees only the SNI stream proxy and keeps no access log), so the
 # subscription endpoint counts distinct client ``x-hwid`` values instead.
 SUBSCRIPTION_DEVICE_LIMIT = env.int('SUBSCRIPTION_DEVICE_LIMIT', 2)
+# Места, входящие в тариф. Каждое сверх них умножает суточную плату, поэтому
+# поднять это значение — значит задним числом раздать уже оплаченные места
+# бесплатно: ежедневное списание читает настройку на каждом прогоне.
+SUBSCRIPTION_FREE_DEVICE_SLOTS = env.int('SUBSCRIPTION_FREE_DEVICE_SLOTS', 2)
 # Clients that send no usable identifier are served until the fleet has caught
 # up; enabling strict mode refuses them like an unknown device.
 SUBSCRIPTION_HWID_STRICT = env.bool('SUBSCRIPTION_HWID_STRICT', False)
