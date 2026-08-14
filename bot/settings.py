@@ -347,6 +347,13 @@ ADMIN_BASE_URL = env.str('ADMIN_BASE_URL', 'https://sub.special-wifi.ru/admin/')
 # умолчанию; включать только после проверки на живом боте.
 TELEGRAM_BUTTON_ICONS_ENABLED = env.bool('TELEGRAM_BUTTON_ICONS_ENABLED', False)
 
+# Operators who may open the in-bot admin panel. Empty or malformed means
+# nobody is admin, never everybody — the same fail-safe an empty rollout
+# allowlist uses elsewhere in this codebase
+# (`apps.subscriptions.views._is_backup_test_user`). `/admin` is deliberately
+# not in the bot's public command list; see `post_init_handler`.
+BOT_ADMIN_TELEGRAM_IDS = env.list('BOT_ADMIN_TELEGRAM_IDS', cast=int, default=[])
+
 # Built-in 3x-ui subscriptions are staged only. Legacy VLESS issuance remains
 # the production path until DNS/TLS and an explicit migration rollout complete.
 SUBSCRIPTION_CONNECTOR_ENABLED = env.bool('SUBSCRIPTION_CONNECTOR_ENABLED', False)
