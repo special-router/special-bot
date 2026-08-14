@@ -37,6 +37,25 @@ ALLOWED_HOSTS = env.list(
     default=['localhost', '127.0.0.1', '0.0.0.0', 'sub.special-wifi.ru'],
 )
 
+# TLS терминирует nginx на другом хосте, поэтому до gunicorn запрос доезжает
+# обычным HTTP, а браузер всё равно шлёт `Origin: https://<хост>`.
+#
+# 403 на входе в админку снимает CSRF_TRUSTED_ORIGINS: источник с явной схемой
+# не совпадает ни с чем доверенным, и проверка падает раньше логина и пароля.
+# Хост в ALLOWED_HOSTS этого не заменяет — Django сверяет источник целиком.
+#
+# SECURE_PROXY_SSL_HEADER 403 не лечит, он про другое: без него
+# `request.is_secure()` врёт, что соединения защищённого нет, и всё, что от
+# него зависит — secure-куки, редиректы, проверка referer, — считает прод
+# незашифрованным. Доверять заголовку можно по двум проверяемым причинам, и
+# обе надо перепроверить при смене топологии: nginx ставит
+# `X-Forwarded-Proto https` литералом на каждом проксируемом location, затирая
+# присланный клиентом; и до gunicorn не достучаться мимо nginx — правило
+# DOCKER-USER на BOT пропускает 8001 только с адреса NL и localhost, остальное
+# DROP. Откроется порт наружу — заголовок станет подделываемым.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=['https://sub.special-wifi.ru'])
+
 
 # Application definition
 

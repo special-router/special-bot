@@ -21,6 +21,7 @@ Shipped-but-inert features are listed together in
 | `SECRET_KEY` | str | `django-insecure-local-development-only` | ? | Django signing key. The default is a development placeholder and must never run in production. |
 | `DEBUG` | bool | `False` | `false` | Django debug mode. |
 | `ALLOWED_HOSTS` | list | `localhost,127.0.0.1,0.0.0.0,sub.special-wifi.ru` | ? | Host header allowlist. The subscription hostname is in the default because NL proxies to BOT with that `Host`. |
+| `CSRF_TRUSTED_ORIGINS` | list | `https://sub.special-wifi.ru` | default | Origins allowed to POST. **Without the entry, the admin login answers 403 CSRF** — the browser sends `Origin: https://…` and nothing matches. `ALLOWED_HOSTS` does not cover it: Django compares the whole origin, scheme included. Add a new admin hostname here at the same time as there. |
 | `DATABASE_URL` | db url | `postgres://vpnbot:vpnbot@:5432/vpnbot` | ? | Tests override this with `sqlite:///:memory:`. |
 | `TIME_ZONE` | str | `UTC` | ? | Read only to set `CELERY_TIMEZONE`; Django's own `TIME_ZONE` is hardcoded `UTC`. |
 | `DJANGO_LOG_LEVEL` | str | `INFO` | ? | Root logger level. `httpx`, `httpcore`, `py3xui` and `urllib3` stay pinned at `WARNING` regardless — they log the secret panel path at `INFO`. |
