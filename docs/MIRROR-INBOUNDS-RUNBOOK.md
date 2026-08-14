@@ -258,11 +258,48 @@ Neither is a reason never to widen it — they are the two things to have an ans
 for first. Per-user upstream credentials, or chaining the provider through our
 own egress, are the two shapes that remove them.
 
+## 8. Telling the customer what they bought
+
+A rollout that nobody can see is half a rollout. For a day after every
+subscription started carrying nine countries, the bot still showed one word —
+`Server.name`, which names the host the panel runs on and had been reading as a
+country by accident since there was only ever one. A customer decided whether to
+pay while looking at it.
+
+`apps/subscriptions/catalog.py` answers "which countries does this subscription
+contain" **by reading back the rendered lines**, not by composing the list a
+second time from the same document. That is the whole design decision, and the
+reason is drift: a second composition is a second copy of the selection rules —
+the per-region cap, the liveness verdicts, the excluded hosts, the numbering —
+and the day a provider drops a country, the copy keeps promising it. Nothing
+here may name a country in source.
+
+Three consequences worth knowing before changing it:
+
+- **The catalog is a decoration; the subscription is not.** Any failure returns
+  an empty catalog and the screen simply says nothing. It never raises, because
+  a bot screen that 500s over a country list is worse than one that omits it.
+- **The bot is a different process from the one serving subscriptions**, so it
+  has its own five-minute cache and warms it in `post_init_handler`. Measured on
+  BOT: 241 ms cold, 1.1 ms warm. The cold path is a provider fetch under the
+  ordinary eight-second deadline, so a provider that hangs costs one screen a
+  delay, not the subscription.
+- **A subscription that does not exist yet has no id**, and the rollout gate
+  answers about ids. While the rollout is an allowlist the storefront promises
+  our own lines only; it starts naming mirrored countries at exactly the moment
+  `SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED` makes them true for a new customer.
+
+`Server.name` is now shown nowhere a customer looks — not on the subscription
+entry, not on the delete button. Restore it only alongside a second server whose
+name is its own exit country.
+
 ## Reference
 
 - Renderer and parsers: `apps/subscriptions/views.py` — `_fetch_upstream_payload`,
   `_structured_upstream_links`, `_singbox_endpoints`, `_v2ray_endpoints`,
   `_normalized_mirror_endpoint`, `_build_mirror_vless`, `_is_identity_placeholder`
+- Customer-facing catalog: `apps/subscriptions/catalog.py`,
+  `apps/telegram_bot/catalog.py`
 - Probe: `ops/scripts/probe_mirror_tunnel.py`
 - Settings: `SUBSCRIPTION_BACKUP_*` in [`FLAGS.md`](FLAGS.md)
 - Commits: `3507934` client identity, `7c8676a` optional short id, `62ca6e0`
