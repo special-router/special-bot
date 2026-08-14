@@ -64,7 +64,7 @@ async def build_devices_screen(user: TelegramUser, *, notice: str | None = None)
     paid = max(0, limit - free)
 
     lines = [
-        f'{bold(f"{index}.")} {html.escape(_device_name(device))}'
+        f'{bold(f"{index}.")} {html.escape(device_display_name(device))}'
         for index, device in enumerate(devices, start=1)
     ]
     price = slot_price(user_vpn)
@@ -79,7 +79,7 @@ async def build_devices_screen(user: TelegramUser, *, notice: str | None = None)
     )
 
 
-def _device_name(device) -> str:
+def device_display_name(device) -> str:
     return device.device_model or device.device_os or UNNAMED_DEVICE
 
 
