@@ -55,7 +55,7 @@ def _subscription_lines(user_vpn: UserVPN, devices: list) -> list[str]:
         f'мест {limit} (платных {paid}), занято {len(devices)}',
     ]
     lines.extend(
-        f'&nbsp;&nbsp;{index}. {html.escape(device_display_name(device))}'
+        f'  {index}. {html.escape(device_display_name(device))}'
         for index, device in enumerate(devices, start=1)
     )
     return lines
