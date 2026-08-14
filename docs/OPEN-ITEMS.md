@@ -410,15 +410,32 @@ hit every region at once. One dead country would not be.
 **The fix is a liveness signal in selection**, not a bigger exclusion list: probe
 candidates out of band, cache the verdict, and prefer a host known to answer.
 
-**Built and inert.** `probe_mirror_liveness` dials every endpoint a configured
-source offers and writes `MirrorEndpointLiveness` rows; selection reads them
-behind `SUBSCRIPTION_BACKUP_LIVENESS_ENABLED`, which ships `False`. What remains
-before it can be turned on: a scheduled run on BOT — it is a management command
-and not a Celery task on purpose, because the workers run `--pool=solo` — and
-one manual run confirming that the container has egress and an executable
-`xray`. A run where nothing answered writes no verdict at all, so a broken
-prober cannot empty a customer's list, but it also means an unscheduled flag
-does nothing.
+**Live since 2026-08-14.** `probe_mirror_liveness` dials every endpoint a
+configured source offers and writes `MirrorEndpointLiveness` rows; selection
+reads them behind `SUBSCRIPTION_BACKUP_LIVENESS_ENABLED`, now `true` on BOT.
+
+The first real run reproduced, independently, the two dead nodes an operator had
+found by hand — `213.171.9.195` and `78.159.245.59` — out of 15 probed. It
+counts a node alive only when **bytes come back through the tunnel**: the decoys
+accept the TCP connection and reset the Reality handshake, so a port check would
+call all nine of them healthy.
+
+**Scheduled by `special-mirror-liveness.timer` on BOT**, every 30 minutes,
+`Persistent=true`, running the command through `docker exec`. It is a management
+command and not a Celery task on purpose — the workers are `--pool=solo` and a
+60-second dial would block the queue, and the `monitoring` worker's own checks
+run every minute. Verified by starting the service by hand:
+`Result=success`, 15 verdicts written.
+
+**The interval and the expiry are a pair.** Verdicts stop counting after
+`SUBSCRIPTION_BACKUP_LIVENESS_MAX_AGE_SECONDS` (3600), so a 30-minute cadence
+survives one missed run and goes blind after two — deliberately, because falling
+back to the old blind selection is safer than trusting a measurement of unknown
+age. That fallback is not theoretical: verdicts written at 23:12 UTC had expired
+by the next morning, and the renderer duly served a node the prober had marked
+dead. Nothing was broken; the schedule simply did not exist yet. **If a country
+you expect is missing, or a dead one appears, read `checked_at` before reading
+the code.**
 
 ## Every Russian address in the provider document is an exit, not a bridge
 
