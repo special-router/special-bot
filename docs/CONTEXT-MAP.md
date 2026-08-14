@@ -363,6 +363,69 @@ an existing entry: balance is the sum of every row.
 
 ---
 
+## In-bot admin panel
+
+**Files**
+
+- `apps/telegram_bot/admin_auth.py` — `is_bot_admin`, the `admin_only` decorator.
+- `apps/telegram_bot/handlers/admin/` — `menu.py`, `client.py` (read-only card),
+  `monitoring.py` (dashboard), `broadcast.py`, `money.py` (balance credit, VPN
+  issue/disable), `common.py` (pending free-text input state and its filter),
+  `text_input.py` (routes a reply to the flow awaiting it).
+- `apps/telegram_bot/broadcast_ops.py` — the snapshot/digest/queue machinery
+  this shares with `apps/telegram_bot/admin.py`'s `BroadcastAdmin`.
+- Tests: `test_admin_auth.py`, `test_admin_client.py`, `test_admin_monitoring.py`,
+  `test_admin_broadcast.py`, `test_admin_money.py`, `test_admin_text_input.py`,
+  `test_broadcast_ops.py`.
+
+**How it behaves today**
+
+A companion to Django admin for routine operator work, not a replacement:
+tariff/server editing, raw transaction history edits and `UserVPN.enabled` as
+a raw field stay Django-admin-only. `BOT_ADMIN_TELEGRAM_IDS` gates every entry
+point; a non-admin gets zero response from `/admin` or any `admin_*`
+callback, checked fresh on each one rather than only at the menu. `/admin`
+works when typed but is not in the bot's public command list.
+
+Every other bot flow is button-driven; this is the only place that reads free
+text, tracked per-admin in `context.user_data` (in-process, no persistence
+configured) rather than a model — losing an in-progress prompt on a bot
+restart costs one more tap. `ADMIN_PENDING_INPUT` matches a message only from
+an admin who has an active prompt, so it cannot intercept an ordinary
+customer's message even in the rare case where an admin is also mid support
+ticket.
+
+Broadcasts sent from here have no Django session, so `Broadcast.created_by`
+(NOT NULL) is a dedicated, inactive service account
+(`telegram_bot_admin`) rather than a schema change — Django admin's own list
+shows a bot-sent broadcast distinctly from an operator-sent one. Money and
+provisioning actions (`money.py`) log the acting admin's `telegram_id`;
+`Transaction` has no operator-attribution field to write to instead.
+
+**Flags** `BOT_ADMIN_TELEGRAM_IDS`.
+
+**Validation**
+
+```bash
+env DJANGO_SETTINGS_MODULE=bot.settings DATABASE_URL='sqlite:///:memory:' \
+  CELERY_ALWAYS_EAGER=true <venv>/python -m pytest apps/telegram_bot/test_admin_*.py apps/telegram_bot/test_broadcast_ops.py -q
+```
+
+**Risks**
+
+- `MonitorState.details` is rendered through a per-layer allowlist of known-safe
+  keys, never dumped — read `apps/monitoring/probes.py` before adding a field
+  to the allowlist, and never add one without checking it cannot carry a
+  bearer URL or client UUID.
+- Every money/provisioning execute handler re-verifies state immediately
+  before acting (target still exists, subscription still enabled/disabled,
+  server still exists) rather than trusting the confirm screen's snapshot.
+- VPN issue/disable call the same service functions the customer-facing
+  buttons use (`add_vpn_to_user`, `disable_vpn_user_from_server`) — never
+  write `UserVPN.enabled` directly.
+
+---
+
 ## Django admin and its static files
 
 **Files** `apps/users/admin.py` (the customer page), `apps/vpn/admin.py`,

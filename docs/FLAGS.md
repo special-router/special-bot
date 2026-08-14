@@ -36,6 +36,7 @@ Shipped-but-inert features are listed together in
 | `SUPPORT_CHAT_ID` | int | `0` | `0` | Operators' forum supergroup. **Zero registers no support handler at all** — the menu button stays a plain link and the bot does not read private text messages. Enabling requires two manual Telegram steps first; see [`OPEN-ITEMS.md`](OPEN-ITEMS.md#support-tickets). |
 | `ADMIN_BASE_URL` | str | `https://sub.special-wifi.ru/admin/` | ? | Where the «Карточка клиента» button in a support topic points. Only the scheme and host are used: the path comes from `reverse('admin:users_telegramuser_change')`, so moving the admin off `/admin/` does not break the button. Empty removes the button entirely — Bot API rejects a whole keyboard over one invalid URL, and that would take the close button with it. |
 | `TELEGRAM_BUTTON_ICONS_ENABLED` | bool | `False` | `false` | Premium `icon_custom_emoji_id` on inline buttons. Bot API accepts the field only for a bot whose owner holds Telegram Premium; without it the whole keyboard is rejected, so off is the only safe default. |
+| `BOT_ADMIN_TELEGRAM_IDS` | list of int | `[]` | ? | Telegram ids allowed to open the in-bot admin panel (`/admin`, not in the public command list). Empty or malformed means **nobody** is admin, never everybody — the same fail-safe `SUBSCRIPTION_BACKUP_TEST_USER_IDS` uses. A non-admin gets zero response from `/admin` or any `admin_*` callback, indistinguishable from an unrecognized command. |
 
 ## Redis and Celery
 
