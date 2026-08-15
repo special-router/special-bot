@@ -179,27 +179,26 @@ class CallbackAnswerTests(TestCase):
         update.callback_query.answer.assert_awaited_once_with(text='Подписка уже добавляется.')
 
 
-@override_settings(YOUMONEY_TOKEN='')
+@override_settings(YOUMONEY_TOKEN='', CRYPTOBOT_TOKEN='')
 class PaymentsWithoutAProviderTests(TestCase):
     """Пустой `YOUMONEY_TOKEN` — то состояние, в котором бот стоял в проде."""
 
     def setUp(self):
         self.context = _context()
 
-    async def _amount_buttons(self):
+    async def _period_buttons(self):
         user = await TelegramUser.objects.acreate(telegram_id=CLIENT_ID, username='client')
         keyboard = await get_reply_markup_balance(user)
         pressed = [key.callback_data for row in keyboard.inline_keyboard for key in row if key.callback_data]
-        # Промо — начисление, а не платёж: провайдера оно не касается и от
-        # токена не зависит.
-        return [data for data in pressed if data.startswith('top_up_balance_') and data != 'top_up_balance_promo']
+        # Период ведёт к экрану метода; промо — отдельная кнопка и сюда не входит.
+        return [data for data in pressed if data.startswith('topup_period:')]
 
     async def test_amount_buttons_are_absent_without_a_provider(self):
-        self.assertEqual(await self._amount_buttons(), [])
+        self.assertEqual(await self._period_buttons(), [])
 
     @override_settings(YOUMONEY_TOKEN=PROVIDER_TOKEN)
     async def test_amount_buttons_return_once_a_provider_is_configured(self):
-        self.assertEqual(len(await self._amount_buttons()), 5)
+        self.assertEqual(len(await self._period_buttons()), 5)
 
     async def test_the_screen_says_why_the_amounts_are_missing(self):
         update = _callback_update('show_balance')

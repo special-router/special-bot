@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from django.test import TestCase, override_settings
 
 from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
-from apps.payments.cryptobot_client import create_usdt_invoice, verify_webhook_signature
+from apps.payments.cryptobot_client import create_usdt_invoice, get_usdt_rate, verify_webhook_signature
 from apps.payments.models import CryptoBotInvoice, Transaction
 from apps.users.models import TelegramUser
 
@@ -117,6 +117,91 @@ class CryptobotWebhookViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(Transaction.objects.filter(user=self.user).count(), 0)
+
+
+class GetUsdtRateTests(TestCase):
+    def _make_client(self, response):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=response)
+        return mock_client
+
+    async def test_returns_decimal_on_success(self):
+        payload = {
+            'ok': True,
+            'result': [
+                {'source': 'BTC', 'target': 'RUB', 'rate': '5000000', 'is_valid': True, 'is_crypto': True},
+                {'source': 'USDT', 'target': 'RUB', 'rate': '90.5', 'is_valid': True, 'is_crypto': True},
+            ],
+        }
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json = MagicMock(return_value=payload)
+
+        with patch('apps.payments.cryptobot_client.httpx.AsyncClient', return_value=self._make_client(mock_resp)):
+            result = await get_usdt_rate('test:token')
+
+        self.assertEqual(result, Decimal('90.5'))
+
+    async def test_returns_none_on_http_error(self):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.side_effect = Exception('connection error')
+
+        with patch('apps.payments.cryptobot_client.httpx.AsyncClient', return_value=self._make_client(mock_resp)):
+            with self.assertLogs('apps.payments.cryptobot_client', level='WARNING') as log:
+                result = await get_usdt_rate('test:token')
+
+        self.assertIsNone(result)
+        self.assertTrue(any('get_exchange_rates failed' in line for line in log.output))
+
+    async def test_returns_none_when_ok_is_false(self):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json = MagicMock(return_value={'ok': False, 'error': {'code': 'RATE_LIMIT'}})
+
+        with patch('apps.payments.cryptobot_client.httpx.AsyncClient', return_value=self._make_client(mock_resp)):
+            with self.assertLogs('apps.payments.cryptobot_client', level='WARNING') as log:
+                result = await get_usdt_rate('test:token')
+
+        self.assertIsNone(result)
+        self.assertTrue(any('not ok' in line for line in log.output))
+
+    async def test_returns_none_when_entry_not_found(self):
+        payload = {
+            'ok': True,
+            'result': [
+                {'source': 'BTC', 'target': 'RUB', 'rate': '5000000', 'is_valid': True},
+            ],
+        }
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json = MagicMock(return_value=payload)
+
+        with patch('apps.payments.cryptobot_client.httpx.AsyncClient', return_value=self._make_client(mock_resp)):
+            with self.assertLogs('apps.payments.cryptobot_client', level='WARNING') as log:
+                result = await get_usdt_rate('test:token')
+
+        self.assertIsNone(result)
+        self.assertTrue(any('not found' in line for line in log.output))
+
+    async def test_returns_none_when_entry_not_valid(self):
+        payload = {
+            'ok': True,
+            'result': [
+                {'source': 'USDT', 'target': 'RUB', 'rate': '90.5', 'is_valid': False, 'is_crypto': True},
+            ],
+        }
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json = MagicMock(return_value=payload)
+
+        with patch('apps.payments.cryptobot_client.httpx.AsyncClient', return_value=self._make_client(mock_resp)):
+            with self.assertLogs('apps.payments.cryptobot_client', level='WARNING') as log:
+                result = await get_usdt_rate('test:token')
+
+        self.assertIsNone(result)
+        self.assertTrue(any('not found' in line for line in log.output))
 
 
 class CreateUsdtInvoiceTests(TestCase):

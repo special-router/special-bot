@@ -42,7 +42,7 @@ from apps.telegram_bot.handlers.support import (
     support_open,
     support_operator_reply,
 )
-from apps.telegram_bot.handlers.top_up_cryptobot import crypto_amount_selected, show_crypto_topup
+from apps.telegram_bot.handlers.top_up_cryptobot import topup_card, topup_crypto_pay, topup_period_selected
 from apps.telegram_bot.handlers.top_up_balance import (
     pre_checkout_callback,
     successful_payment_callback,
@@ -149,10 +149,11 @@ def register_handlers():
         )
         telegram_bot_app.add_handler(MessageHandler(filters.ChatType.PRIVATE & SUPPORT_MESSAGE_FILTER, support_message))
 
+    telegram_bot_app.add_handler(CallbackQueryHandler(topup_period_selected, pattern=r'^topup_period:\d+$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(topup_card, pattern=r'^topup_card:\d+$'))
     if settings.CRYPTOBOT_TOKEN:
-        telegram_bot_app.add_handler(CallbackQueryHandler(show_crypto_topup, pattern=r'^crypto_topup$'))
         telegram_bot_app.add_handler(
-            CallbackQueryHandler(crypto_amount_selected, pattern=r'^crypto_topup:\d+$')
+            CallbackQueryHandler(topup_crypto_pay, pattern=r'^topup_crypto_pay:\d+:\d+$')
         )
 
     telegram_bot_app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))

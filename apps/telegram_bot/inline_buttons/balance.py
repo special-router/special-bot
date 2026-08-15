@@ -10,25 +10,25 @@ from apps.users.models import TelegramUser
 
 
 async def get_reply_markup_balance(user: TelegramUser) -> InlineKeyboardMarkup:
-    """Сроки пополнения по два в ряд: пять строк подряд читаются как список цен.
+    """Периоды пополнения по два в ряд: выбор периода ведёт к экрану метода оплаты.
 
-    Без платёжного провайдера сроки не рисуются вовсе — нажать их можно, а
-    оплатить нельзя. Промо-начисление провайдера не касается и остаётся.
+    Без платёжного провайдера и без CryptoBot периоды не рисуются вовсе.
+    Промо-начисление провайдера не касается и остаётся.
     """
     buttons: list[list[InlineKeyboardButton]] = []
 
-    if payments_enabled():
+    if payments_enabled() or getattr(settings, 'CRYPTOBOT_TOKEN', ''):
         buttons += [
             [
-                button('1 месяц', 'top_up_balance_one_month'),
-                button('2 месяца +5%', 'top_up_balance_two_month'),
+                button('1 месяц', 'topup_period:1'),
+                button('2 месяца +5%', 'topup_period:2'),
             ],
             [
-                button('3 месяца +10%', 'top_up_balance_three_month'),
-                button('Полгода +20%', 'top_up_balance_six_month'),
+                button('3 месяца +10%', 'topup_period:3'),
+                button('Полгода +20%', 'topup_period:6'),
             ],
             [
-                button('Год +30%', 'top_up_balance_year'),
+                button('Год +30%', 'topup_period:12'),
             ],
         ]
 
@@ -42,9 +42,6 @@ async def get_reply_markup_balance(user: TelegramUser) -> InlineKeyboardMarkup:
         .aexists()
     ):
         buttons.insert(0, [button('Бесплатно 7 дней', 'top_up_balance_promo', icon=icons.CELEBRATION)])
-
-    if getattr(settings, 'CRYPTOBOT_TOKEN', ''):
-        buttons.append([button('Криптовалютой (USDT)', 'crypto_topup')])
 
     buttons.append([back_button()])
 

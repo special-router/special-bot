@@ -45,12 +45,8 @@ EXPECTED_CALLBACK_DATA = frozenset(
         'show_keys',
         'show_devices',
         'unbind_device:*',
-        'top_up_balance_one_month',
         'top_up_balance_promo',
-        'top_up_balance_six_month',
-        'top_up_balance_three_month',
-        'top_up_balance_two_month',
-        'top_up_balance_year',
+        'topup_period:*',
     }
 )
 

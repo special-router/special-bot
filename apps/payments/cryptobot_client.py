@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import logging
+from decimal import Decimal
 
 import httpx
 
@@ -52,6 +53,45 @@ async def create_usdt_invoice(
         return None
 
     return data.get('result')
+
+
+async def get_usdt_rate(token: str) -> Decimal | None:
+    """Fetch current RUB price of 1 USDT from CryptoBot.
+
+    Returns None on any error — caller must handle gracefully.
+    Never logs the token.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f'{_CRYPTOBOT_BASE_URL}getExchangeRates',
+                headers={'Crypto-Pay-API-Token': token},
+                timeout=10,
+            )
+            response.raise_for_status()
+            data = response.json()
+    except Exception:
+        logger.warning('cryptobot get_exchange_rates failed', exc_info=True)
+        return None
+
+    if not data.get('ok'):
+        logger.warning('cryptobot get_exchange_rates not ok error=%s', data.get('error'))
+        return None
+
+    for entry in data.get('result', []):
+        if (
+            entry.get('source') == 'USDT'
+            and entry.get('target') == 'RUB'
+            and entry.get('is_valid')
+        ):
+            try:
+                return Decimal(entry['rate'])
+            except Exception:
+                logger.warning('cryptobot get_exchange_rates bad rate value')
+                return None
+
+    logger.warning('cryptobot get_exchange_rates: USDT/RUB entry not found')
+    return None
 
 
 def verify_webhook_signature(token: str, body: bytes, signature: str) -> bool:
