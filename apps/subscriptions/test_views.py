@@ -571,6 +571,114 @@ class RetiredStatusEntryTests(SimpleTestCase):
         self.assertLessEqual(abs(expire - int(time.time()) - 10 * 86400), 5)
 
 
+@override_settings(
+    SUBSCRIPTION_BASE_URL='https://direct.example/sub',
+    SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=False,
+    SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=False,
+    SUBSCRIPTION_DIRECT_ADVERTISED_PORT=0,
+    SUBSCRIPTION_STATUS_ENTRY_ENABLED=True,
+    SUBSCRIPTION_XRAY_JSON_ENABLED=True,
+)
+@patch('apps.subscriptions.views._get_params', return_value={
+    'public_key': 'synthetic-public-key', 'server_name': 'sni.example',
+    'short_ids': ['synthetic-short-id'], 'port': 8443, 'network': 'tcp',
+})
+class XrayJsonSubscriptionTests(SimpleTestCase):
+    """The raw Xray JSON branch served to Happ/v2rayNG User-Agents."""
+
+    def _response(self, user_agent):
+        subscription = SimpleNamespace(
+            id=1, enabled=True,
+            server=SimpleNamespace(id=1, inbound_id=5, client_vpn_host='relay.example:443',
+                                   tariff=SimpleNamespace(price='7.00')),
+            user_id=1, vpn_uuid='synthetic-local-id',
+        )
+        with patch('apps.subscriptions.views.UserVPN.objects') as user_vpn_objects, \
+                patch('apps.subscriptions.views.TelegramUser.objects') as telegram_user_objects:
+            user_vpn_objects.select_related.return_value.get.return_value = subscription
+            telegram_user_objects.annotate_balance.return_value.filter.return_value.first.return_value = (
+                SimpleNamespace(balance='70.00'))
+            request = RequestFactory().get('/sub/synthetic', HTTP_USER_AGENT=user_agent)
+            return views.subscription_proxy(request, 'synthetic')
+
+    def test_happ_user_agent_gets_xray_json_with_balancer_and_ru_direct_rules(self, _params):
+        response = self._response('Happ/2.0')
+
+        self.assertEqual(response['Content-Type'], 'application/json')
+        document = json.loads(response.content)
+        self.assertEqual(document['routing']['balancers'][0]['tag'], 'proxy-balancer')
+        tags = {outbound['tag'] for outbound in document['outbounds']}
+        self.assertEqual(tags, {'proxy-nl-direct', 'proxy-ru-relay', 'direct', 'block'})
+
+        rule_index = {}
+        for index, rule in enumerate(document['routing']['rules']):
+            if rule.get('domain') == ['regexp:\\.ru$']:
+                rule_index['ru_regexp'] = index
+            if rule.get('ip') == ['geoip:ru']:
+                rule_index['ru_geoip'] = index
+            if rule.get('balancerTag') == 'proxy-balancer':
+                rule_index['balancer_fallback'] = index
+        self.assertLess(rule_index['ru_regexp'], rule_index['balancer_fallback'])
+        self.assertLess(rule_index['ru_geoip'], rule_index['balancer_fallback'])
+
+    def test_v2rayng_user_agent_gets_the_same_xray_json_format(self, _params):
+        response = self._response('V2rayNG/1.9.9')
+
+        self.assertEqual(response['Content-Type'], 'application/json')
+        document = json.loads(response.content)
+        self.assertIn('burstObservatory', document)
+        self.assertEqual(document['burstObservatory']['subjectSelector'], ['proxy'])
+
+    def test_unrecognized_user_agent_keeps_the_base64_contract(self, _params):
+        response = self._response('curl/8.0')
+
+        self.assertEqual(response['Content-Type'], 'text/plain')
+        base64.b64decode(response.content)  # does not raise -- still the legacy body
+
+    @override_settings(SUBSCRIPTION_XRAY_JSON_ENABLED=False)
+    def test_flag_off_beats_a_matching_user_agent(self, _params):
+        response = self._response('Happ/2.0')
+
+        self.assertEqual(response['Content-Type'], 'text/plain')
+        base64.b64decode(response.content)  # does not raise -- still the legacy body
+
+    def test_headers_are_identical_between_json_and_base64_branches(self, _params):
+        json_response = self._response('Happ/2.0')
+        with override_settings(SUBSCRIPTION_XRAY_JSON_ENABLED=False):
+            base64_response = self._response('Happ/2.0')
+
+        for header in ('subscription-userinfo', 'profile-title', 'announce',
+                       'support-url', 'profile-web-page-url', 'Profile-Update-Interval'):
+            self.assertEqual(json_response.get(header), base64_response.get(header))
+
+
+class XrayJsonDeviceGateTests(SimpleTestCase):
+    """Device binding must gate the JSON branch exactly like the base64 one."""
+
+    @override_settings(
+        SUBSCRIPTION_BASE_URL='https://direct.example/sub',
+        SUBSCRIPTION_XRAY_JSON_ENABLED=True,
+    )
+    @patch('apps.subscriptions.views._device_gate',
+          return_value=(False, {'x-hwid-not-supported': 'true'}))
+    @patch('apps.subscriptions.views._get_params')
+    @patch('apps.subscriptions.views.UserVPN.objects')
+    def test_a_refused_device_gets_404_even_with_a_matching_user_agent(
+        self, user_vpn_objects, get_params, device_gate,
+    ):
+        user_vpn_objects.select_related.return_value.get.return_value = SimpleNamespace(
+            id=1, enabled=True,
+            server=SimpleNamespace(id=1, inbound_id=5, client_vpn_host='relay.example:443', tariff=None),
+            user_id=1, vpn_uuid='synthetic-local-id',
+        )
+
+        response = views.subscription_proxy(
+            RequestFactory().get('/sub/synthetic', HTTP_USER_AGENT='Happ/2.0'), 'synthetic')
+
+        self.assertEqual(response.status_code, 404)
+        get_params.assert_not_called()
+
+
 class _FakeTLSSocket:
     def __init__(self, response, peer='8.8.8.8'):
         self.response = response

@@ -19,6 +19,7 @@ import hashlib
 import ipaddress
 import json
 import logging
+import re
 import socket
 import ssl
 import subprocess
@@ -325,17 +326,10 @@ def _xhttp_link(uuid: str, host: str) -> str | None:
     неработающий транспорт, читает её как «сервис сломан», и это хуже, чем на
     одну строку меньше.
     """
-    from django.conf import settings
-    if not getattr(settings, 'SUBSCRIPTION_XHTTP_ENABLED', False):
+    config = _xhttp_config()
+    if config is None:
         return None
-    path = getattr(settings, 'SUBSCRIPTION_XHTTP_PATH', '')
-    if not isinstance(path, str) or not path.startswith('/') or len(path) > 128:
-        return None
-    if any(character in path for character in ' \r\n\t#?'):
-        return None
-    port = getattr(settings, 'SUBSCRIPTION_XHTTP_PORT', 443)
-    if not isinstance(port, int) or not 1 <= port <= 65535:
-        return None
+    path, port = config
     query = urlencode(
         [
             ('type', 'xhttp'),
@@ -350,6 +344,27 @@ def _xhttp_link(uuid: str, host: str) -> str | None:
     )
     remark = f'{_endpoint_label(_OWN_REGION_CODE)} {_ALT_TRANSPORT_LABEL_SUFFIX}'
     return f'vless://{uuid}@{host}:{port}?{query}#{quote(remark)}'
+
+
+def _xhttp_config() -> tuple[str, int] | None:
+    """Validated (path, port) for the XHTTP transport, or None when unusable.
+
+    Shared between the base64 line (``_xhttp_link``) and the Xray JSON
+    outbound so the two branches can never disagree on what makes XHTTP safe
+    to advertise.
+    """
+    from django.conf import settings
+    if not getattr(settings, 'SUBSCRIPTION_XHTTP_ENABLED', False):
+        return None
+    path = getattr(settings, 'SUBSCRIPTION_XHTTP_PATH', '')
+    if not isinstance(path, str) or not path.startswith('/') or len(path) > 128:
+        return None
+    if any(character in path for character in ' \r\n\t#?'):
+        return None
+    port = getattr(settings, 'SUBSCRIPTION_XHTTP_PORT', 443)
+    if not isinstance(port, int) or not 1 <= port <= 65535:
+        return None
+    return path, port
 
 
 def _build_vless(uuid: str, host: str, port: int, remark: str, params: dict, flow: str = '',
@@ -376,6 +391,155 @@ def _build_vless(uuid: str, host: str, port: int, remark: str, params: dict, flo
         query_fields.append(('serviceName', service_name))
     query = urlencode(query_fields, quote_via=quote)
     return f"vless://{uuid}@{host}:{port}?{query}#{quote(remark)}"
+
+
+# v2rayNG's own UA is documented by its maintainers (`V2rayNG/<version>`).
+# Happ has no official UA documentation; this substring match is a working
+# hypothesis from live behaviour observed on a third-party provider (UA
+# starting `Happ/<version>`), not a confirmed Happ spec.
+_V2RAYNG_UA_PATTERN = re.compile(r'v2rayng', re.IGNORECASE)
+_HAPP_UA_PATTERN = re.compile(r'happ', re.IGNORECASE)
+
+
+def _wants_xray_json(user_agent: str) -> bool:
+    """Whether this request should receive a raw Xray JSON body instead of base64.
+
+    The flag decides before the UA does: with it off, no UA -- however it
+    matches -- ever reaches the JSON branch.
+    """
+    from django.conf import settings
+    if not getattr(settings, 'SUBSCRIPTION_XRAY_JSON_ENABLED', False):
+        return False
+    return bool(_V2RAYNG_UA_PATTERN.search(user_agent) or _HAPP_UA_PATTERN.search(user_agent))
+
+
+def _reality_stream_settings(params: dict) -> dict:
+    return {
+        'network': params.get('network', 'tcp'),
+        'security': 'reality',
+        'realitySettings': {
+            'serverName': params['server_name'],
+            'fingerprint': 'chrome',
+            'publicKey': params['public_key'],
+            'shortId': params['short_ids'][0],
+            'spiderX': '/',
+        },
+    }
+
+
+def _xray_json_outbounds(uuid: str, params: dict, direct_host: str, direct_port: int,
+                         relay_host: str, relay_port: int, flow: str) -> list[dict]:
+    """Same three points as the base64 branch, tagged for the ``proxy`` balancer."""
+    outbounds = [{
+        'tag': 'proxy-nl-direct',
+        'protocol': 'vless',
+        'settings': {'vnext': [{
+            'address': direct_host,
+            'port': direct_port,
+            'users': [{'id': uuid, 'encryption': 'none', 'flow': flow}],
+        }]},
+        'streamSettings': _reality_stream_settings(params),
+    }]
+    if relay_host:
+        outbounds.append({
+            'tag': 'proxy-ru-relay',
+            'protocol': 'vless',
+            'settings': {'vnext': [{
+                'address': relay_host,
+                'port': relay_port,
+                'users': [{'id': uuid, 'encryption': 'none', 'flow': ''}],
+            }]},
+            'streamSettings': _reality_stream_settings(params),
+        })
+    xhttp_config = _xhttp_config()
+    if xhttp_config is not None:
+        path, port = xhttp_config
+        outbounds.append({
+            'tag': 'proxy-xhttp',
+            'protocol': 'vless',
+            'settings': {'vnext': [{
+                'address': direct_host,
+                'port': port,
+                'users': [{'id': uuid, 'encryption': 'none', 'flow': ''}],
+            }]},
+            'streamSettings': {
+                'network': 'xhttp',
+                'security': 'tls',
+                'tlsSettings': {'serverName': direct_host, 'fingerprint': 'chrome'},
+                'xhttpSettings': {'path': path, 'host': direct_host, 'mode': 'auto'},
+            },
+        })
+    outbounds.append({'tag': 'direct', 'protocol': 'freedom'})
+    outbounds.append({'tag': 'block', 'protocol': 'blackhole'})
+    return outbounds
+
+
+def _xray_json_routing() -> dict:
+    """Same rule order as ``darkcore-connections-service``'s routing.ts."""
+    return {
+        'domainStrategy': 'IPIfNonMatch',
+        'domainMatcher': 'mph',
+        'balancers': [{
+            'tag': 'proxy-balancer',
+            'selector': ['proxy'],
+            'strategy': {'type': 'leastPing'},
+        }],
+        'rules': [
+            {'type': 'field', 'protocol': ['bittorrent'], 'outboundTag': 'direct'},
+            {'type': 'field', 'ip': ['geoip:private'], 'outboundTag': 'direct'},
+            {'type': 'field', 'domain': ['geosite:private'], 'outboundTag': 'direct'},
+            {'type': 'field', 'ip': ['1.1.1.1/32', '1.0.0.1/32', '8.8.8.8/32', '8.8.4.4/32'],
+             'outboundTag': 'proxy-balancer'},
+            {'type': 'field', 'domain': ['regexp:\\.ru$'], 'outboundTag': 'direct'},
+            {'type': 'field', 'ip': ['geoip:ru'], 'outboundTag': 'direct'},
+            {'type': 'field', 'network': 'tcp,udp', 'balancerTag': 'proxy-balancer'},
+        ],
+    }
+
+
+def _xray_json_burst_observatory() -> dict:
+    return {
+        'subjectSelector': ['proxy'],
+        'pingConfig': {
+            'destination': 'https://www.google.com/generate_204',
+            'interval': '30s',
+            'timeout': '5s',
+            'sampling': 3,
+        },
+    }
+
+
+def _xray_json_ready(params: dict, direct_host: str) -> bool:
+    """Whether every field the document needs is actually present and usable."""
+    return bool(
+        direct_host
+        and isinstance(params.get('public_key'), str) and params.get('public_key')
+        and isinstance(params.get('server_name'), str) and params.get('server_name')
+        and isinstance(params.get('short_ids'), list) and params.get('short_ids')
+        and isinstance(params['short_ids'][0], str) and params['short_ids'][0]
+    )
+
+
+def _build_xray_json(uuid: str, params: dict, direct_host: str, direct_port: int,
+                     relay_host: str, relay_port: int, flow: str) -> dict:
+    """Raw Xray-core config for Happ/v2rayNG: routing.balancers leastPing plus
+    burstObservatory across the same Direct/Relay/XHTTP endpoints the base64
+    branch renders. No ``inbounds`` section -- both clients drive their own VPN
+    interface into the core directly, matching the live document Sosa serves.
+    """
+    return {
+        'log': {'loglevel': 'warning'},
+        'policy': {
+            'levels': {'0': {
+                'handshake': 4, 'connIdle': 300, 'uplinkOnly': 2,
+                'downlinkOnly': 5, 'bufferSize': 10240,
+            }},
+        },
+        'routing': _xray_json_routing(),
+        'burstObservatory': _xray_json_burst_observatory(),
+        'outbounds': _xray_json_outbounds(
+            uuid, params, direct_host, direct_port, relay_host, relay_port, flow),
+    }
 
 
 @csrf_exempt
@@ -421,6 +585,20 @@ def subscription_proxy(request, sub_id: str):
     # makes those links intermittently land on an incompatible same-port
     # listener. Vision may be promoted only by an explicit per-client migration.
     flow = ''
+
+    user_agent = request.META.get('HTTP_USER_AGENT', '')
+    if _wants_xray_json(user_agent) and _xray_json_ready(params, direct_host):
+        try:
+            document = _build_xray_json(
+                uuid_str, params, direct_host, direct_port, relay_host, relay_port, flow)
+            body = json.dumps(document).encode('utf-8')
+        except (KeyError, TypeError, ValueError):
+            body = None
+        if body is not None:
+            resp = HttpResponse(body, content_type='application/json')
+            resp['Profile-Update-Interval'] = '12'
+            _with_headers(resp, _client_ui_headers(days))
+            return _no_cache_response(_with_headers(resp, hwid_headers))
 
     links = []
     # 1) Status entry (non-working) first, matching the happ UX.  It exists only

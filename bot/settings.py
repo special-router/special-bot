@@ -389,6 +389,12 @@ SUBSCRIPTION_XHTTP_ENABLED = env.bool('SUBSCRIPTION_XHTTP_ENABLED', False)
 SUBSCRIPTION_XHTTP_PATH = env.str('SUBSCRIPTION_XHTTP_PATH', default='')
 SUBSCRIPTION_XHTTP_PORT = env.int('SUBSCRIPTION_XHTTP_PORT', 443)
 
+# Raw Xray-core JSON (routing.balancers leastPing + burstObservatory across the
+# same Direct/Relay/XHTTP endpoints) for the two Xray-core mobile clients that
+# accept it as-is, selected by User-Agent. Off by default: every other client,
+# including any UA this deployment has not confirmed, keeps the base64 list.
+SUBSCRIPTION_XRAY_JSON_ENABLED = env.bool('SUBSCRIPTION_XRAY_JSON_ENABLED', False)
+
 # Branding and environment carried in subscription response headers, which is
 # how the client app builds its own interface. Values reach the wire verbatim,
 # so the view drops any that would not survive as a header rather than raising.

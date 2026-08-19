@@ -78,6 +78,7 @@ Shipped-but-inert features are listed together in
 | `SUBSCRIPTION_PROFILE_TITLE` | str | `SPECIAL VPN` | ? | Profile name shown inside the client app, sent as `profile-title: base64:<…>`. Empty omits the header. |
 | `SUBSCRIPTION_SUPPORT_URL` | str | `https://t.me/Special_Wifi_Official` | ? | Destination behind the client app's support button (`support-url`). Must be a plain URL; a control character in it drops the header rather than failing the response. |
 | `SUBSCRIPTION_ANNOUNCE_TEXT` | str | empty | ? | Banner the client app shows above the profile, sent as `announce: base64:<…>`. Empty omits the header, so there is no "no news" banner. Bounded at 512 characters. |
+| `SUBSCRIPTION_XRAY_JSON_ENABLED` | bool | `False` | ? | Serves a raw Xray-core JSON config (routing.balancers `leastPing` + `burstObservatory` across Direct/Relay/XHTTP) instead of the base64 VLESS list, to requests whose User-Agent matches Happ or v2rayNG. Off keeps every User-Agent, including a matching one, on the base64 body. |
 | `SUBSCRIPTION_RELAY_HOST` | str | empty | — | **Dead setting.** Nothing outside `bot/settings.py` reads it; the Relay endpoint comes from `Server.client_vpn_host`. |
 | `SUBSCRIPTION_RELAY_PORT` | int | `443` | — | **Dead setting**, same as above. |
 
