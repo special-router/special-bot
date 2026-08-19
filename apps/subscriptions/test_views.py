@@ -605,8 +605,14 @@ class XrayJsonSubscriptionTests(SimpleTestCase):
         response = self._response('Happ/2.0')
 
         self.assertEqual(response['Content-Type'], 'application/json')
-        document = json.loads(response.content)
-        self.assertEqual(document['routing']['balancers'][0]['tag'], 'proxy-balancer')
+        # The body is an array of named profiles, which is how a client renders
+        # one entry per element; ours is first because it is the only endpoint
+        # this deployment is accountable for.
+        documents = json.loads(response.content)
+        self.assertIsInstance(documents, list)
+        document = documents[0]
+        self.assertIn('remarks', document)
+        self.assertEqual(document['routing']['balancers'][0]['tag'], 'own-l1')
         tags = {outbound['tag'] for outbound in document['outbounds']}
         self.assertEqual(tags, {'proxy-nl-direct', 'proxy-ru-relay', 'direct', 'block'})
 
@@ -616,7 +622,7 @@ class XrayJsonSubscriptionTests(SimpleTestCase):
                 rule_index['ru_regexp'] = index
             if rule.get('ip') == ['geoip:ru']:
                 rule_index['ru_geoip'] = index
-            if rule.get('balancerTag') == 'proxy-balancer':
+            if rule.get('balancerTag') == 'own-l1' and rule.get('network'):
                 rule_index['balancer_fallback'] = index
         self.assertLess(rule_index['ru_regexp'], rule_index['balancer_fallback'])
         self.assertLess(rule_index['ru_geoip'], rule_index['balancer_fallback'])
@@ -625,7 +631,7 @@ class XrayJsonSubscriptionTests(SimpleTestCase):
         response = self._response('V2rayNG/1.9.9')
 
         self.assertEqual(response['Content-Type'], 'application/json')
-        document = json.loads(response.content)
+        document = json.loads(response.content)[0]
         self.assertIn('burstObservatory', document)
         self.assertEqual(document['burstObservatory']['subjectSelector'], ['proxy'])
 
@@ -635,7 +641,7 @@ class XrayJsonSubscriptionTests(SimpleTestCase):
         # instead of needing several cycles to evict stale-healthy samples.
         response = self._response('Happ/2.0')
 
-        ping_config = json.loads(response.content)['burstObservatory']['pingConfig']
+        ping_config = json.loads(response.content)[0]['burstObservatory']['pingConfig']
         self.assertEqual(ping_config['interval'], '10s')
         self.assertEqual(ping_config['sampling'], 1)
 

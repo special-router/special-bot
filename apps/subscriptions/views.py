@@ -26,7 +26,7 @@ import subprocess
 import threading
 import time
 from functools import lru_cache
-from urllib.parse import quote, unquote_to_bytes, urlencode, urlsplit
+from urllib.parse import parse_qs, quote, unquote, unquote_to_bytes, urlencode, urlsplit
 
 from django.http import HttpResponse, HttpResponseNotFound
 from django.utils import timezone
@@ -568,25 +568,28 @@ def _xray_json_outbounds(uuid: str, params: dict, direct_host: str, direct_port:
     return outbounds
 
 
-def _xray_json_routing() -> dict:
-    """Same rule order as ``darkcore-connections-service``'s routing.ts."""
+def _xray_json_routing(balancers: list[dict], loop_rules: list[dict], first: str) -> dict:
+    """Same rule order as ``darkcore-connections-service``'s routing.ts.
+
+    Правила петель стоят раньше остальных: трафик приходит в них уже размеченным
+    своим ``inboundTag``, и любое правило выше перехватило бы его по домену или
+    адресу второй раз — то есть отправило бы в ``direct`` то, что первая ступень
+    только что не смогла провести.
+    """
     return {
         'domainStrategy': 'IPIfNonMatch',
         'domainMatcher': 'mph',
-        'balancers': [{
-            'tag': 'proxy-balancer',
-            'selector': ['proxy'],
-            'strategy': {'type': 'leastPing'},
-        }],
+        'balancers': balancers,
         'rules': [
+            *loop_rules,
             {'type': 'field', 'protocol': ['bittorrent'], 'outboundTag': 'direct'},
             {'type': 'field', 'ip': ['geoip:private'], 'outboundTag': 'direct'},
             {'type': 'field', 'domain': ['geosite:private'], 'outboundTag': 'direct'},
             {'type': 'field', 'ip': ['1.1.1.1/32', '1.0.0.1/32', '8.8.8.8/32', '8.8.4.4/32'],
-             'outboundTag': 'proxy-balancer'},
+             'balancerTag': first},
             {'type': 'field', 'domain': ['regexp:\\.ru$'], 'outboundTag': 'direct'},
             {'type': 'field', 'ip': ['geoip:ru'], 'outboundTag': 'direct'},
-            {'type': 'field', 'network': 'tcp,udp', 'balancerTag': 'proxy-balancer'},
+            {'type': 'field', 'network': 'tcp,udp', 'balancerTag': first},
         ],
     }
 
@@ -635,14 +638,74 @@ def _xray_json_ready(params: dict, direct_host: str) -> bool:
     )
 
 
+_CASCADE_STRATEGY = {'type': 'leastLoad', 'settings': {'expected': 1, 'maxRTT': '1500ms'}}
+
+
+def _cascade(stages: list[tuple[str, list[str]]], name: str) -> tuple[list[dict], list[dict], list[dict], str]:
+    """Собрать лестницу «не вышло — пробуй следующим» из списка ступеней.
+
+    Одним балансировщиком это не выражается: он выбирает быстрейший из живых, а
+    здесь нужен именно порядок — сначала обычный TCP, и только когда он молчит,
+    остальное. Xray-core умеет это единственным способом, который и использует
+    провайдер: у балансировщика есть ``fallbackTag``, а ``loopback``-outbound
+    возвращает трафик в собственный роутинг под другим тегом, где его ждёт
+    следующий балансировщик.
+
+    Каждая ступень — пара «тег балансировщика, список тегов outbound-ов». Внутри
+    ступени балансировщик выбирает по замерам, между ступенями порядок жёсткий.
+    Последняя ступень падать некуда, поэтому ``fallbackTag`` ей не даётся: с ним
+    она указывала бы на несуществующий тег, и Xray отказался бы читать документ
+    целиком.
+
+    Возвращает outbound-ы петель, балансировщики, правила петель и тег
+    балансировщика первой ступени — то, чем правило «весь остальной трафик»
+    начинает лестницу.
+    """
+    loops, balancers, rules = [], [], []
+    for index, (tag, members) in enumerate(stages):
+        balancer = {'tag': tag, 'selector': members, 'strategy': _CASCADE_STRATEGY}
+        if index + 1 < len(stages):
+            reroute = f'{name}-L{index + 2}-REROUTE'
+            loop_tag = f'LOOP-{name}-L{index + 2}'
+            balancer['fallbackTag'] = loop_tag
+            loops.append({
+                'tag': loop_tag,
+                'protocol': 'loopback',
+                'settings': {'inboundTag': reroute},
+            })
+            rules.append({
+                'type': 'field',
+                'inboundTag': [reroute],
+                'balancerTag': stages[index + 1][0],
+            })
+        balancers.append(balancer)
+    return loops, balancers, rules, stages[0][0]
+
+
 def _build_xray_json(uuid: str, params: dict, direct_host: str, direct_port: int,
                      relay_host: str, relay_port: int, flow: str) -> dict:
-    """Raw Xray-core config for Happ/v2rayNG: routing.balancers leastPing plus
-    burstObservatory across the same Direct/Relay/XHTTP endpoints the base64
-    branch renders. No ``inbounds`` section -- both clients drive their own VPN
-    interface into the core directly, matching the live document Sosa serves.
+    """Наш профиль для Happ/v2rayNG: три транспорта одного узла лестницей.
+
+    Порядок ступеней здесь — не результат замера, а решение: обычный TCP, затем
+    XHTTP, затем gRPC. Плоский ``leastPing`` выбирал бы быстрейший, а быстрейшим
+    почти всегда оказывается TCP — до того момента, когда оператор его задушил,
+    и тогда клиенту нужен не самый быстрый, а любой работающий. Лестница даёт
+    ровно это: следующая ступень включается, когда предыдущая перестала
+    отвечать.
+
+    Секции ``inbounds`` нет: оба клиента заводят свой VPN-интерфейс в ядро сами,
+    как и в документе, который отдаёт Sosa.
     """
+    outbounds = _xray_json_outbounds(
+        uuid, params, direct_host, direct_port, relay_host, relay_port, flow)
+    tags = {outbound['tag'] for outbound in outbounds}
+    stages = [('own-l1', [tag for tag in ('proxy-nl-direct', 'proxy-ru-relay') if tag in tags])]
+    for tag, balancer in (('proxy-xhttp', 'own-l2'), ('proxy-grpc', 'own-l3')):
+        if tag in tags:
+            stages.append((balancer, [tag]))
+    loops, balancers, loop_rules, first = _cascade(stages, 'OWN')
     return {
+        'remarks': f'{_endpoint_label(_OWN_REGION_CODE)} авто',
         'log': {'loglevel': 'warning'},
         'policy': {
             'levels': {'0': {
@@ -650,11 +713,154 @@ def _build_xray_json(uuid: str, params: dict, direct_host: str, direct_port: int
                 'downlinkOnly': 5, 'bufferSize': 10240,
             }},
         },
-        'routing': _xray_json_routing(),
+        'routing': _xray_json_routing(balancers, loop_rules, first),
         'burstObservatory': _xray_json_burst_observatory(),
-        'outbounds': _xray_json_outbounds(
-            uuid, params, direct_host, direct_port, relay_host, relay_port, flow),
+        'outbounds': outbounds + loops,
     }
+
+
+def _xray_outbound_from_link(link: str, tag: str) -> dict | None:
+    """Перевести одну готовую строку подписки в outbound того же смысла.
+
+    Источником служат уже отобранные строки, а не документ провайдера заново:
+    так у профиля и у списка ровно один набор точек, прошедший одни и те же
+    ограничения — лимиты, дедупликацию и вердикты живости. Разойтись им негде.
+    """
+    try:
+        parts = urlsplit(link)
+        query = {key: values[0] for key, values in parse_qs(parts.query).items()}
+        host, port, secret = parts.hostname, parts.port, parts.username
+    except ValueError:
+        return None
+    if not host or not port or not secret:
+        return None
+    if parts.scheme == 'hy2':
+        server_name = query.get('sni', '')
+        if not server_name:
+            return None
+        # Xray-core сам hysteria не умеет; это форк ядра, на котором работает
+        # Happ, и такую же секцию отдаёт провайдер. Вызывающий решает, кому
+        # такой outbound можно показывать.
+        return {
+            'tag': tag,
+            'protocol': 'hysteria',
+            'settings': {'address': host, 'port': port, 'version': 2},
+            'streamSettings': {
+                'network': 'hysteria',
+                'security': 'tls',
+                'hysteriaSettings': {'auth': secret, 'version': 2},
+                'tlsSettings': {
+                    'serverName': server_name,
+                    'alpn': ['h3'],
+                    'fingerprint': query.get('fp', 'chrome'),
+                },
+            },
+        }
+    if parts.scheme != 'vless':
+        return None
+    network = query.get('type', 'tcp')
+    security = query.get('security', 'none')
+    stream = {'network': network, 'security': security}
+    if security == 'reality':
+        reality = {
+            'serverName': query.get('sni', ''),
+            'fingerprint': query.get('fp', 'chrome'),
+            'publicKey': query.get('pbk', ''),
+            'spiderX': query.get('spx', '/'),
+        }
+        if query.get('sid'):
+            reality['shortId'] = query['sid']
+        if not reality['serverName'] or not reality['publicKey']:
+            return None
+        stream['realitySettings'] = reality
+    elif security == 'tls':
+        stream['tlsSettings'] = {
+            'serverName': query.get('sni', host),
+            'fingerprint': query.get('fp', 'chrome'),
+        }
+    if network == 'grpc':
+        stream['grpcSettings'] = {'serviceName': query.get('serviceName', '')}
+    elif network == 'ws':
+        stream['wsSettings'] = {'path': query.get('path', '/')}
+    elif network == 'xhttp':
+        stream['xhttpSettings'] = {
+            'path': query.get('path', '/'),
+            'host': query.get('host', host),
+            'mode': query.get('mode', 'auto'),
+        }
+    user = {'id': secret, 'encryption': 'none', 'flow': query.get('flow', '')}
+    return {
+        'tag': tag,
+        'protocol': 'vless',
+        'settings': {'vnext': [{'address': host, 'port': port, 'users': [user]}]},
+        'streamSettings': stream,
+    }
+
+
+def _mirror_xray_profiles(links: list[str], allow_hysteria: bool) -> list[dict]:
+    """Профиль на страну: её точки лестницей в том порядке, в каком они выданы.
+
+    Порядок строк в списке — это и есть порядок попыток: прямая точка страны
+    идёт первой, её запасной транспорт следом. Здесь он только переносится в
+    ``fallbackTag``, чтобы перебирал клиент, а не человек.
+
+    Страна, у которой осталась одна точка, профилем тоже становится: лестница
+    из одной ступени — это обычный outbound, и отказывать ей значило бы терять
+    страну целиком там, где список её показывает.
+    """
+    grouped: dict[str, list[str]] = {}
+    for link in links:
+        label = unquote(link.partition('#')[2])
+        country = label.removesuffix(_ALT_TRANSPORT_LABEL_SUFFIX).strip()
+        if not country:
+            continue
+        grouped.setdefault(country, []).append(link)
+    profiles = []
+    for index, (country, country_links) in enumerate(grouped.items()):
+        prefix = f'M{index}'
+        outbounds, stages = [], []
+        for position, link in enumerate(country_links):
+            tag = f'{prefix}-s{position}'
+            outbound = _xray_outbound_from_link(link, tag)
+            if outbound is None:
+                continue
+            if outbound['protocol'] == 'hysteria' and not allow_hysteria:
+                continue
+            outbounds.append(outbound)
+            stages.append((f'{prefix}-b{position}', [tag]))
+        if not outbounds:
+            continue
+        loops, balancers, loop_rules, first = _cascade(stages, prefix)
+        profiles.append({
+            'remarks': country,
+            'log': {'loglevel': 'warning'},
+            'routing': _xray_json_routing(balancers, loop_rules, first),
+            'burstObservatory': {
+                'subjectSelector': [prefix],
+                'pingConfig': {
+                    'destination': 'https://www.google.com/generate_204',
+                    'interval': '10s',
+                    'timeout': '5s',
+                    'sampling': 1,
+                },
+            },
+            'outbounds': outbounds + loops + [
+                {'tag': 'direct', 'protocol': 'freedom'},
+                {'tag': 'block', 'protocol': 'blackhole'},
+            ],
+        })
+    return profiles
+
+
+# Xray-core сам hysteria2 не поддерживает: секция ``hysteriaSettings`` живёт
+# только в форке ядра, на котором работает Happ. v2rayNG на таком outbound-е
+# отказывается читать документ целиком, поэтому ступень с ним показывается
+# ровно тому клиенту, который её понимает.
+_HYSTERIA_CAPABLE_UA_PATTERN = re.compile(r'happ', re.IGNORECASE)
+
+
+def _wants_hysteria_outbound(user_agent: str) -> bool:
+    return bool(_HYSTERIA_CAPABLE_UA_PATTERN.search(user_agent))
 
 
 @csrf_exempt
@@ -704,9 +910,15 @@ def subscription_proxy(request, sub_id: str):
     user_agent = request.META.get('HTTP_USER_AGENT', '')
     if _wants_xray_json(user_agent) and _xray_json_ready(params, direct_host):
         try:
-            document = _build_xray_json(
-                uuid_str, params, direct_host, direct_port, relay_host, relay_port, flow)
-            body = json.dumps(document).encode('utf-8')
+            # Массив, а не один объект: клиент рисует по профилю на элемент и
+            # берёт имя из ``remarks``. Наш узел идёт первым — он единственный,
+            # за который отвечаем мы, а всё после него чужое.
+            documents = [_build_xray_json(
+                uuid_str, params, direct_host, direct_port, relay_host, relay_port, flow)]
+            if _is_backup_test_user(user_vpn.id):
+                documents.extend(_mirror_xray_profiles(
+                    _backup_links() or [], _wants_hysteria_outbound(user_agent)))
+            body = json.dumps(documents).encode('utf-8')
         except (KeyError, TypeError, ValueError):
             body = None
         if body is not None:
