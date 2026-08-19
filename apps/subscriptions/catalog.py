@@ -24,6 +24,7 @@ from urllib.parse import unquote
 
 from apps.subscriptions.views import (
     _ALT_TRANSPORT_LABEL_SUFFIX,
+    _GRPC_LABEL_SUFFIX,
     _OWN_REGION_CODE,
     _WHITELIST_LABEL_SUFFIX,
     _backup_links,
@@ -85,10 +86,12 @@ def _catalog_from_labels(labels: list[str]) -> SubscriptionCatalog:
     whitelisted: list[str] = []
     for label in labels:
         bare = _TRAILING_NUMBER.sub('', label).strip()
-        # Транспортный суффикс срезается до сравнения стран: «запасной путь» —
-        # это вторая линия той же страны, а не ещё одна страна. Обещать её
-        # отдельной строкой на экране было бы неправдой о географии.
-        bare = bare.removesuffix(_ALT_TRANSPORT_LABEL_SUFFIX).strip()
+        # Транспортный суффикс срезается до сравнения стран: «запасной путь» и
+        # «обходной путь» — это вторая и третья линии той же страны, а не ещё
+        # две страны. Обещать их отдельными строками на экране было бы
+        # неправдой о географии.
+        for suffix in (_ALT_TRANSPORT_LABEL_SUFFIX, _GRPC_LABEL_SUFFIX):
+            bare = bare.removesuffix(suffix).strip()
         country = bare.removesuffix(_WHITELIST_LABEL_SUFFIX).strip()
         if not country:
             continue

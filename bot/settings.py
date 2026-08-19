@@ -389,6 +389,25 @@ SUBSCRIPTION_XHTTP_ENABLED = env.bool('SUBSCRIPTION_XHTTP_ENABLED', False)
 SUBSCRIPTION_XHTTP_PATH = env.str('SUBSCRIPTION_XHTTP_PATH', default='')
 SUBSCRIPTION_XHTTP_PORT = env.int('SUBSCRIPTION_XHTTP_PORT', 443)
 
+# gRPC-линия: третий транспорт того же узла, на порту 80 через nginx-фронт.
+# Держится здесь, а не читается из панели на каждый запрос: Reality-параметры
+# inbound-а — это его конфигурация, а не живое состояние, и обращение к панели
+# ради каждой подписки не переживёт раскатки дальше одного человека.
+#
+# Ни одно из этих значений не является bearer-данными: публичный ключ, short id
+# и SNI уезжают клиенту в каждой выданной ссылке. Доступ даёт UUID, которого
+# здесь нет.
+#
+# Выключено по умолчанию по той же причине, что и XHTTP: линия бесполезна, пока
+# UUID клиента не заведён в этом inbound-е (за это отвечает MIRROR_INBOUND_IDS),
+# а выданная мёртвая строка читается клиентом как «сервис сломан».
+SUBSCRIPTION_GRPC_ENABLED = env.bool('SUBSCRIPTION_GRPC_ENABLED', False)
+SUBSCRIPTION_GRPC_PORT = env.int('SUBSCRIPTION_GRPC_PORT', 80)
+SUBSCRIPTION_GRPC_SERVICE_NAME = env.str('SUBSCRIPTION_GRPC_SERVICE_NAME', default='')
+SUBSCRIPTION_GRPC_PUBLIC_KEY = env.str('SUBSCRIPTION_GRPC_PUBLIC_KEY', default='')
+SUBSCRIPTION_GRPC_SERVER_NAME = env.str('SUBSCRIPTION_GRPC_SERVER_NAME', default='')
+SUBSCRIPTION_GRPC_SHORT_ID = env.str('SUBSCRIPTION_GRPC_SHORT_ID', default='')
+
 # Raw Xray-core JSON (routing.balancers leastPing + burstObservatory across the
 # same Direct/Relay/XHTTP endpoints) for the two Xray-core mobile clients that
 # accept it as-is, selected by User-Agent. Off by default: every other client,

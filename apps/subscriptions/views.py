@@ -367,6 +367,77 @@ def _xhttp_config() -> tuple[str, int] | None:
     return path, port
 
 
+def _grpc_link(uuid: str, host: str) -> str | None:
+    """Линия gRPC: тот же узел, порт 80, Reality поверх gRPC.
+
+    Существует потому, что транспорты душат по одному, а не все сразу: у
+    партнёра TCP-Reality на нашем узле перестал подниматься, а gRPC на том же
+    узле поднялся с первой попытки. Три разных транспорта на один и тот же
+    выход — это три независимых шанса, и стоят они одну строку каждый.
+
+    Reality-параметры берутся из конфигурации, а не из панели: у ``_internal_links``
+    ровно обратный выбор, и он стоит логина плюс двух чтений всех inbound-ов на
+    каждый запрос подписки — цена, приемлемая для одного канареечного клиента и
+    неприемлемая для всех. Расходимость с панелью здесь не молчаливая: сменив
+    ключ inbound-а, его меняют и тут, иначе линия перестаёт работать у всех
+    сразу и это видно.
+    """
+    config = _grpc_config()
+    if config is None:
+        return None
+    remark = f'{_endpoint_label(_OWN_REGION_CODE)} {_GRPC_LABEL_SUFFIX}'
+    return _build_vless(
+        uuid, host, config['port'], remark,
+        {
+            'public_key': config['public_key'],
+            'server_name': config['server_name'],
+            'short_ids': [config['short_id']],
+            'network': 'grpc',
+        },
+        flow='',
+        service_name=config['service_name'],
+    )
+
+
+def _grpc_config() -> dict | None:
+    """Validated gRPC endpoint description, or None when it cannot be advertised.
+
+    Shared between the base64 line and the Xray JSON outbound, exactly as
+    ``_xhttp_config`` is, so the two branches cannot disagree about what makes
+    the transport safe to hand out.
+
+    A partially filled configuration is a mistake, not a degraded mode: every
+    field below is required to dial Reality at all, and a link missing one of
+    them fails at the client with no explanation.
+    """
+    from django.conf import settings
+    if not getattr(settings, 'SUBSCRIPTION_GRPC_ENABLED', False):
+        return None
+    port = getattr(settings, 'SUBSCRIPTION_GRPC_PORT', 80)
+    if not isinstance(port, int) or not 1 <= port <= 65535:
+        return None
+    fields = {}
+    for key, name, limit in (
+        ('service_name', 'SUBSCRIPTION_GRPC_SERVICE_NAME', 128),
+        ('public_key', 'SUBSCRIPTION_GRPC_PUBLIC_KEY', 128),
+        ('server_name', 'SUBSCRIPTION_GRPC_SERVER_NAME', 253),
+        ('short_id', 'SUBSCRIPTION_GRPC_SHORT_ID', 16),
+    ):
+        value = getattr(settings, name, '')
+        if not isinstance(value, str) or not value or len(value) > limit:
+            return None
+        if any(character in value for character in ' \r\n\t#?'):
+            return None
+        fields[key] = value
+    # A short id is hex of even length; anything else is a typo that would be
+    # silently accepted by the URL and rejected by the server.
+    short_id = fields['short_id']
+    if len(short_id) % 2 or any(character not in '0123456789abcdefABCDEF' for character in short_id):
+        return None
+    fields['port'] = port
+    return fields
+
+
 def _build_vless(uuid: str, host: str, port: int, remark: str, params: dict, flow: str = '',
                   fingerprint: str = 'chrome', service_name: str = '') -> str:
     """Build a VLESS URI with encoded query values and explicit transport fields.
@@ -467,6 +538,29 @@ def _xray_json_outbounds(uuid: str, params: dict, direct_host: str, direct_port:
                 'security': 'tls',
                 'tlsSettings': {'serverName': direct_host, 'fingerprint': 'chrome'},
                 'xhttpSettings': {'path': path, 'host': direct_host, 'mode': 'auto'},
+            },
+        })
+    grpc_config = _grpc_config()
+    if grpc_config is not None:
+        outbounds.append({
+            'tag': 'proxy-grpc',
+            'protocol': 'vless',
+            'settings': {'vnext': [{
+                'address': direct_host,
+                'port': grpc_config['port'],
+                'users': [{'id': uuid, 'encryption': 'none', 'flow': ''}],
+            }]},
+            'streamSettings': {
+                'network': 'grpc',
+                'security': 'reality',
+                'realitySettings': {
+                    'serverName': grpc_config['server_name'],
+                    'fingerprint': 'chrome',
+                    'publicKey': grpc_config['public_key'],
+                    'shortId': grpc_config['short_id'],
+                    'spiderX': '/',
+                },
+                'grpcSettings': {'serviceName': grpc_config['service_name']},
             },
         })
     outbounds.append({'tag': 'direct', 'protocol': 'freedom'})
@@ -646,6 +740,12 @@ def subscription_proxy(request, sub_id: str):
     xhttp_link = _xhttp_link(uuid_str, direct_host)
     if xhttp_link:
         links.append(xhttp_link)
+    # 3.6) gRPC на том же узле, порт 80. Идёт после XHTTP, потому что XHTTP
+    # неотличим от обычного HTTPS, а этот — отличим; но он держится там, где
+    # уже не поднимается TCP-Reality, и это проверено на живой сети партнёра.
+    grpc_link = _grpc_link(uuid_str, direct_host)
+    if grpc_link:
+        links.append(grpc_link)
     # 4) Same-origin internal transport canary. Every candidate independently
     # stable-reads its own live inbound and silently omits on any uncertainty.
     if _is_internal_test_user(user_vpn.id):
@@ -1248,6 +1348,11 @@ _WHITELIST_LABEL_SUFFIX = 'белые списки'
 # это, без слова о транспорте: «запасной путь» — то, что он выберет, когда
 # первая строка молчит.
 _ALT_TRANSPORT_LABEL_SUFFIX = 'запасной путь'
+# Третья линия того же узла. Клиенту снова не сказано ни слова о транспорте —
+# только то, чем эта строка отличается для него: пробовать её стоит, когда
+# замолчали и основная, и запасная. Слово выбрано так, чтобы порядок на экране
+# читался как порядок попыток, а не как выбор из трёх равных.
+_GRPC_LABEL_SUFFIX = 'обходной путь'
 # A configured suffix list is operator input, not provider input, but it is
 # still read once per rendered document, so its length is bounded like every
 # other list this module walks.
