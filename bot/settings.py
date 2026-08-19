@@ -516,6 +516,13 @@ SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION = env.int(
 # Our own status, Direct and Relay lines must stay findable whatever a provider
 # returns, so mirrored lines are capped across all sources as well.
 SUBSCRIPTION_BACKUP_MAX_MIRROR_ENTRIES = env.int('SUBSCRIPTION_BACKUP_MAX_MIRROR_ENTRIES', 16)
+# Порт hysteria2 у зеркального провайдера; ноль выключает вторую строку на
+# страну. Провайдер держит на каждой стране каскад, но в документе, который он
+# отдаёт нам, есть только первая ступень — прямой VLESS. Вторая живёт на
+# фиксированном порту с тем же UUID в роли пароля, и это свойство конкретного
+# провайдера, а не протокола: значение здесь, а не в коде, потому что второй
+# источник того же формата отвечает на другом порту или не отвечает вовсе.
+SUBSCRIPTION_BACKUP_HYSTERIA_PORT = env.int('SUBSCRIPTION_BACKUP_HYSTERIA_PORT', 0)
 SUBSCRIPTION_BACKUP_FETCH_DEADLINE_SECONDS = env.float('SUBSCRIPTION_BACKUP_FETCH_DEADLINE_SECONDS', 8)
 # Some providers serve a different document per client User-Agent and reject
 # unknown ones. An empty value keeps the neutral agent used before format-aware

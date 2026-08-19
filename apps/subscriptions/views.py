@@ -1485,7 +1485,13 @@ def _structured_upstream_links(payload: bytes,
     endpoints = _parse_upstream_endpoints(payload, headers)
     if endpoints is None:
         return None
-    return [_build_mirror_vless(endpoint) for endpoint in _branded_mirror_endpoints(endpoints)]
+    links = []
+    for endpoint in _branded_mirror_endpoints(endpoints):
+        links.append(_build_mirror_vless(endpoint))
+        hysteria = _mirror_hysteria_link(endpoint)
+        if hysteria:
+            links.append(hysteria)
+    return links
 
 
 def _parse_upstream_endpoints(payload: bytes,
@@ -2058,6 +2064,46 @@ def _build_mirror_vless(endpoint: dict) -> str:
     query = urlencode(query_fields, quote_via=quote)
     return (f"vless://{endpoint['uuid']}@{endpoint['host']}:{endpoint['port']}"
             f"?{query}#{quote(endpoint['remark'])}")
+
+
+def _mirror_hysteria_link(endpoint: dict) -> str | None:
+    """Render the same mirrored country over hysteria2, or nothing.
+
+    Почему это отдельная строка, а не поле в предыдущей: провайдер держит на
+    каждой своей стране каскад — прямой VLESS, затем hysteria2 на другом порту,
+    затем тот же VLESS через российский мост. В его собственном приложении
+    ступени переключаются сами, а ``vless://`` описывает ровно одну точку и
+    цепочку выразить не может. Вторая ступень выражается: это отдельный адрес и
+    отдельный протокол, то есть отдельная ссылка.
+
+    Замерено 2026-08-20 из белорусской сети: прямой VLESS не поднялся ни на
+    одной из девяти стран, hysteria2 поднялся на восьми. Строка не заменяет
+    первую, а идёт следом — где TCP жив (мобильные сети), первая по-прежнему
+    быстрее, и клиент выбирает сам.
+
+    Порт и то, что паролем служит тот же UUID, — свойство этого провайдера, а
+    не протокола, поэтому живут в настройке: другой провайдер того же формата
+    получит здесь ноль и ни одной лишней строки.
+    """
+    from django.conf import settings
+    port = getattr(settings, 'SUBSCRIPTION_BACKUP_HYSTERIA_PORT', 0)
+    if not isinstance(port, int) or not 1 <= port <= 65535:
+        return None
+    uuid = endpoint.get('uuid')
+    host = endpoint.get('host')
+    server_name = endpoint.get('server_name')
+    remark = endpoint.get('remark')
+    if not all(isinstance(value, str) and value
+               for value in (uuid, host, server_name, remark)):
+        return None
+    # Тот же набор запретов, что у остальных строк: символ, ломающий URI,
+    # превращает строку в мусор у клиента, а не в ошибку здесь.
+    if any(character in value for value in (uuid, host, server_name)
+           for character in ' \r\n\t#?/@'):
+        return None
+    query = urlencode([('sni', server_name), ('alpn', 'h3')], quote_via=quote)
+    label = f'{remark} {_ALT_TRANSPORT_LABEL_SUFFIX}'
+    return f'hy2://{uuid}@{host}:{port}/?{query}#{quote(label)}'
 
 
 def _is_sentinel_vless_line(raw_line: bytes) -> bool:
