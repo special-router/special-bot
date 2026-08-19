@@ -59,6 +59,28 @@ class ProbeMirrorLivenessTests(TestCase):
         self.assertEqual(MirrorEndpointLiveness.objects.count(), 2)
         self.assertTrue(MirrorEndpointLiveness.objects.get(host='ru-2.example', port=443).alive)
 
+    def test_a_verdict_is_stamped_with_the_configured_probe_origin(self):
+        with override_settings(SUBSCRIPTION_BACKUP_LIVENESS_PROBE_ORIGIN='nl-debug'):
+            self.run_command([('ru-1.example', 443, True, '')])
+
+        self.assertEqual(
+            MirrorEndpointLiveness.objects.get(host='ru-1.example', port=443).probed_from,
+            'nl-debug')
+
+    def test_an_unset_probe_origin_defaults_to_bot(self):
+        self.run_command([('ru-1.example', 443, True, '')])
+
+        self.assertEqual(
+            MirrorEndpointLiveness.objects.get(host='ru-1.example', port=443).probed_from,
+            'bot')
+
+    def test_an_explicitly_empty_probe_origin_stamps_an_empty_string(self):
+        with override_settings(SUBSCRIPTION_BACKUP_LIVENESS_PROBE_ORIGIN=''):
+            self.run_command([('ru-1.example', 443, True, '')])
+
+        self.assertEqual(
+            MirrorEndpointLiveness.objects.get(host='ru-1.example', port=443).probed_from, '')
+
     def test_a_dry_run_reports_without_writing(self):
         output = self.run_command([('ru-1.example', 443, True, '')], dry_run=True)
 

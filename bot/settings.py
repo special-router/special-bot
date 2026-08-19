@@ -541,6 +541,14 @@ SUBSCRIPTION_BACKUP_LIVENESS_PROBE_MAX_SECONDS = env.int(
     'SUBSCRIPTION_BACKUP_LIVENESS_PROBE_MAX_SECONDS', 300)
 SUBSCRIPTION_BACKUP_LIVENESS_PROBE_TIMEOUT_SECONDS = env.float(
     'SUBSCRIPTION_BACKUP_LIVENESS_PROBE_TIMEOUT_SECONDS', 12)
+# Which host ran the probe. A Reality handshake's outcome depends on the
+# network it is dialled from, and the timer that schedules this command today
+# exists only on BOT — but that is operator knowledge, not something a row in
+# the table records. Without this, a verdict measured from anywhere else
+# silently overwrites the same (host, port) row with no trace that the vantage
+# point changed.
+SUBSCRIPTION_BACKUP_LIVENESS_PROBE_ORIGIN = env.str(
+    'SUBSCRIPTION_BACKUP_LIVENESS_PROBE_ORIGIN', 'bot')
 # Reality SNIs an operator declares as whitelist camouflage, matched on domain
 # labels. A provider advertising bypass of a mobile-internet shutdown puts it
 # nowhere in its routing config; it is the announced server name, a domain that

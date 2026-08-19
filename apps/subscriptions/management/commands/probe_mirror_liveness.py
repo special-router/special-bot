@@ -116,10 +116,12 @@ class Command(BaseCommand):
             return
 
         now = timezone.now()
+        origin = getattr(settings, 'SUBSCRIPTION_BACKUP_LIVENESS_PROBE_ORIGIN', 'bot')
         for host, port, endpoint_alive, error_class in probed:
             MirrorEndpointLiveness.objects.update_or_create(
                 host=host, port=port,
-                defaults={'alive': endpoint_alive, 'error_class': error_class, 'checked_at': now})
+                defaults={'alive': endpoint_alive, 'error_class': error_class, 'checked_at': now,
+                          'probed_from': origin})
         self.stdout.write(f'wrote {len(probed)} verdicts')
 
     def _targets(self) -> list[dict]:

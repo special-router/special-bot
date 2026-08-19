@@ -189,6 +189,13 @@ class MirrorEndpointLiveness(models.Model):
         default=timezone.now,
     )
 
+    probed_from = models.CharField(
+        'Источник замера',
+        max_length=32,
+        blank=True,
+        default='',
+    )
+
     class Meta:
         verbose_name = 'Живость зеркального эндпоинта'
         verbose_name_plural = 'Живость зеркальных эндпоинтов'
