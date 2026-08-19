@@ -575,6 +575,12 @@ def _xray_json_routing(balancers: list[dict], loop_rules: list[dict], first: str
     своим ``inboundTag``, и любое правило выше перехватило бы его по домену или
     адресу второй раз — то есть отправило бы в ``direct`` то, что первая ступень
     только что не смогла провести.
+
+    Имена резолвятся встроенным ``dns-out``, а не уезжают в первую ступень.
+    Раньше запросы к 1.1.1.1 и 8.8.8.8 шли в балансировщик, и там, где первая
+    ступень мертва — а у зеркальной страны она мертва всегда, — вставал сам
+    резолв: до перехода на следующую ступень дело не доходило, потому что
+    соединение ещё не с чем было установить.
     """
     return {
         'domainStrategy': 'IPIfNonMatch',
@@ -582,16 +588,44 @@ def _xray_json_routing(balancers: list[dict], loop_rules: list[dict], first: str
         'balancers': balancers,
         'rules': [
             *loop_rules,
+            {'type': 'field', 'network': 'tcp,udp', 'port': '53', 'outboundTag': 'dns-out'},
+            # QUIC к 443 глушится намеренно: браузер, которому не дали h3,
+            # переспрашивает по TCP и уходит в тот же туннель, а не остаётся с
+            # UDP-потоком, который туннель провести не берётся.
+            {'type': 'field', 'network': 'udp', 'port': '443', 'outboundTag': 'block'},
             {'type': 'field', 'protocol': ['bittorrent'], 'outboundTag': 'direct'},
             {'type': 'field', 'ip': ['geoip:private'], 'outboundTag': 'direct'},
             {'type': 'field', 'domain': ['geosite:private'], 'outboundTag': 'direct'},
-            {'type': 'field', 'ip': ['1.1.1.1/32', '1.0.0.1/32', '8.8.8.8/32', '8.8.4.4/32'],
-             'balancerTag': first},
             {'type': 'field', 'domain': ['regexp:\\.ru$'], 'outboundTag': 'direct'},
             {'type': 'field', 'ip': ['geoip:ru'], 'outboundTag': 'direct'},
             {'type': 'field', 'network': 'tcp,udp', 'balancerTag': first},
         ],
     }
+
+
+def _xray_json_dns() -> dict:
+    """DNS профиля: имена узлов провайдера — статикой, остальное — по DoH."""
+    return {
+        'queryStrategy': 'UseIPv4',
+        'hosts': {
+            'cloudflare-dns.com': ['1.1.1.1', '1.0.0.1'],
+            'dns.google': ['8.8.8.8', '8.8.4.4'],
+        },
+        'servers': [
+            {'address': 'https://cloudflare-dns.com/dns-query',
+             'tag': 'cloudflare-dns', 'timeoutMs': 1000},
+            {'address': 'https://dns.google/dns-query',
+             'tag': 'google-dns', 'timeoutMs': 1000},
+            {'address': 'localhost', 'domains': ['geosite:private'], 'tag': 'localhost-dns'},
+        ],
+    }
+
+
+_DNS_OUTBOUND = {
+    'tag': 'dns-out',
+    'protocol': 'dns',
+    'settings': {'blockTypes': [28], 'nonIPQuery': 'skip'},
+}
 
 
 def _xray_json_burst_observatory() -> dict:
@@ -638,7 +672,22 @@ def _xray_json_ready(params: dict, direct_host: str) -> bool:
     )
 
 
-_CASCADE_STRATEGY = {'type': 'leastLoad', 'settings': {'expected': 1, 'maxRTT': '1500ms'}}
+def _cascade_strategy(members: list[str]) -> dict:
+    """Стратегия ступени: порог задержки только там, где есть из чего выбирать.
+
+    ``maxRTT`` отбрасывает кандидатов, чей замер хуже порога, — и кандидатов без
+    замера вместе с ними. Ступень из одного outbound-а после такой фильтрации
+    остаётся пустой, балансировщику некого выбрать, и клиент показывает пинг
+    «н/д» при живом сервере. Так и вышло с зеркальными профилями: их вторая
+    ступень — одна точка, замерить которую клиент не успевает или не умеет.
+
+    Там, где кандидат один, выбирать не из чего по определению, поэтому порог не
+    нужен: единственная задача балансировщика — отдать трафик этому outbound-у.
+    """
+    settings = {'expected': 1}
+    if len(members) > 1:
+        settings['maxRTT'] = '1500ms'
+    return {'type': 'leastLoad', 'settings': settings}
 
 
 def _cascade(stages: list[tuple[str, list[str]]], name: str) -> tuple[list[dict], list[dict], list[dict], str]:
@@ -663,7 +712,7 @@ def _cascade(stages: list[tuple[str, list[str]]], name: str) -> tuple[list[dict]
     """
     loops, balancers, rules = [], [], []
     for index, (tag, members) in enumerate(stages):
-        balancer = {'tag': tag, 'selector': members, 'strategy': _CASCADE_STRATEGY}
+        balancer = {'tag': tag, 'selector': members, 'strategy': _cascade_strategy(members)}
         if index + 1 < len(stages):
             reroute = f'{name}-L{index + 2}-REROUTE'
             loop_tag = f'LOOP-{name}-L{index + 2}'
@@ -707,6 +756,7 @@ def _build_xray_json(uuid: str, params: dict, direct_host: str, direct_port: int
     return {
         'remarks': f'{_endpoint_label(_OWN_REGION_CODE)} авто',
         'log': {'loglevel': 'warning'},
+        'dns': _xray_json_dns(),
         'policy': {
             'levels': {'0': {
                 'handshake': 4, 'connIdle': 300, 'uplinkOnly': 2,
@@ -715,7 +765,7 @@ def _build_xray_json(uuid: str, params: dict, direct_host: str, direct_port: int
         },
         'routing': _xray_json_routing(balancers, loop_rules, first),
         'burstObservatory': _xray_json_burst_observatory(),
-        'outbounds': outbounds + loops,
+        'outbounds': outbounds + loops + [_DNS_OUTBOUND],
     }
 
 
@@ -748,6 +798,16 @@ def _xray_outbound_from_link(link: str, tag: str) -> dict | None:
             'streamSettings': {
                 'network': 'hysteria',
                 'security': 'tls',
+                # ``finalmask`` описывает, как форк поднимает QUIC. Провайдер
+                # шлёт эту секцию в каждом своём hysteria-outbound; повторяем
+                # его значения, а не подбираем свои: чем ближе к документу,
+                # который у того же клиента уже работает, тем меньше остаётся
+                # мест, где может разойтись поведение.
+                'finalmask': {'quicParams': {
+                    'bbrProfile': 'standard',
+                    'congestion': 'bbr',
+                    'maxIdleTimeout': 4,
+                }},
                 'hysteriaSettings': {'auth': secret, 'version': 2},
                 'tlsSettings': {
                     'serverName': server_name,
@@ -789,12 +849,22 @@ def _xray_outbound_from_link(link: str, tag: str) -> dict | None:
             'mode': query.get('mode', 'auto'),
         }
     user = {'id': secret, 'encryption': 'none', 'flow': query.get('flow', '')}
-    return {
+    outbound = {
         'tag': tag,
         'protocol': 'vless',
         'settings': {'vnext': [{'address': host, 'port': port, 'users': [user]}]},
         'streamSettings': stream,
     }
+    # Vision несовместим с мультиплексированием: соединение с ``flow`` несёт
+    # собственное обрамление, поверх которого mux ломает поток.
+    if not user['flow']:
+        outbound['mux'] = {
+            'enabled': True,
+            'concurrency': 6,
+            'xudpConcurrency': 4,
+            'xudpProxyUDP443': 'reject',
+        }
+    return outbound
 
 
 def _mirror_xray_profiles(links: list[str], allow_hysteria: bool) -> list[dict]:
@@ -834,19 +904,29 @@ def _mirror_xray_profiles(links: list[str], allow_hysteria: bool) -> list[dict]:
         profiles.append({
             'remarks': country,
             'log': {'loglevel': 'warning'},
+            'dns': _xray_json_dns(),
             'routing': _xray_json_routing(balancers, loop_rules, first),
             'burstObservatory': {
                 'subjectSelector': [prefix],
+                # Настройки замера скопированы с провайдера, чей документ у того
+                # же клиента работает: адрес Cloudflare вместо Google, который
+                # у части операторов не отвечает и без всякого туннеля, явный
+                # GET и вдвое больший таймаут. Чужая точка за границей отвечает
+                # медленнее нашей, и пять секунд для неё — повод объявить
+                # мёртвым то, что живо.
                 'pingConfig': {
-                    'destination': 'https://www.google.com/generate_204',
+                    'connectivity': 'https://one.one.one.one/',
+                    'destination': 'https://one.one.one.one/media/content-filter.png',
+                    'httpMethod': 'GET',
                     'interval': '10s',
-                    'timeout': '5s',
+                    'timeout': '10s',
                     'sampling': 1,
                 },
             },
             'outbounds': outbounds + loops + [
                 {'tag': 'direct', 'protocol': 'freedom'},
                 {'tag': 'block', 'protocol': 'blackhole'},
+                _DNS_OUTBOUND,
             ],
         })
     return profiles

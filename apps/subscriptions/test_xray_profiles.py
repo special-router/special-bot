@@ -161,11 +161,26 @@ class MirrorProfileTests(SimpleTestCase):
         # Одна ступень — обычный балансировщик, страна не теряется.
         self.assertNotIn('fallbackTag', profiles[0]['routing']['balancers'][0])
 
-    def test_every_profile_ends_in_its_own_direct_and_block(self):
+    def test_every_profile_carries_its_own_direct_block_and_dns(self):
         profile = _mirror_xray_profiles(self.LINKS, allow_hysteria=True)[0]
 
         tags = [outbound['tag'] for outbound in profile['outbounds']]
-        self.assertEqual(tags[-2:], ['direct', 'block'])
+        self.assertEqual(tags[-3:], ['direct', 'block', 'dns-out'])
+
+    def test_dns_leaves_through_its_own_outbound_not_the_first_stage(self):
+        """Иначе резолв встаёт на мёртвой первой ступени и до второй дело не доходит."""
+        profile = _mirror_xray_profiles(self.LINKS, allow_hysteria=True)[0]
+
+        dns_rule = next(rule for rule in profile['routing']['rules'] if rule.get('port') == '53')
+        self.assertEqual(dns_rule['outboundTag'], 'dns-out')
+        self.assertNotIn('1.1.1.1/32', str(profile['routing']['rules']))
+
+    def test_single_candidate_stage_has_no_latency_threshold(self):
+        """maxRTT отбросил бы незамеренного кандидата, и ступень осталась бы пустой."""
+        profile = _mirror_xray_profiles(self.LINKS, allow_hysteria=True)[0]
+
+        for balancer in profile['routing']['balancers']:
+            self.assertNotIn('maxRTT', balancer['strategy']['settings'])
 
     def test_observatory_watches_only_this_profile_s_own_endpoints(self):
         profile = _mirror_xray_profiles(self.LINKS, allow_hysteria=True)[0]

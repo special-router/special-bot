@@ -614,7 +614,7 @@ class XrayJsonSubscriptionTests(SimpleTestCase):
         self.assertIn('remarks', document)
         self.assertEqual(document['routing']['balancers'][0]['tag'], 'own-l1')
         tags = {outbound['tag'] for outbound in document['outbounds']}
-        self.assertEqual(tags, {'proxy-nl-direct', 'proxy-ru-relay', 'direct', 'block'})
+        self.assertEqual(tags, {'proxy-nl-direct', 'proxy-ru-relay', 'direct', 'block', 'dns-out'})
 
         rule_index = {}
         for index, rule in enumerate(document['routing']['rules']):
