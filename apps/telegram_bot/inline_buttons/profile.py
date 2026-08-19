@@ -12,6 +12,9 @@ async def get_reply_markup_profile() -> InlineKeyboardMarkup:
             button('Подписки', 'show_keys', icon=icons.KEY),
         ],
         [
+            button('Самопроверка', 'show_selfcheck', icon=icons.REFRESH),
+        ],
+        [
             back_button(),
         ],
     ]

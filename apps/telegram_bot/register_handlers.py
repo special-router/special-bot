@@ -32,6 +32,7 @@ from apps.telegram_bot.handlers.main_menu import main_menu
 from apps.telegram_bot.handlers.profile import show_profile
 from apps.telegram_bot.handlers.referral import referral
 from apps.telegram_bot.handlers.reset_devices import reset_devices
+from apps.telegram_bot.handlers.selfcheck import show_selfcheck
 from apps.telegram_bot.handlers.show_keys import show_keys
 from apps.telegram_bot.handlers.start import start
 from apps.telegram_bot.handlers.subscription import show_subscription
@@ -110,6 +111,7 @@ def register_handlers():
     telegram_bot_app.add_handler(CallbackQueryHandler(top_up_balance_year, pattern=r'^top_up_balance_year'))
     telegram_bot_app.add_handler(CallbackQueryHandler(faq, pattern=r'^faq'))
     telegram_bot_app.add_handler(CallbackQueryHandler(show_profile, pattern=r'^profile$'))
+    telegram_bot_app.add_handler(CallbackQueryHandler(show_selfcheck, pattern=r'^show_selfcheck$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(main_menu, pattern=r'^main_menu$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(show_keys, pattern=r'^show_keys$'))
     telegram_bot_app.add_handler(CallbackQueryHandler(add_key, pattern=r'^add_key:\d+$'))

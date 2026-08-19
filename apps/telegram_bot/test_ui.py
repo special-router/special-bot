@@ -44,6 +44,7 @@ EXPECTED_CALLBACK_DATA = frozenset(
         'show_balance',
         'show_keys',
         'show_devices',
+        'show_selfcheck',
         'unbind_device:*',
         'top_up_balance_promo',
         'topup_period:*',
