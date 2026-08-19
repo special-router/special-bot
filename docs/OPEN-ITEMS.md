@@ -448,6 +448,18 @@ dead. Nothing was broken; the schedule simply did not exist yet. **If a country
 you expect is missing, or a dead one appears, read `checked_at` before reading
 the code.**
 
+**2026-08-19: `MirrorEndpointLiveness` rows were never deleted.** A host
+dropped from the provider's document (IP rotation) just stopped getting new
+verdicts and sat in the table forever. Of 23 rows read that day, 9 were
+orphans of long-replaced hosts, aged from ~2 hours to ~5 days — enough to make
+a supervisor reading the table by hand conclude mirrors were massively dead
+when they were not. `probe_mirror_liveness` now deletes any row whose
+`checked_at` is older than `SUBSCRIPTION_BACKUP_LIVENESS_PRUNE_AFTER_SECONDS`
+(default 24h) after every run, and prints `current=<rows> alive=<alive rows>`
+so that summary no longer requires a Django shell. A one-off migration
+(`0006_prune_stale_mirror_endpoint_liveness`) applied the same rule to the 23
+pre-existing rows.
+
 ## Every Russian address in the provider document is an exit, not a bridge
 
 Recorded because the tag names invite the opposite conclusion. The document

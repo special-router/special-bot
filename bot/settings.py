@@ -549,6 +549,17 @@ SUBSCRIPTION_BACKUP_LIVENESS_PROBE_TIMEOUT_SECONDS = env.float(
 # point changed.
 SUBSCRIPTION_BACKUP_LIVENESS_PROBE_ORIGIN = env.str(
     'SUBSCRIPTION_BACKUP_LIVENESS_PROBE_ORIGIN', 'bot')
+# How long a verdict may go unrefreshed before the prober deletes its row.
+# checked_at is only ever set alongside a host being seen in the provider's
+# current document (see probe_mirror_liveness._targets), so its age already
+# means "still offered and dialled this run" — no separate "last seen" field
+# is needed. The probe runs every 30 minutes, so 24 hours is ~48 consecutive
+# failed cycles before a row disappears; no plausible transient source outage
+# stretches that long, and one that does is a large enough incident to show up
+# in journalctl and monitoring on its own, not something this gate needs to
+# catch.
+SUBSCRIPTION_BACKUP_LIVENESS_PRUNE_AFTER_SECONDS = env.int(
+    'SUBSCRIPTION_BACKUP_LIVENESS_PRUNE_AFTER_SECONDS', 86400)
 # Reality SNIs an operator declares as whitelist camouflage, matched on domain
 # labels. A provider advertising bypass of a mobile-internet shutdown puts it
 # nowhere in its routing config; it is the announced server name, a domain that

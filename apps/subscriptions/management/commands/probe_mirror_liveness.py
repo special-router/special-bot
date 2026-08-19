@@ -22,6 +22,7 @@ outcome worse than the blind selection this replaces.
 from __future__ import annotations
 
 import concurrent.futures
+import datetime
 import json
 import logging
 import os
@@ -123,6 +124,17 @@ class Command(BaseCommand):
                 defaults={'alive': endpoint_alive, 'error_class': error_class, 'checked_at': now,
                           'probed_from': origin})
         self.stdout.write(f'wrote {len(probed)} verdicts')
+
+        prune_after = _bounded_number(
+            getattr(settings, 'SUBSCRIPTION_BACKUP_LIVENESS_PRUNE_AFTER_SECONDS', 86400),
+            default=86400, lower=7200, upper=2592000)
+        pruned, _ = MirrorEndpointLiveness.objects.filter(
+            checked_at__lt=now - datetime.timedelta(seconds=prune_after)).delete()
+        self.stdout.write(f'pruned={pruned}')
+
+        current = MirrorEndpointLiveness.objects.count()
+        alive_now = MirrorEndpointLiveness.objects.filter(alive=True).count()
+        self.stdout.write(f'current={current} alive={alive_now}')
 
     def _targets(self) -> list[dict]:
         """Every distinct endpoint the configured sources offer, deduplicated.
