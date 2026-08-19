@@ -498,13 +498,34 @@ def _xray_json_routing() -> dict:
 
 
 def _xray_json_burst_observatory() -> dict:
+    """Failover latency is bounded by one full probe cycle, ``interval *
+    sampling`` -- and Xray-core hard-floors ``interval`` at 10s, silently
+    raising anything smaller.  10s is therefore the fastest cycle obtainable.
+
+    ``sampling`` does not add probe traffic: probes/day per candidate is
+    ``86400 / interval`` regardless of ``sampling``, because a higher sampling
+    count only spreads the same per-cycle probe count over more, shorter
+    sub-windows.  What it does cost is failover speed -- a candidate stays
+    "Alive" until every cached sample slot has failed or expired, so
+    ``sampling=3`` needs up to three cycles' worth of probes to evict all the
+    stale-healthy slots left over from before it died.  ``sampling=1`` has
+    exactly one slot, so the very next probe decides Alive/dead -- nothing
+    left to evict.  The trade-off is noisier ranking (no averaging across
+    samples), acceptable here because the candidates are our own two-to-three
+    servers, not a large pool being fine-ranked by latency.
+
+    ``timeout`` is left at 5s on purpose: our servers normally answer in well
+    under a second, but a real client on a slow mobile network occasionally
+    won't, and a shorter timeout would start declaring a merely-slow leg dead
+    -- flapping is worse than a few extra seconds on the rare truly-dead case.
+    """
     return {
         'subjectSelector': ['proxy'],
         'pingConfig': {
             'destination': 'https://www.google.com/generate_204',
-            'interval': '30s',
+            'interval': '10s',
             'timeout': '5s',
-            'sampling': 3,
+            'sampling': 1,
         },
     }
 

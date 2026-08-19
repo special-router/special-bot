@@ -629,6 +629,16 @@ class XrayJsonSubscriptionTests(SimpleTestCase):
         self.assertIn('burstObservatory', document)
         self.assertEqual(document['burstObservatory']['subjectSelector'], ['proxy'])
 
+    def test_balancer_ping_config_targets_the_fastest_cycle_xray_allows(self, _params):
+        # interval=10s is Xray-core's hard floor (anything smaller is silently
+        # raised); sampling=1 means the very next probe decides Alive/dead,
+        # instead of needing several cycles to evict stale-healthy samples.
+        response = self._response('Happ/2.0')
+
+        ping_config = json.loads(response.content)['burstObservatory']['pingConfig']
+        self.assertEqual(ping_config['interval'], '10s')
+        self.assertEqual(ping_config['sampling'], 1)
+
     def test_unrecognized_user_agent_keeps_the_base64_contract(self, _params):
         response = self._response('curl/8.0')
 
