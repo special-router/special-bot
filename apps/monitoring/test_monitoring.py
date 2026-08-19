@@ -70,6 +70,15 @@ class RegionalProbeTests(TestCase):
         self.assertEqual(result.error_class, 'not_configured')
 
 
+# Задачи, которые стоят в расписании всегда: их включает не флаг мониторинга, а
+# наличие собственной конфигурации, и каждая сама выходит без неё.
+_BASE_SCHEDULE = {
+    'update_user_vpn_daily',
+    'sync_expiry_times_daily',
+    'poll_cryptobot_invoices',
+}
+
+
 class BeatScheduleTests(TestCase):
     project_root = Path(__file__).resolve().parents[2]
 
@@ -117,7 +126,7 @@ class BeatScheduleTests(TestCase):
     def test_monitoring_schedules_are_disabled_by_default(self):
         schedule = self._schedule_keys(monitor_enabled=False, l2_enabled=False)
 
-        self.assertEqual(schedule, {'update_user_vpn_daily', 'sync_expiry_times_daily'})
+        self.assertEqual(schedule, _BASE_SCHEDULE)
 
     def test_l2_schedule_requires_both_monitoring_flags(self):
         without_l2 = self._schedule_keys(monitor_enabled=True, l2_enabled=False)
@@ -125,12 +134,10 @@ class BeatScheduleTests(TestCase):
 
         self.assertEqual(
             without_l2,
-            {
+            _BASE_SCHEDULE | {
                 'special_monitor_host',
                 'special_monitor_l0',
                 'special_monitor_l1',
-                'update_user_vpn_daily',
-                'sync_expiry_times_daily',
             },
         )
         self.assertEqual(with_l2, without_l2 | {'special_monitor_l2'})

@@ -379,6 +379,16 @@ SUBSCRIPTION_BASE_URL = env.str('SUBSCRIPTION_BASE_URL', env.str('SUB_URL', ''))
 # legacy behaviour of advertising the inbound's own port.
 SUBSCRIPTION_DIRECT_ADVERTISED_PORT = env.int('SUBSCRIPTION_DIRECT_ADVERTISED_PORT', 0)
 
+# XHTTP-линия: тот же хост и порт, что и подписка, трафик идёт обычными HTTPS
+# запросами по этому пути, а nginx отдаёт их xray на петле. Выдача выключена по
+# умолчанию, потому что она бессмысленна без двух вещей на стороне узла —
+# location в nginx и inbound-а с этим путём, — и включать её раньше значит
+# раздать клиентам заведомо мёртвую строку. Путь не является bearer-данными: без
+# UUID клиента он не даёт доступа, поэтому живёт в обычной конфигурации.
+SUBSCRIPTION_XHTTP_ENABLED = env.bool('SUBSCRIPTION_XHTTP_ENABLED', False)
+SUBSCRIPTION_XHTTP_PATH = env.str('SUBSCRIPTION_XHTTP_PATH', default='')
+SUBSCRIPTION_XHTTP_PORT = env.int('SUBSCRIPTION_XHTTP_PORT', 443)
+
 # Branding and environment carried in subscription response headers, which is
 # how the client app builds its own interface. Values reach the wire verbatim,
 # so the view drops any that would not survive as a header rather than raising.

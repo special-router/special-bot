@@ -311,6 +311,47 @@ def _internal_links(server_id: int, requested_uuid: str) -> list[str]:
     return links
 
 
+def _xhttp_link(uuid: str, host: str) -> str | None:
+    """Линия XHTTP: тот же вход, что и у подписки, обычным HTTPS.
+
+    Ничего не читает у панели: путь и порт — конфигурация, а не живое состояние
+    inbound-а, потому что здесь нет ни Reality-параметров, ни short id, которые
+    имело бы смысл сверять. Зато есть условие, без которого линия бесполезна и
+    вредна: UUID клиента должен присутствовать в зеркальном inbound-е. За это
+    отвечает ``MIRROR_INBOUND_IDS`` — тот же механизм, что наполняет остальные
+    зеркала, — и включать выдачу до того, как зеркало настроено, нельзя.
+
+    Ошибка в конфигурации гасит линию целиком: клиент, получивший строку в
+    неработающий транспорт, читает её как «сервис сломан», и это хуже, чем на
+    одну строку меньше.
+    """
+    from django.conf import settings
+    if not getattr(settings, 'SUBSCRIPTION_XHTTP_ENABLED', False):
+        return None
+    path = getattr(settings, 'SUBSCRIPTION_XHTTP_PATH', '')
+    if not isinstance(path, str) or not path.startswith('/') or len(path) > 128:
+        return None
+    if any(character in path for character in ' \r\n\t#?'):
+        return None
+    port = getattr(settings, 'SUBSCRIPTION_XHTTP_PORT', 443)
+    if not isinstance(port, int) or not 1 <= port <= 65535:
+        return None
+    query = urlencode(
+        [
+            ('type', 'xhttp'),
+            ('security', 'tls'),
+            ('sni', host),
+            ('fp', 'chrome'),
+            ('path', path),
+            ('mode', 'auto'),
+            ('host', host),
+        ],
+        quote_via=quote,
+    )
+    remark = f'{_endpoint_label(_OWN_REGION_CODE)} {_ALT_TRANSPORT_LABEL_SUFFIX}'
+    return f'vless://{uuid}@{host}:{port}?{query}#{quote(remark)}'
+
+
 def _build_vless(uuid: str, host: str, port: int, remark: str, params: dict, flow: str = '',
                   fingerprint: str = 'chrome', service_name: str = '') -> str:
     """Build a VLESS URI with encoded query values and explicit transport fields.
@@ -399,6 +440,13 @@ def subscription_proxy(request, sub_id: str):
         links.append(_build_vless(uuid_str, relay_host, relay_port,
                                   _endpoint_label(_OWN_REGION_CODE, whitelisted=True),
                                   params, flow=flow))
+    # 3.5) XHTTP на том же имени и порту, что и сама подписка. Стоит сразу за
+    # нашими двумя линиями: это наш endpoint, и он единственный не опознаётся
+    # как VPN-хендшейк — то есть первое, что стоит попробовать, когда обычная
+    # линия перестала работать у конкретного оператора.
+    xhttp_link = _xhttp_link(uuid_str, direct_host)
+    if xhttp_link:
+        links.append(xhttp_link)
     # 4) Same-origin internal transport canary. Every candidate independently
     # stable-reads its own live inbound and silently omits on any uncertainty.
     if _is_internal_test_user(user_vpn.id):
@@ -993,6 +1041,14 @@ _MIRROR_UNKNOWN_REGION = '🌐 Резерв'
 # operator declared as whitelist camouflage.  The suffix is composed from that
 # property of the endpoint, never written onto a line.
 _WHITELIST_LABEL_SUFFIX = 'белые списки'
+# То же для второго свойства, которым одна линия отличается от другой линии той
+# же страны: она несёт трафик обычными HTTPS-запросами к подписочному имени, а не
+# отдельным TCP-потоком на выделенный порт.  Провайдер, научившийся опознавать
+# наш Reality-хендшейк, эту линию не отличает от посещения сайта — поэтому она и
+# нужна ровно тогда, когда основная перестала работать.  Клиенту сказано именно
+# это, без слова о транспорте: «запасной путь» — то, что он выберет, когда
+# первая строка молчит.
+_ALT_TRANSPORT_LABEL_SUFFIX = 'запасной путь'
 # A configured suffix list is operator input, not provider input, but it is
 # still read once per rendered document, so its length is bounded like every
 # other list this module walks.
