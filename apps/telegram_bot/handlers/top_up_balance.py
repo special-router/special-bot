@@ -15,6 +15,7 @@ from apps.analytics.funnel import (
     topup_plan_chosen,
 )
 from apps.analytics.recording import record_topup
+from apps.payments.bonus import topup_bonus_amount
 from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
 from apps.payments.constants import PROMO_AMOUNT
 from apps.payments.models import Transaction
@@ -181,17 +182,9 @@ async def successful_payment_callback(update: Update, context):
 
     payment = update.message.successful_payment
 
-    amount = round(payment.total_amount / 100, 2)
-
-    # todo: костыль
-    if amount > 2520:
-        amount = int(amount + amount * 0.3)
-    elif amount > 1250:
-        amount = int(amount + amount * 0.2)
-    elif amount > 600:
-        amount = int(amount + amount * 0.1)
-    elif amount > 400:
-        amount = int(amount + amount * 0.05)
+    # Лестница объёмного бонуса общая с криптооплатой: за одни и те же деньги
+    # клиент получает один и тот же баланс, каким бы способом он ни заплатил.
+    amount = topup_bonus_amount(_rubles(payment.total_amount))
 
     topup = await Transaction.objects.acreate(
         user=user,

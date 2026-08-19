@@ -6,9 +6,9 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
-from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
 from apps.payments.cryptobot_client import verify_webhook_signature
-from apps.payments.models import CryptoBotInvoice, Transaction
+from apps.payments.cryptobot_credit import credit_cryptobot_invoice
+from apps.payments.models import CryptoBotInvoice
 
 
 logger = logging.getLogger(__name__)
@@ -39,23 +39,9 @@ def cryptobot_webhook(request):
     except CryptoBotInvoice.DoesNotExist:
         return JsonResponse({'ok': True})
 
-    # Atomic: flip paid False→True; zero rows = already processed (retry or dup).
-    claimed = CryptoBotInvoice.objects.filter(id=invoice.id, paid=False).update(paid=True)
-    if not claimed:
-        return JsonResponse({'ok': True})
-
-    Transaction.objects.create(
-        user=invoice.user,
-        amount=invoice.amount_rub,
-        status=TransactionStatusChoices.SUCCESS,
-        source=TransactionSourceChoices.CRYPTO,
-    )
-
-    logger.info(
-        'cryptobot_webhook invoice_id=%s user_id=%s amount_rub=%s',
-        invoice_id,
-        invoice.user_id,
-        str(invoice.amount_rub),
-    )
+    # Зачисление и защита от повтора — общие с опросом (`poll_cryptobot_invoices`),
+    # который в этом развёртывании и делает всю работу. Два пути могут прийти на
+    # один счёт, и решает гонку атомарный переход внутри.
+    credit_cryptobot_invoice(invoice)
 
     return JsonResponse({'ok': True})

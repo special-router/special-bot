@@ -248,6 +248,15 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
+# Опрос CryptoBot — единственный путь зачисления криптооплаты: вебхук провайдера
+# не зарегистрирован, а бот работает на long polling. Задача сама выходит без
+# токена, поэтому расписание безусловно: включает интеграцию наличие токена.
+CRYPTOBOT_POLL_WINDOW_HOURS = env.int('CRYPTOBOT_POLL_WINDOW_HOURS', 24)
+CELERY_BEAT_SCHEDULE['poll_cryptobot_invoices'] = {
+    'task': 'apps.payments.tasks.poll_cryptobot_invoices',
+    'schedule': crontab(minute='*'),
+}
+
 SPECIAL_MONITOR_ENABLED = env.bool('SPECIAL_MONITOR_ENABLED', False)
 SPECIAL_MONITOR_L2_ENABLED = env.bool('SPECIAL_MONITOR_L2_ENABLED', False)
 SPECIAL_MONITOR_CHECKOUT_ENABLED = env.bool('SPECIAL_MONITOR_CHECKOUT_ENABLED', False)

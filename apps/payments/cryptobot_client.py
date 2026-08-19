@@ -94,6 +94,45 @@ async def get_usdt_rate(token: str) -> Decimal | None:
     return None
 
 
+def get_invoices_sync(token: str, invoice_ids: list[int]) -> list[dict] | None:
+    """Прочитать состояние конкретных счётов. Синхронно — вызывается из Celery.
+
+    Спрашивает только про известные нам номера, поэтому ответ не зависит от
+    того, сколько счетов у приложения всего, и пагинация не нужна. Возвращает
+    None на любой ошибке: пустой список означал бы «провайдер не знает ни одного
+    из этих счетов», а это другое утверждение, и на нём нельзя ничего решать.
+    Токен не попадает ни в логи, ни в исключения.
+    """
+    if not invoice_ids:
+        return []
+    try:
+        with httpx.Client() as client:
+            response = client.get(
+                f'{_CRYPTOBOT_BASE_URL}getInvoices',
+                headers={'Crypto-Pay-API-Token': token},
+                params={'invoice_ids': ','.join(str(number) for number in invoice_ids)},
+                timeout=15,
+            )
+            response.raise_for_status()
+            data = response.json()
+    except Exception:
+        logger.warning('cryptobot get_invoices failed count=%s', len(invoice_ids), exc_info=True)
+        return None
+
+    if not data.get('ok'):
+        logger.warning('cryptobot get_invoices not ok error=%s', data.get('error'))
+        return None
+
+    result = data.get('result')
+    # Провайдер отвечает объектом с ``items``; форма-список встречается в более
+    # старых ответах того же метода и стоит одной строки совместимости.
+    items = result.get('items') if isinstance(result, dict) else result
+    if not isinstance(items, list):
+        logger.warning('cryptobot get_invoices unexpected result shape')
+        return None
+    return [item for item in items if isinstance(item, dict)]
+
+
 def verify_webhook_signature(token: str, body: bytes, signature: str) -> bool:
     """Verify a CryptoBot webhook signature.
 
