@@ -413,6 +413,13 @@ SUBSCRIPTION_GRPC_SHORT_ID = env.str('SUBSCRIPTION_GRPC_SHORT_ID', default='')
 # accept it as-is, selected by User-Agent. Off by default: every other client,
 # including any UA this deployment has not confirmed, keeps the base64 list.
 SUBSCRIPTION_XRAY_JSON_ENABLED = env.bool('SUBSCRIPTION_XRAY_JSON_ENABLED', False)
+# Кому именно уходит новый формат. Смена формата подписки — самое заметное
+# изменение из возможных: клиент видит не «другой формат», а «серверы пропали».
+# Поэтому выкатка идёт списком, как у зеркал, и раскрывается на всех отдельным
+# флагом — осознанно, а не заодно с включением ветки.
+SUBSCRIPTION_XRAY_JSON_TEST_USER_IDS = env.json('SUBSCRIPTION_XRAY_JSON_TEST_USER_IDS', default=[])
+SUBSCRIPTION_XRAY_JSON_ALL_USERS_ENABLED = env.bool(
+    'SUBSCRIPTION_XRAY_JSON_ALL_USERS_ENABLED', False)
 
 # Branding and environment carried in subscription response headers, which is
 # how the client app builds its own interface. Values reach the wire verbatim,

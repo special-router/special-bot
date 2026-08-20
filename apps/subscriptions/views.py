@@ -472,15 +472,26 @@ _V2RAYNG_UA_PATTERN = re.compile(r'v2rayng', re.IGNORECASE)
 _HAPP_UA_PATTERN = re.compile(r'happ', re.IGNORECASE)
 
 
-def _wants_xray_json(user_agent: str) -> bool:
+def _wants_xray_json(user_agent: str, user_vpn_id: int | None = None) -> bool:
     """Whether this request should receive a raw Xray JSON body instead of base64.
 
-    The flag decides before the UA does: with it off, no UA -- however it
-    matches -- ever reaches the JSON branch.
+    Три условия подряд, и порядок важен: флаг решает раньше UA, а список
+    выкатки — раньше обоих.
+
+    Список появился после аварии 2026-08-20. Ветка включалась одним флагом на
+    всех сразу, и смена формата у клиента выглядит не как «формат другой», а как
+    «серверы пропали»: вместо списка точек он видит один профиль. Формат — это
+    то, что видит клиент целиком, поэтому менять его сразу для всех нельзя даже
+    когда он проверен на стенде. Пустой список означает «никому», а не «всем»:
+    ошибка в настройке должна оставлять людей на работающем формате.
     """
     from django.conf import settings
     if not getattr(settings, 'SUBSCRIPTION_XRAY_JSON_ENABLED', False):
         return False
+    if not getattr(settings, 'SUBSCRIPTION_XRAY_JSON_ALL_USERS_ENABLED', False):
+        allowed = getattr(settings, 'SUBSCRIPTION_XRAY_JSON_TEST_USER_IDS', [])
+        if not isinstance(allowed, list) or user_vpn_id not in allowed:
+            return False
     return bool(_V2RAYNG_UA_PATTERN.search(user_agent) or _HAPP_UA_PATTERN.search(user_agent))
 
 
@@ -988,7 +999,7 @@ def subscription_proxy(request, sub_id: str):
     flow = ''
 
     user_agent = request.META.get('HTTP_USER_AGENT', '')
-    if _wants_xray_json(user_agent) and _xray_json_ready(params, direct_host):
+    if _wants_xray_json(user_agent, user_vpn.id) and _xray_json_ready(params, direct_host):
         try:
             # Массив, а не один объект: клиент рисует по профилю на элемент и
             # берёт имя из ``remarks``. Наш узел идёт первым — он единственный,

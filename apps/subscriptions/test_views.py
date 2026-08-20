@@ -578,6 +578,7 @@ class RetiredStatusEntryTests(SimpleTestCase):
     SUBSCRIPTION_DIRECT_ADVERTISED_PORT=0,
     SUBSCRIPTION_STATUS_ENTRY_ENABLED=True,
     SUBSCRIPTION_XRAY_JSON_ENABLED=True,
+    SUBSCRIPTION_XRAY_JSON_TEST_USER_IDS=[1],
 )
 @patch('apps.subscriptions.views._get_params', return_value={
     'public_key': 'synthetic-public-key', 'server_name': 'sni.example',
@@ -651,6 +652,26 @@ class XrayJsonSubscriptionTests(SimpleTestCase):
         self.assertEqual(response['Content-Type'], 'text/plain')
         base64.b64decode(response.content)  # does not raise -- still the legacy body
 
+    @override_settings(SUBSCRIPTION_XRAY_JSON_TEST_USER_IDS=[999])
+    def test_a_customer_outside_the_rollout_keeps_the_working_format(self, _params):
+        """Смена формата читается клиентом как «серверы пропали», а не как формат."""
+        response = self._response('Happ/2.0')
+
+        self.assertEqual(response['Content-Type'], 'text/plain')
+
+    @override_settings(SUBSCRIPTION_XRAY_JSON_TEST_USER_IDS=[])
+    def test_an_empty_rollout_list_means_nobody_not_everybody(self, _params):
+        response = self._response('Happ/2.0')
+
+        self.assertEqual(response['Content-Type'], 'text/plain')
+
+    @override_settings(SUBSCRIPTION_XRAY_JSON_TEST_USER_IDS=[],
+                       SUBSCRIPTION_XRAY_JSON_ALL_USERS_ENABLED=True)
+    def test_opening_it_to_everyone_is_its_own_deliberate_switch(self, _params):
+        response = self._response('Happ/2.0')
+
+        self.assertEqual(response['Content-Type'], 'application/json')
+
     @override_settings(SUBSCRIPTION_XRAY_JSON_ENABLED=False)
     def test_flag_off_beats_a_matching_user_agent(self, _params):
         response = self._response('Happ/2.0')
@@ -674,6 +695,7 @@ class XrayJsonDeviceGateTests(SimpleTestCase):
     @override_settings(
         SUBSCRIPTION_BASE_URL='https://direct.example/sub',
         SUBSCRIPTION_XRAY_JSON_ENABLED=True,
+        SUBSCRIPTION_XRAY_JSON_TEST_USER_IDS=[1],
     )
     @patch('apps.subscriptions.views._device_gate',
           return_value=(False, {'x-hwid-not-supported': 'true'}))
