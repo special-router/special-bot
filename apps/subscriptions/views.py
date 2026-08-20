@@ -579,7 +579,7 @@ def _xray_json_outbounds(uuid: str, params: dict, direct_host: str, direct_port:
     return outbounds
 
 
-def _xray_json_routing(balancers: list[dict], loop_rules: list[dict], first: str) -> dict:
+def _xray_json_routing(balancers: list[dict], loop_rules: list[dict], entry: tuple[str, str]) -> dict:
     """Same rule order as ``darkcore-connections-service``'s routing.ts.
 
     Правила петель стоят раньше остальных: трафик приходит в них уже размеченным
@@ -592,7 +592,13 @@ def _xray_json_routing(balancers: list[dict], loop_rules: list[dict], first: str
     ступень мертва — а у зеркальной страны она мертва всегда, — вставал сам
     резолв: до перехода на следующую ступень дело не доходило, потому что
     соединение ещё не с чем было установить.
+
+    ``entry`` говорит, чем начинается путь: балансировщиком или прямым
+    outbound-ом. Второе — когда ступень всего одна: выбирать не из чего, а
+    балансировщик, которому нечего выбрать, отдаёт трафик в никуда и показывает
+    клиенту пинг «н/д». Лишнее звено здесь умеет только ломаться.
     """
+    kind, tag = entry
     return {
         'domainStrategy': 'IPIfNonMatch',
         'domainMatcher': 'mph',
@@ -609,7 +615,7 @@ def _xray_json_routing(balancers: list[dict], loop_rules: list[dict], first: str
             {'type': 'field', 'domain': ['geosite:private'], 'outboundTag': 'direct'},
             {'type': 'field', 'domain': ['regexp:\\.ru$'], 'outboundTag': 'direct'},
             {'type': 'field', 'ip': ['geoip:ru'], 'outboundTag': 'direct'},
-            {'type': 'field', 'network': 'tcp,udp', 'balancerTag': first},
+            {'type': 'field', 'network': 'tcp,udp', kind: tag},
         ],
     }
 
@@ -721,6 +727,13 @@ def _cascade(stages: list[tuple[str, list[str]]], name: str) -> tuple[list[dict]
     балансировщика первой ступени — то, чем правило «весь остальной трафик»
     начинает лестницу.
     """
+    # Одна ступень с одним outbound-ом — это не лестница, а обычный маршрут.
+    # Балансировщик над единственным кандидатом ничего не решает, но добавляет
+    # условие, при котором трафик может никуда не пойти: пока observatory не
+    # принёс замер, выбирать ему не из чего. Клиент показывает это как «н/д».
+    if len(stages) == 1 and len(stages[0][1]) == 1:
+        return [], [], [], ('outboundTag', stages[0][1][0])
+
     loops, balancers, rules = [], [], []
     for index, (tag, members) in enumerate(stages):
         balancer = {'tag': tag, 'selector': members, 'strategy': _cascade_strategy(members)}
@@ -739,7 +752,7 @@ def _cascade(stages: list[tuple[str, list[str]]], name: str) -> tuple[list[dict]
                 'balancerTag': stages[index + 1][0],
             })
         balancers.append(balancer)
-    return loops, balancers, rules, stages[0][0]
+    return loops, balancers, rules, ('balancerTag', stages[0][0])
 
 
 def _build_xray_json(uuid: str, params: dict, direct_host: str, direct_port: int,
@@ -763,8 +776,8 @@ def _build_xray_json(uuid: str, params: dict, direct_host: str, direct_port: int
     for tag, balancer in (('proxy-xhttp', 'own-l2'), ('proxy-grpc', 'own-l3')):
         if tag in tags:
             stages.append((balancer, [tag]))
-    loops, balancers, loop_rules, first = _cascade(stages, 'OWN')
-    return {
+    loops, balancers, loop_rules, entry = _cascade(stages, 'OWN')
+    document = {
         'remarks': f'{_endpoint_label(_OWN_REGION_CODE)} авто',
         'log': {'loglevel': 'warning'},
         'dns': _xray_json_dns(),
@@ -774,10 +787,14 @@ def _build_xray_json(uuid: str, params: dict, direct_host: str, direct_port: int
                 'downlinkOnly': 5, 'bufferSize': 10240,
             }},
         },
-        'routing': _xray_json_routing(balancers, loop_rules, first),
-        'burstObservatory': _xray_json_burst_observatory(),
+        'routing': _xray_json_routing(balancers, loop_rules, entry),
         'outbounds': outbounds + loops + [_DNS_OUTBOUND],
     }
+    # Замеры существуют ради выбора. Без балансировщиков выбирать нечего, и
+    # секция осталась бы работой, результат которой никто не читает.
+    if balancers:
+        document['burstObservatory'] = _xray_json_burst_observatory()
+    return document
 
 
 def _xray_outbound_from_link(link: str, tag: str) -> dict | None:
@@ -911,20 +928,26 @@ def _mirror_xray_profiles(links: list[str], allow_hysteria: bool) -> list[dict]:
             stages.append((f'{prefix}-b{position}', [tag]))
         if not outbounds:
             continue
-        loops, balancers, loop_rules, first = _cascade(stages, prefix)
-        profiles.append({
+        loops, balancers, loop_rules, entry = _cascade(stages, prefix)
+        profile = {
             'remarks': country,
             'log': {'loglevel': 'warning'},
             'dns': _xray_json_dns(),
-            'routing': _xray_json_routing(balancers, loop_rules, first),
-            'burstObservatory': {
+            'routing': _xray_json_routing(balancers, loop_rules, entry),
+            'outbounds': outbounds + loops + [
+                {'tag': 'direct', 'protocol': 'freedom'},
+                {'tag': 'block', 'protocol': 'blackhole'},
+                _DNS_OUTBOUND,
+            ],
+        }
+        if balancers:
+            # Настройки замера скопированы с провайдера, чей документ у того же
+            # клиента работает: адрес Cloudflare вместо Google, который у части
+            # операторов не отвечает и без всякого туннеля, явный GET и вдвое
+            # больший таймаут. Чужая точка за границей отвечает медленнее нашей,
+            # и пять секунд для неё — повод объявить мёртвым то, что живо.
+            profile['burstObservatory'] = {
                 'subjectSelector': [prefix],
-                # Настройки замера скопированы с провайдера, чей документ у того
-                # же клиента работает: адрес Cloudflare вместо Google, который
-                # у части операторов не отвечает и без всякого туннеля, явный
-                # GET и вдвое больший таймаут. Чужая точка за границей отвечает
-                # медленнее нашей, и пять секунд для неё — повод объявить
-                # мёртвым то, что живо.
                 'pingConfig': {
                     'connectivity': 'https://one.one.one.one/',
                     'destination': 'https://one.one.one.one/media/content-filter.png',
@@ -933,13 +956,8 @@ def _mirror_xray_profiles(links: list[str], allow_hysteria: bool) -> list[dict]:
                     'timeout': '10s',
                     'sampling': 1,
                 },
-            },
-            'outbounds': outbounds + loops + [
-                {'tag': 'direct', 'protocol': 'freedom'},
-                {'tag': 'block', 'protocol': 'blackhole'},
-                _DNS_OUTBOUND,
-            ],
-        })
+            }
+        profiles.append(profile)
     return profiles
 
 

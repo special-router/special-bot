@@ -34,10 +34,10 @@ _XHTTP = dict(
 
 class CascadeTests(SimpleTestCase):
     def test_each_stage_falls_back_to_the_next_one_through_a_loopback(self):
-        loops, balancers, rules, first = _cascade(
+        loops, balancers, rules, entry = _cascade(
             [('a', ['x']), ('b', ['y']), ('c', ['z'])], 'T')
 
-        self.assertEqual(first, 'a')
+        self.assertEqual(entry, ('balancerTag', 'a'))
         self.assertEqual([balancer['fallbackTag'] for balancer in balancers[:-1]],
                          ['LOOP-T-L2', 'LOOP-T-L3'])
         # Последней ступени падать некуда: fallbackTag на несуществующий тег
@@ -52,10 +52,18 @@ class CascadeTests(SimpleTestCase):
         self.assertEqual([(rule['inboundTag'][0], rule['balancerTag']) for rule in rules],
                          [('T-L2-REROUTE', 'b'), ('T-L3-REROUTE', 'c')])
 
-    def test_single_stage_is_a_plain_balancer_without_loops(self):
-        loops, balancers, rules, first = _cascade([('only', ['x'])], 'T')
+    def test_a_single_endpoint_skips_the_balancer_entirely(self):
+        """Балансировщику над одним кандидатом нечего решать, но он может не решить ничего."""
+        loops, balancers, rules, entry = _cascade([('only', ['x'])], 'T')
 
-        self.assertEqual((loops, rules, first), ([], [], 'only'))
+        self.assertEqual((loops, balancers, rules), ([], [], []))
+        self.assertEqual(entry, ('outboundTag', 'x'))
+
+    def test_a_single_stage_with_several_endpoints_still_balances(self):
+        loops, balancers, rules, entry = _cascade([('only', ['x', 'y'])], 'T')
+
+        self.assertEqual(entry, ('balancerTag', 'only'))
+        self.assertEqual((loops, rules), ([], []))
         self.assertNotIn('fallbackTag', balancers[0])
 
 
@@ -156,10 +164,14 @@ class MirrorProfileTests(SimpleTestCase):
         profiles = _mirror_xray_profiles(self.LINKS, allow_hysteria=False)
 
         self.assertEqual(len(profiles), 1)
-        protocols = [outbound['protocol'] for outbound in profiles[0]['outbounds']]
+        profile = profiles[0]
+        protocols = [outbound['protocol'] for outbound in profile['outbounds']]
         self.assertNotIn('hysteria', protocols)
-        # Одна ступень — обычный балансировщик, страна не теряется.
-        self.assertNotIn('fallbackTag', profiles[0]['routing']['balancers'][0])
+        # Осталась одна точка — маршрут ведёт прямо в неё, без балансировщика,
+        # которому нечего выбирать, и без замеров, которых он бы ждал.
+        self.assertEqual(profile['routing']['balancers'], [])
+        self.assertNotIn('burstObservatory', profile)
+        self.assertEqual(profile['routing']['rules'][-1]['outboundTag'], 'M0-s0')
 
     def test_every_profile_carries_its_own_direct_block_and_dns(self):
         profile = _mirror_xray_profiles(self.LINKS, allow_hysteria=True)[0]
