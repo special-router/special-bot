@@ -2404,7 +2404,17 @@ def _mirror_hysteria_link(endpoint: dict) -> str | None:
     if any(character in value for value in (uuid, host, server_name)
            for character in ' \r\n\t#?/@'):
         return None
-    query = urlencode([('sni', server_name), ('alpn', 'h3')], quote_via=quote)
+    # Отпечаток берётся у той же точки, а не подставляется умолчанием: провайдер
+    # объявляет свои узлы под ``firefox``, и наш ``chrome`` был единственным
+    # полем, которым эта ступень отличалась от той, что у того же клиента
+    # работает. uTLS-отпечаток — это то, как выглядит хендшейк на проводе, так
+    # что расхождение здесь не косметическое.
+    fingerprint = endpoint.get('fingerprint')
+    fields = [('sni', server_name), ('alpn', 'h3')]
+    if isinstance(fingerprint, str) and fingerprint and not any(
+            character in fingerprint for character in ' \r\n\t#?/@'):
+        fields.append(('fp', fingerprint))
+    query = urlencode(fields, quote_via=quote)
     label = f'{remark} {_ALT_TRANSPORT_LABEL_SUFFIX}'
     return f'hy2://{uuid}@{host}:{port}/?{query}#{quote(label)}'
 

@@ -68,3 +68,17 @@ class MirrorHysteriaDisabledTests(SimpleTestCase):
     @override_settings(SUBSCRIPTION_BACKUP_HYSTERIA_PORT=70000)
     def test_impossible_port_renders_nothing(self):
         self.assertIsNone(_mirror_hysteria_link(_ENDPOINT))
+
+
+@override_settings(SUBSCRIPTION_BACKUP_HYSTERIA_PORT=25443)
+class MirrorHysteriaFingerprintTests(SimpleTestCase):
+    def test_fingerprint_follows_the_endpoint_not_a_default(self):
+        """Провайдер объявляет узлы под firefox; chrome — другой хендшейк на проводе."""
+        link = _mirror_hysteria_link({**_ENDPOINT, 'fingerprint': 'firefox'})
+
+        self.assertEqual(parse_qs(urlsplit(link).query)['fp'], ['firefox'])
+
+    def test_endpoint_without_a_fingerprint_omits_the_field(self):
+        link = _mirror_hysteria_link({**_ENDPOINT, 'fingerprint': ''})
+
+        self.assertNotIn('fp', parse_qs(urlsplit(link).query))
