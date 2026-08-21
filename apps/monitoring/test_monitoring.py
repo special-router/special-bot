@@ -6,6 +6,7 @@ from datetime import timedelta
 from decimal import Decimal
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from django.core import management
@@ -26,6 +27,7 @@ from apps.monitoring.probes import (
     LayerResult,
     build_xray_config,
     cash_gap_days,
+    get_canary_subscription,
     probe_invoice_link,
     run_checkout_probe,
     run_control_plane_probe,
@@ -307,6 +309,45 @@ class ProtocolCanaryConfigurationTests(TestCase):
 
         self.assertEqual(result.error_class, 'not_configured')
         self.assertEqual(result.details, {'status': 'invalid_health_url'})
+
+
+class CanarySubscriptionSourceTests(TestCase):
+    """Канарейка читает ту же панель, что и выдача, и делает это без обмана."""
+
+    def _user_vpn(self):
+        return SimpleNamespace(
+            vpn_uuid='11111111-2222-3333-4444-555555555555',
+            user=SimpleNamespace(telegram_id=1),
+            id=801,
+        )
+
+    @override_settings(REMNAWAVE_ENABLED=True, SUBSCRIPTION_BASE_URL='https://sub.example/sub')
+    def test_active_panel_user_yields_a_link_built_from_its_own_short_uuid(self):
+        panel_user = {'status': 'ACTIVE', 'vlessUuid': '11111111-2222-3333-4444-555555555555',
+                      'shortUuid': 'abcdef'}
+        with patch('apps.monitoring.probes.RemnawaveAPI') as api_class:
+            api_class.return_value.get_user_by_username = AsyncMock(return_value=panel_user)
+            url = asyncio.run(get_canary_subscription(self._user_vpn()))
+
+        self.assertTrue(url.endswith('abcdef'))
+
+    @override_settings(REMNAWAVE_ENABLED=True, SUBSCRIPTION_BASE_URL='https://sub.example/sub')
+    def test_disabled_panel_user_is_reported_missing_not_returned(self):
+        """«В базе доступ есть, в панели выключен» — ровно та авария, что ловится."""
+        panel_user = {'status': 'DISABLED', 'vlessUuid': '11111111-2222-3333-4444-555555555555',
+                      'shortUuid': 'abcdef'}
+        with patch('apps.monitoring.probes.RemnawaveAPI') as api_class:
+            api_class.return_value.get_user_by_username = AsyncMock(return_value=panel_user)
+            with self.assertRaisesRegex(RuntimeError, 'canary_client_missing'):
+                asyncio.run(get_canary_subscription(self._user_vpn()))
+
+    @override_settings(REMNAWAVE_ENABLED=True, SUBSCRIPTION_BASE_URL='https://sub.example/sub')
+    def test_uuid_mismatch_is_reported_missing(self):
+        panel_user = {'status': 'ACTIVE', 'vlessUuid': 'other', 'shortUuid': 'abcdef'}
+        with patch('apps.monitoring.probes.RemnawaveAPI') as api_class:
+            api_class.return_value.get_user_by_username = AsyncMock(return_value=panel_user)
+            with self.assertRaisesRegex(RuntimeError, 'canary_client_missing'):
+                asyncio.run(get_canary_subscription(self._user_vpn()))
 
 
 @override_settings(SPECIAL_MONITOR_FAILURE_THRESHOLD=2)

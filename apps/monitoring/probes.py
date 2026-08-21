@@ -15,6 +15,7 @@ import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.utils import timezone
 from telegram import Bot, LabeledPrice
@@ -237,7 +238,11 @@ async def _canary_subscription_from_xui(user_vpn: UserVPN) -> str:
 
 
 async def _canary_subscription_from_remnawave(user_vpn: UserVPN) -> str:
-    panel_user = await RemnawaveAPI().get_user_by_username(remnawave_username(user_vpn))
+    # Имя строится из ``user.telegram_id``. Связь ленивая, и обращение к ней из
+    # async-контекста — SynchronousOnlyOperation, которое проба поймала бы как
+    # canary_protocol и показала как аварию туннеля.
+    username = await sync_to_async(remnawave_username)(user_vpn)
+    panel_user = await RemnawaveAPI().get_user_by_username(username)
     if panel_user is None or str(panel_user.get('status')) != 'ACTIVE':
         raise RuntimeError('canary_client_missing')
     if str(panel_user.get('vlessUuid') or '') != str(user_vpn.vpn_uuid):
