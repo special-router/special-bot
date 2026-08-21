@@ -14,9 +14,11 @@ made the previous version of this document contradict itself.
 
 ## Repo-verifiable
 
-- The local verifier passes: **296 tests, 110 subtests**, plus repository
-  validation (including flag-documentation drift), origin-schema validation,
-  shell syntax and `makemigrations --check`.
+- The Django suite runs **839 tests**: 836 pass, and three in
+  `apps.servers.test_validate_inbound_config` error. Those three were proved
+  pre-existing by stashing this work and re-running on the clean tree.
+- Repository validation passes: flag-documentation drift, origin-schema
+  validation, shell syntax and `makemigrations --check`.
 - Delivery, the connector, monitoring, backup ingestion and the internal canary
   are all **default-off in code**. Their production values are a separate matter
   — see [`FLAGS.md`](FLAGS.md).
@@ -35,7 +37,7 @@ made the previous version of this document contradict itself.
   no application deploy can restart them.
 - Support tickets and premium button icons are implemented, tested and inert.
 
-## Operator-reported, as of 2026-08-21
+## Operator-reported, as of 2026-08-22
 
 ### Live path
 
@@ -104,8 +106,17 @@ docker exec special-bot-web-1 python manage.py shell -c \
 
 ### Hosts
 
-- BOT: persistent 1 GiB `/swapfile`, UFW active, `:8001` published on the public
-  IPv4 only and firewalled to the NL origin.
+- BOT: 3 GiB of swap across `/swapfile` (1 GiB) and `/swapfile2` (2 GiB), both in
+  `/etc/fstab`. The second was added rather than the first grown: `swapoff` on
+  537 MiB of live pages with 168 MiB of free RAM has to put them somewhere, and
+  that somewhere is the file being removed. 961 MiB of RAM pages under ordinary
+  load, so this buys visible slowness instead of a silent OOM kill.
+  Disk went from 80% to 66% on 2026-08-22 by reclaiming 3.8 GiB of build cache
+  and twelve images older than a week; a 2 GiB swapfile took part of it back.
+  Rollback by image tag is gone with those images — rollback is `git revert` and
+  rebuild, which is the documented deploy path anyway.
+  UFW active, `:8001` published on the public IPv4 only and firewalled to the
+  NL origin.
 - NL: externally reachable on 22, 80, 443, 8443, and 8843 for the panel. Probed
   from an outside host on 2026-08-21: `3000`, `8080`, `23133`, `27914` refuse,
   and `2096`, `3100`, `3101`, `20443` do not answer — the last three are bound
