@@ -173,18 +173,18 @@ class MirrorProfileTests(SimpleTestCase):
         self.assertNotIn('burstObservatory', profile)
         self.assertEqual(profile['routing']['rules'][-1]['outboundTag'], 'M0-s0')
 
-    def test_every_profile_carries_its_own_direct_block_and_dns(self):
+    def test_every_profile_carries_its_own_direct_and_block(self):
         profile = _mirror_xray_profiles(self.LINKS, allow_hysteria=True)[0]
 
         tags = [outbound['tag'] for outbound in profile['outbounds']]
-        self.assertEqual(tags[-3:], ['direct', 'block', 'dns-out'])
+        self.assertEqual(tags[-2:], ['direct', 'block'])
 
-    def test_dns_leaves_through_its_own_outbound_not_the_first_stage(self):
-        """Иначе резолв встаёт на мёртвой первой ступени и до второй дело не доходит."""
+    def test_the_profile_does_not_redefine_dns_at_all(self):
+        """Со своей dns-секцией профиль пинговался, но трафик не шёл."""
         profile = _mirror_xray_profiles(self.LINKS, allow_hysteria=True)[0]
 
-        dns_rule = next(rule for rule in profile['routing']['rules'] if rule.get('port') == '53')
-        self.assertEqual(dns_rule['outboundTag'], 'dns-out')
+        self.assertNotIn('dns', profile)
+        self.assertNotIn('dns-out', str(profile))
         self.assertNotIn('1.1.1.1/32', str(profile['routing']['rules']))
 
     def test_single_candidate_stage_has_no_latency_threshold(self):

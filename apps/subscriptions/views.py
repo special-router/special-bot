@@ -597,11 +597,11 @@ def _xray_json_routing(balancers: list[dict], loop_rules: list[dict], entry: tup
     адресу второй раз — то есть отправило бы в ``direct`` то, что первая ступень
     только что не смогла провести.
 
-    Имена резолвятся встроенным ``dns-out``, а не уезжают в первую ступень.
-    Раньше запросы к 1.1.1.1 и 8.8.8.8 шли в балансировщик, и там, где первая
-    ступень мертва — а у зеркальной страны она мертва всегда, — вставал сам
-    резолв: до перехода на следующую ступень дело не доходило, потому что
-    соединение ещё не с чем было установить.
+    Про DNS здесь не сказано ничего, и это осознанно. Правило, уводившее
+    запросы к 1.1.1.1 и 8.8.8.8 в туннель, стояло здесь и мешало: на мёртвой
+    первой ступени вставал сам резолв. Заменившая его связка из собственной
+    ``dns``-секции и ``dns-out`` оказалась не лучше — профиль пинговался, а
+    трафик не шёл. Имена разрешает клиент, как делал до всего этого.
 
     ``entry`` говорит, чем начинается путь: балансировщиком или прямым
     outbound-ом. Второе — когда ступень всего одна: выбирать не из чего, а
@@ -615,7 +615,11 @@ def _xray_json_routing(balancers: list[dict], loop_rules: list[dict], entry: tup
         'balancers': balancers,
         'rules': [
             *loop_rules,
-            {'type': 'field', 'network': 'tcp,udp', 'port': '53', 'outboundTag': 'dns-out'},
+            # DNS профиль себе не переопределяет. Своя ``dns``-секция с
+            # DoH-серверами создаёт зависимость по кругу: чтобы резолвить имя,
+            # надо открыть соединение, а чтобы открыть — резолвить имя. Клиент
+            # разрешает имена сам и делал это, пока эта секция здесь не
+            # появилась. Правило порта 53 без ``dns-out`` тоже не нужно.
             # QUIC к 443 глушится намеренно: браузер, которому не дали h3,
             # переспрашивает по TCP и уходит в тот же туннель, а не остаётся с
             # UDP-потоком, который туннель провести не берётся.
@@ -628,31 +632,6 @@ def _xray_json_routing(balancers: list[dict], loop_rules: list[dict], entry: tup
             {'type': 'field', 'network': 'tcp,udp', kind: tag},
         ],
     }
-
-
-def _xray_json_dns() -> dict:
-    """DNS профиля: имена узлов провайдера — статикой, остальное — по DoH."""
-    return {
-        'queryStrategy': 'UseIPv4',
-        'hosts': {
-            'cloudflare-dns.com': ['1.1.1.1', '1.0.0.1'],
-            'dns.google': ['8.8.8.8', '8.8.4.4'],
-        },
-        'servers': [
-            {'address': 'https://cloudflare-dns.com/dns-query',
-             'tag': 'cloudflare-dns', 'timeoutMs': 1000},
-            {'address': 'https://dns.google/dns-query',
-             'tag': 'google-dns', 'timeoutMs': 1000},
-            {'address': 'localhost', 'domains': ['geosite:private'], 'tag': 'localhost-dns'},
-        ],
-    }
-
-
-_DNS_OUTBOUND = {
-    'tag': 'dns-out',
-    'protocol': 'dns',
-    'settings': {'blockTypes': [28], 'nonIPQuery': 'skip'},
-}
 
 
 def _xray_json_burst_observatory() -> dict:
@@ -790,7 +769,6 @@ def _build_xray_json(uuid: str, params: dict, direct_host: str, direct_port: int
     document = {
         'remarks': f'{_endpoint_label(_OWN_REGION_CODE)} авто',
         'log': {'loglevel': 'warning'},
-        'dns': _xray_json_dns(),
         'policy': {
             'levels': {'0': {
                 'handshake': 4, 'connIdle': 300, 'uplinkOnly': 2,
@@ -798,7 +776,7 @@ def _build_xray_json(uuid: str, params: dict, direct_host: str, direct_port: int
             }},
         },
         'routing': _xray_json_routing(balancers, loop_rules, entry),
-        'outbounds': outbounds + loops + [_DNS_OUTBOUND],
+        'outbounds': outbounds + loops,
     }
     # Замеры существуют ради выбора. Без балансировщиков выбирать нечего, и
     # секция осталась бы работой, результат которой никто не читает.
@@ -942,12 +920,10 @@ def _mirror_xray_profiles(links: list[str], allow_hysteria: bool) -> list[dict]:
         profile = {
             'remarks': country,
             'log': {'loglevel': 'warning'},
-            'dns': _xray_json_dns(),
-            'routing': _xray_json_routing(balancers, loop_rules, entry),
+                'routing': _xray_json_routing(balancers, loop_rules, entry),
             'outbounds': outbounds + loops + [
                 {'tag': 'direct', 'protocol': 'freedom'},
                 {'tag': 'block', 'protocol': 'blackhole'},
-                _DNS_OUTBOUND,
             ],
         }
         if balancers:
