@@ -37,8 +37,8 @@ internal canary, not of the customer path.
 |---|---|
 | BOT host, PostgreSQL | Users, balances, entitlement, `UserVPN` UUID and persisted `sub_id`, device bindings, support tickets. The single source of truth for who may connect. |
 | Django on BOT | Customer delivery. Renders the per-user subscription payload. 3x-ui subscription output is never customer-authoritative. |
-| 3x-ui control plane on NL | Inbounds, client membership, `subId`, control-plane inventory. Status and mirror records stay available for synchronization even when runtime-disabled. |
-| xray data plane on NL | Inbound 5 is the single active VLESS/TCP/Reality listener on `:8443`. Both Direct and Relay terminate there. |
+| Remnawave panel on NL | Control plane since 2026-08-21. Users, squads, config profile, `shortUuid`, control-plane inventory. Reached over nginx `:8843`; the bot and the monitor read it through `vpn_client_for` / `control_plane.py`. |
+| xray data plane on NL | Run by the Remnawave node, not 3x-ui. Three listeners: `:8443` VLESS/TCP/Reality, `:8080` gRPC/Reality, `:20443` XHTTP behind nginx. Both Direct and Relay terminate on `:8443`. |
 | nginx on NL | TLS termination for the subscription hostname, SNI dispatch on `:443`, gRPC entry on `:80`. |
 | RU relay host | Byte-transparent forwarding for the legacy entry path. Not an independent origin, and not redundancy. |
 | Redis | Coordination only. Never a source of entitlement truth. |
@@ -49,27 +49,28 @@ internal canary, not of the customer path.
 - **00:00 UTC** `update_user_vpn` charges each enabled subscription the tariff
   price from the account's shared balance, oldest subscription first, and
   disables the first one the balance cannot cover along with every newer one.
-- **00:05 UTC** `sync_expiry_times` mirrors the remaining balance days into the
-  3x-ui client `expiryTime` across the primary inbound and `MIRROR_INBOUND_IDS`,
-  and writes the status label into `STATUS_INBOUND_ID`'s `email` field. Clients
-  with no days left get an `expiryTime` in the past so happ hides them.
-
-Working inbounds keep an empty `email` so the subscription remark stays clean
-(`🇳🇱 Нидерланды`, `🇳🇱 Нидерланды белые списки`).
+  Access is switched through the panel's `status`, nothing else.
+- **00:05 UTC** `sync_expiry_times` returns immediately while
+  `REMNAWAVE_ENABLED` is set. It existed to mirror remaining days into 3x-ui
+  `expiryTime`; the panel deliberately carries a far-future expiry so two
+  clocks cannot drift into cutting off a paying customer. The remaining days a
+  customer sees come from the subscription our Django renders, computed from
+  the balance.
 
 ## Invariants
 
 - **Balance-based entitlement is the source of truth.** Do not silently map it
-  onto 3x-ui `enable` or `expiryTime`; the sync task is the one place that
-  translates.
+  onto the panel's `status`; the billing task is the one place that translates.
 - **Direct `vless://` delivery remains the rollback path.** Every entitled
   record keeps its direct key, and `get_user_access_url` falls back to it on any
   subscription failure.
 - **Subscription URLs and client UUIDs are bearer secrets.** They belong in no
   log, document, dashboard, ticket or monitoring record.
-- **`flow` stays empty in generated links.** Most deployed clients have no
-  Vision flow; forcing it makes those links land intermittently on an
-  incompatible listener. Promotion is a per-client migration, never a default.
+- **`flow` stays empty everywhere — links and panel alike.** 64 of 67 deployed
+  clients were issued without a Vision flow. Remnawave derives the flow when the
+  field is absent (tcp+reality implies `xtls-rprx-vision`), which rejects every
+  one of those links, so the config profile pins `flow: ""` explicitly.
+  Promotion is a per-client migration, never a default.
 - **A TCP or listener probe is reachability, not protocol health.** Only a
   protected L2 end-to-end check supports a health claim.
 - **`subId` is absent from generated xray client objects.** Expected projection,
@@ -83,8 +84,8 @@ Working inbounds keep an empty `email` so the subscription remark stays clean
 | Device binding | `apps/subscriptions/devices.py`, `apps/subscriptions/models.py` |
 | Daily billing | `apps/subscriptions/tasks.py` |
 | Balance | `apps/users/querysets.py`, `apps/payments/` |
-| Panel client | `utils/py3xui/`, `apps/servers/vpn_client.py` |
-| `subId` lifecycle | `apps/servers/subscription_connector.py` |
+| Panel client | `apps/servers/remnawave.py`, `apps/servers/remnawave_client.py`, `apps/servers/vpn_client.py` |
+| Control-plane inventory | `apps/servers/control_plane.py`, `apps/servers/remnawave_inventory.py` |
 | Bot handlers and screens | `apps/telegram_bot/` |
 | Monitoring layers | `apps/monitoring/` |
 | Operator scripts | `ops/scripts/` |

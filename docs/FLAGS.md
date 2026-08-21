@@ -180,9 +180,60 @@ Not a redundant mirror: every candidate is on the same NL origin.
 | `SPECIAL_MONITOR_EXPECTED_EGRESS` | str | empty | set | Egress address L2 must observe. Missing or invalid fails closed. |
 | `SPECIAL_MONITOR_HEALTH_URL` | str | `https://api.ipify.org` | same | L2 egress check target. Must be HTTPS and carry no credentials. |
 
-## 3x-ui control plane reads
+## Control plane reads
 
 | Setting | Type | Default | Prod | What it does |
 |---|---|---|---|---|
-| `XUI_CONTROL_PLANE_READ_ATTEMPTS` | int | `4` | ? | The panel can return a briefly incomplete client list, so reads repeat until two consecutive results agree. A single short read would otherwise look like missing entitlement. |
+| `XUI_CONTROL_PLANE_READ_ATTEMPTS` | int | `4` | ? | Reads of the control-plane inventory repeat until two consecutive results agree. A single short read would otherwise look like missing entitlement and page the duty engineer. The name kept its `XUI_` prefix; both panels honour it. |
 | `XUI_CONTROL_PLANE_READ_BACKOFF` | float | `1.5` | ? | Backoff between those attempts. |
+
+## Remnawave control plane
+
+Live since **2026-08-21**; see [`REMNAWAVE-MIGRATION.md`](REMNAWAVE-MIGRATION.md).
+
+| Setting | Type | Default | Prod | What it does |
+|---|---|---|---|---|
+| `REMNAWAVE_ENABLED` | bool | `False` | `true` | Which panel owns access. `true` routes `vpn_client_for()` at `RemnawaveVPNClient` and points the L0 probe and the L2 canary at the same panel. The single switch; rollback is this flag plus `systemctl start x-ui`. |
+| `REMNAWAVE_API_URL` | str | empty | set | Panel base URL. Reached through nginx on NL, not the container port. |
+| `REMNAWAVE_API_TOKEN` | str | empty | set | **Grants access for every client at once.** Never a log line, an error message or a screen. |
+| `REMNAWAVE_SQUAD_UUIDS` | json | `[]` | set | Squads a newly created user joins. Empty means "the panel decides", never "all of them": silently granting more access is worse than granting none. |
+| `REMNAWAVE_SQUAD_FIELD` | str | `activeInternalSquads` | default | The panel renamed this field between versions (`squadUuids` → `activeInternalSquads`). A setting rather than autodetection: guessing per request hides a version mismatch instead of showing it. |
+| `REMNAWAVE_EXPIRE_DAYS` | int | `3650` | default | Expiry written into the panel. Deliberately far future — billing is ours, and a second independent clock eventually cuts off a paying customer. |
+| `REMNAWAVE_REALITY_PUBLIC_KEY` | str | empty | set | Reality public key of the live node. Must match the node config; a mismatch invalidates every issued link. |
+| `REMNAWAVE_REALITY_SERVER_NAME` | str | empty | set | Reality SNI. |
+| `REMNAWAVE_REALITY_SHORT_ID` | str | empty | set | Reality short id. |
+| `REMNAWAVE_REALITY_FINGERPRINT` | str | `chrome` | default | TLS fingerprint written into generated links. |
+| `REMNAWAVE_REALITY_PORT` | int | `443` | `8443` | Port advertised in generated links. |
+| `REMNAWAVE_SUBSCRIPTION_PROXY_ENABLED` | bool | `False` | `false` | Whether `/sub/<sub_id>` proxies to the panel. **Stays off.** The live payload carries nine mirror-provider countries the panel knows nothing about; proxying deletes them, which the customer reads as "the servers are gone" — the 2026-08-20 incident. |
+| `REMNAWAVE_SUBSCRIPTION_BASE_URL` | str | empty | set | Upstream used only when the proxy flag is on. |
+
+## Billing pause
+
+| Setting | Type | Default | Prod | What it does |
+|---|---|---|---|---|
+| `BILLING_PAUSED` | bool | `False` | `true` | Skips the daily charge entirely. Set while the bot is closed for maintenance: access keeps working but nobody can top up, so the first customer to run out would be disabled with no way back. **Clear it when the bot reopens** — every day it stays set the service runs free, and the only sign is `Billing run skipped` in the log. |
+
+## Subscription gRPC endpoint
+
+| Setting | Type | Default | Prod | What it does |
+|---|---|---|---|---|
+| `SUBSCRIPTION_GRPC_ENABLED` | bool | `False` | ? | Whether the generated subscription carries the gRPC line. Off by default because a dead line in the list reads to the customer as a broken service. |
+| `SUBSCRIPTION_GRPC_PORT` | int | `80` | ? | Port advertised for the gRPC entry. |
+| `SUBSCRIPTION_GRPC_SERVICE_NAME` | str | empty | ? | gRPC `serviceName`; must match the inbound. |
+| `SUBSCRIPTION_GRPC_PUBLIC_KEY` | str | empty | ? | Reality public key of the gRPC inbound. |
+| `SUBSCRIPTION_GRPC_SERVER_NAME` | str | empty | ? | Reality SNI of the gRPC inbound. |
+| `SUBSCRIPTION_GRPC_SHORT_ID` | str | empty | ? | Reality short id of the gRPC inbound. |
+
+## Xray JSON subscription format
+
+| Setting | Type | Default | Prod | What it does |
+|---|---|---|---|---|
+| `SUBSCRIPTION_XRAY_JSON_TEST_USER_IDS` | json | `[]` | set | `UserVPN` ids that receive the raw Xray-core JSON profile. Rollout is by list, like the mirrors: a format change reads to the customer not as "a different format" but as "the servers are gone". |
+| `SUBSCRIPTION_XRAY_JSON_ROLLED_OUT_CLIENTS` | json | `[]` | set | Client apps the format is confirmed on (`happ`, `v2rayng`). Separate from the per-person list because the risk differs: not "too early for this person" but "this app parses the document its own way". |
+| `SUBSCRIPTION_XRAY_JSON_ALL_USERS_ENABLED` | bool | `False` | `false` | Opens the format to everyone. Deliberately a separate flag so it is never turned on merely as a side effect of enabling the branch. |
+
+## Backup provider
+
+| Setting | Type | Default | Prod | What it does |
+|---|---|---|---|---|
+| `SUBSCRIPTION_BACKUP_HYSTERIA_PORT` | int | `0` | ? | Port of the mirror provider's Hysteria endpoint. Zero omits it, which is the safe reading when the same-format source answers on another port or not at all. |
