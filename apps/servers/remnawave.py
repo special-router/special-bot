@@ -91,6 +91,16 @@ class RemnawaveAPI:
             return None
         return _unwrap(response.json())
 
+    async def request_json(self, method: str, path: str, *, json_body: dict | None = None) -> dict:
+        """Сырой доступ к эндпоинту панели для чтения.
+
+        Инвентаризация мониторинга ходит по эндпоинтам, которых нет среди пяти
+        операций бота. Дублировать ради них транспорт значило бы завести второй
+        путь с собственной обработкой ошибок и заголовков.
+        """
+        payload = await self._request(method, path, json_body=json_body)
+        return payload if isinstance(payload, dict) else {}
+
     async def get_user_by_username(self, username: str) -> dict | None:
         return await self._request('GET', f'/api/users/by-username/{username}', allow_404=True)
 

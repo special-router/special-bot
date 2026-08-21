@@ -20,12 +20,13 @@ from django.utils import timezone
 from telegram import Bot, LabeledPrice
 
 from apps.analytics.models import MoneyEvent
-from apps.servers.management.commands.audit_xui_inbounds import fetch_inbound_snapshots
+from apps.servers.control_plane import fetch_control_plane_client_ids, fetch_inbound_snapshots
 from apps.servers.models import Server, TariffServer
+from apps.servers.remnawave import RemnawaveAPI
+from apps.servers.remnawave_client import remnawave_username
 from apps.servers.subscription_connector import build_subscription_url
-from apps.vpn.management.commands.audit_legacy_vpn import fetch_control_plane_client_ids, get_server_entitlement
+from apps.vpn.management.commands.audit_legacy_vpn import get_server_entitlement
 from apps.vpn.models import UserVPN
-from utils.py3xui.async_api import AsyncApi
 
 
 @dataclass(frozen=True)
@@ -221,18 +222,43 @@ def run_control_plane_probe() -> LayerResult:
     )
 
 
-async def get_canary_subscription(user_vpn: UserVPN) -> str:
-    api = AsyncApi(
-        user_vpn.server.vpn_url,
-        user_vpn.server.vpn_username,
-        user_vpn.server.vpn_password,
-    )
+async def _canary_subscription_from_xui(user_vpn: UserVPN) -> str:
+    from utils.py3xui.async_api import AsyncApi
+
+    api = AsyncApi(user_vpn.server.vpn_url, user_vpn.server.vpn_username,
+                   user_vpn.server.vpn_password)
     await api.login()
     inbound = await api.inbound.get_by_id(user_vpn.server.inbound_id)
-    matches = [client for client in inbound.settings.clients if str(client.id) == str(user_vpn.vpn_uuid)]
+    matches = [client for client in inbound.settings.clients
+               if str(client.id) == str(user_vpn.vpn_uuid)]
     if len(matches) != 1 or not matches[0].sub_id:
         raise RuntimeError('canary_client_missing')
     return build_subscription_url(settings.SUBSCRIPTION_BASE_URL, matches[0].sub_id)
+
+
+async def _canary_subscription_from_remnawave(user_vpn: UserVPN) -> str:
+    panel_user = await RemnawaveAPI().get_user_by_username(remnawave_username(user_vpn))
+    if panel_user is None or str(panel_user.get('status')) != 'ACTIVE':
+        raise RuntimeError('canary_client_missing')
+    if str(panel_user.get('vlessUuid') or '') != str(user_vpn.vpn_uuid):
+        raise RuntimeError('canary_client_missing')
+    sub_id = str(panel_user.get('shortUuid') or '')
+    if not sub_id:
+        raise RuntimeError('canary_client_missing')
+    return build_subscription_url(settings.SUBSCRIPTION_BASE_URL, sub_id)
+
+
+async def get_canary_subscription(user_vpn: UserVPN) -> str:
+    """Ссылка подписки канарейки, как её увидит клиент.
+
+    Проверяется не наша запись в базе, а то, что действующий control plane
+    знает этого клиента и держит его включённым: канарейка ловит ровно случай
+    «в базе доступ есть, в панели нет». Источник тот же, что и у выдачи, иначе
+    после отката флага она проверяла бы уже не ту панель.
+    """
+    if getattr(settings, 'REMNAWAVE_ENABLED', False):
+        return await _canary_subscription_from_remnawave(user_vpn)
+    return await _canary_subscription_from_xui(user_vpn)
 
 
 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
