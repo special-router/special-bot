@@ -16,6 +16,20 @@ logger = logging.getLogger(__name__)
 INBOUND_ID: Final[int] = 1
 
 
+def vpn_client_for(server: Server):
+    """Панель, к которой обращается бот прямо сейчас.
+
+    Единственное место, где решается 3x-ui или Remnawave. Обе реализации держат
+    один контракт, поэтому откат миграции — это ``REMNAWAVE_ENABLED=false`` и
+    пересоздание контейнера, без возврата кода.
+    """
+    if getattr(settings, 'REMNAWAVE_ENABLED', False):
+        from apps.servers.remnawave_client import RemnawaveVPNClient
+
+        return RemnawaveVPNClient(server)
+    return APIVPNClient(server)
+
+
 def _client_endpoint(client_vpn_host: str, inbound_port: int) -> tuple[str, int]:
     host, separator, configured_port = client_vpn_host.rpartition(':')
     if separator and configured_port.isdigit():

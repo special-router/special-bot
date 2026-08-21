@@ -82,7 +82,7 @@ class APIVPNClientStateTests(IsolatedAsyncioTestCase):
 
 
 class AddVpnToUserTests(IsolatedAsyncioTestCase):
-    @patch('apps.vpn.services.add_vpn_to_user.APIVPNClient')
+    @patch('apps.vpn.services.add_vpn_to_user.vpn_client_for')
     @patch('apps.vpn.services.add_vpn_to_user.UserVPN.objects')
     async def test_reactivation_reuses_disabled_record_and_uuid(self, objects, client_class):
         original_uuid = UUID('00000000-0000-0000-0000-000000000005')
@@ -114,7 +114,7 @@ class AddVpnToUserTests(IsolatedAsyncioTestCase):
         client_class.return_value.get_key.assert_not_awaited()
         disabled.asave.assert_awaited_once_with(update_fields=['vpn_key', 'enabled', 'updated_at'])
 
-    @patch('apps.vpn.services.add_vpn_to_user.APIVPNClient')
+    @patch('apps.vpn.services.add_vpn_to_user.vpn_client_for')
     @patch('apps.vpn.services.add_vpn_to_user.UserVPN.objects')
     async def test_new_record_stays_disabled_when_control_plane_fails(self, objects, client_class):
         user = SimpleNamespace(id=11, telegram_id=1011)
@@ -141,7 +141,7 @@ class AddVpnToUserTests(IsolatedAsyncioTestCase):
 
 
 class DisableVpnUserTests(IsolatedAsyncioTestCase):
-    @patch('apps.vpn.services.remove_vpn_user_from_server.APIVPNClient')
+    @patch('apps.vpn.services.remove_vpn_user_from_server.vpn_client_for')
     async def test_disable_preserves_record_and_uuid(self, client_class):
         original_uuid = UUID('00000000-0000-0000-0000-000000000004')
         user_vpn = SimpleNamespace(

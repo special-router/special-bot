@@ -131,6 +131,15 @@ def _charge_user(user_id: int, subscriptions: list[UserVPN], charge_date: dateti
 
 @shared_task
 def update_user_vpn():
+    # Пауза на время техработ. Закрытый бот не останавливает списание сам:
+    # доступ у людей продолжает работать, а пополнить баланс им уже негде — и
+    # первый же, у кого кончились деньги, отключается без способа вернуться.
+    # Пропуск прогона, а не отключение beat: расписание правится в образе, а
+    # флаг — в окружении, и снимается тем же перезапуском, что и всё остальное.
+    if getattr(settings, 'BILLING_PAUSED', False):
+        logger.warning('Billing run skipped: BILLING_PAUSED is set')
+        return
+
     # Создаем бота
     bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
 

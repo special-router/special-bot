@@ -445,6 +445,45 @@ SUBSCRIPTION_ANNOUNCE_TEXT = env.str('SUBSCRIPTION_ANNOUNCE_TEXT', '')
 # rendering the header, because losing the term is worse than a dead entry.
 SUBSCRIPTION_STATUS_ENTRY_ENABLED = env.bool('SUBSCRIPTION_STATUS_ENTRY_ENABLED', True)
 
+# Списание на паузе. Ставится на время техработ, когда бот закрыт: услуга
+# работает, а пополнить баланс человеку негде. Снимать вместе с открытием бота —
+# каждый день с этим флагом сервис работает бесплатно.
+BILLING_PAUSED = env.bool('BILLING_PAUSED', False)
+
+# --- Remnawave -------------------------------------------------------------
+# Панель, к которой обращается бот. Пока false — работает 3x-ui и ни один
+# запрос к Remnawave не уходит. Переключение и откат стоят один перезапуск
+# контейнера, поэтому старый клиент остаётся в репозитории до вывода 3x-ui.
+REMNAWAVE_ENABLED = env.bool('REMNAWAVE_ENABLED', False)
+REMNAWAVE_API_URL = env.str('REMNAWAVE_API_URL', '')
+# Токен даёт выдачу ключей всем клиентам сразу. Никогда не в логи, не в текст
+# ошибки, не в Git — только окружение.
+REMNAWAVE_API_TOKEN = env.str('REMNAWAVE_API_TOKEN', '')
+# Отряды, в которые попадает новый клиент. Пустой список означает «панель решит
+# сама», а не «во все»: молча выданный лишний доступ хуже отсутствующего.
+REMNAWAVE_SQUAD_UUIDS = env.json('REMNAWAVE_SQUAD_UUIDS', default=[])
+# Контракт панели переименовывал это поле (``squadUuids`` → ``activeInternalSquads``).
+# Настройка вместо автоопределения: версия панели известна на установке, а
+# угадывание её на каждом запросе прячет несовпадение вместо того, чтобы его
+# показать.
+REMNAWAVE_SQUAD_FIELD = env.str('REMNAWAVE_SQUAD_FIELD', 'activeInternalSquads')
+# Срок в панели заведомо дальний: расчётный период считает бот, и второй
+# независимый счётчик рано или поздно отключит оплатившего человека.
+REMNAWAVE_EXPIRE_DAYS = env.int('REMNAWAVE_EXPIRE_DAYS', 3650)
+# Параметры Reality живой ноды. Совпадают с тем, что положено в конфиг ноды, и
+# после вывода 3x-ui читать их больше неоткуда. Совпадение с текущим inbound-ом
+# — это то, из-за чего уже выданные ссылки переживают переключение.
+REMNAWAVE_REALITY_PUBLIC_KEY = env.str('REMNAWAVE_REALITY_PUBLIC_KEY', '')
+REMNAWAVE_REALITY_SERVER_NAME = env.str('REMNAWAVE_REALITY_SERVER_NAME', '')
+REMNAWAVE_REALITY_SHORT_ID = env.str('REMNAWAVE_REALITY_SHORT_ID', '')
+REMNAWAVE_REALITY_FINGERPRINT = env.str('REMNAWAVE_REALITY_FINGERPRINT', 'chrome')
+REMNAWAVE_REALITY_PORT = env.int('REMNAWAVE_REALITY_PORT', 443)
+# Апстрим подписки. Наш ``/sub/<sub_id>`` остаётся единственной ссылкой, которую
+# видит клиент, и проксирует сюда: 43 выданные ссылки не переклеиваются.
+REMNAWAVE_SUBSCRIPTION_PROXY_ENABLED = env.bool(
+    'REMNAWAVE_SUBSCRIPTION_PROXY_ENABLED', False)
+REMNAWAVE_SUBSCRIPTION_BASE_URL = env.str('REMNAWAVE_SUBSCRIPTION_BASE_URL', '')
+
 # Additional inbound ids whose client ``enable``/``subId`` state must mirror the
 # primary ``Server.inbound_id``. Used for subscription endpoints that share the
 # same client pool but expose a different address (e.g. a RU relay front).

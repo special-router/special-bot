@@ -123,7 +123,7 @@ class VpnIssueTests(TestCase):
         self.server = _server()
 
     async def _issue(self, context, callback_data):
-        with patch('apps.vpn.services.add_vpn_to_user.APIVPNClient') as client:
+        with patch('apps.vpn.services.add_vpn_to_user.vpn_client_for') as client:
             client.return_value.enable_user = AsyncMock()
             client.return_value.get_key = AsyncMock(return_value='vless://key')
             await admin_vpn_issue_execute(_callback_update(callback_data), context)
@@ -175,7 +175,7 @@ class VpnDisableTests(TestCase):
         subscription = await UserVPN.objects.acreate(user=self.user, server=self.server, enabled=True)
         context = _context()
 
-        with patch('apps.vpn.services.remove_vpn_user_from_server.APIVPNClient') as client:
+        with patch('apps.vpn.services.remove_vpn_user_from_server.vpn_client_for') as client:
             client.return_value.enable_user = AsyncMock()
             await admin_vpn_disable_execute(_callback_update(f'admin_vpn_disable_execute:{subscription.id}'), context)
 

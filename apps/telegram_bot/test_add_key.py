@@ -52,7 +52,7 @@ class AddKeyChargeTests(TransactionTestCase):
                 patch('apps.telegram_bot.handlers.add_key.render_screen', new_callable=AsyncMock), \
                 patch('apps.telegram_bot.handlers.add_key.build_keys_screen',
                       new_callable=AsyncMock, return_value=('screen', None)), \
-                patch('apps.vpn.services.add_vpn_to_user.APIVPNClient') as client:
+                patch('apps.vpn.services.add_vpn_to_user.vpn_client_for') as client:
             client.return_value.enable_user = AsyncMock()
             client.return_value.get_key = AsyncMock(return_value='vless://key')
             asyncio.run(add_key(_update(), None))

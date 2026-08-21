@@ -28,6 +28,7 @@ import time
 from functools import lru_cache
 from urllib.parse import parse_qs, quote, unquote, unquote_to_bytes, urlencode, urlsplit
 
+import httpx
 from django.http import HttpResponse, HttpResponseNotFound
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -958,6 +959,64 @@ def _wants_hysteria_outbound(user_agent: str) -> bool:
     return bool(_HYSTERIA_CAPABLE_UA_PATTERN.search(user_agent))
 
 
+# Заголовки, которые Remnawave выставляет сам и которые обязаны остаться
+# нашими: расчётный период считает бот по балансу, а не панель по своему
+# ``expireAt``. Два источника срока в одном ответе — это два разных числа на
+# экране у одного человека.
+_REMNAWAVE_OVERRIDDEN_HEADERS = (
+    'subscription-userinfo', 'profile-title', 'announce', 'profile-web-page-url')
+# Заголовки, по которым панель выбирает шаблон конфигурации и считает
+# устройства. Без них клиент получает документ не для своего приложения.
+_REMNAWAVE_FORWARDED_HEADERS = (
+    ('HTTP_USER_AGENT', 'User-Agent'),
+    ('HTTP_ACCEPT', 'Accept'),
+    ('HTTP_X_HWID', 'x-hwid'),
+    ('HTTP_X_DEVICE_OS', 'x-device-os'),
+    ('HTTP_X_VER_OS', 'x-ver-os'),
+    ('HTTP_X_DEVICE_MODEL', 'x-device-model'),
+)
+_REMNAWAVE_TIMEOUT = 10.0
+_REMNAWAVE_MAX_BYTES = 1024 * 1024
+
+
+def _remnawave_proxy_enabled() -> bool:
+    return bool(getattr(settings_relays(), 'REMNAWAVE_SUBSCRIPTION_PROXY_ENABLED', False)
+                and str(getattr(settings_relays(), 'REMNAWAVE_SUBSCRIPTION_BASE_URL', '')).strip())
+
+
+def _remnawave_upstream(request, user_vpn) -> tuple[bytes, str, dict[str, str]] | None:
+    """Забрать документ подписки из Remnawave под тем же ``sub_id``.
+
+    Апстрим свой, а не чужой, поэтому здесь нет проверок на приватные адреса из
+    ``_cached_upstream_links``: их задача — не дать чужой ссылке увести запрос
+    внутрь сети, а этот адрес задаём мы. Ответ всё равно ограничен по размеру:
+    ошибка в конфигурации панели не должна расти в каждом ответе клиенту.
+    """
+    base = str(getattr(settings_relays(), 'REMNAWAVE_SUBSCRIPTION_BASE_URL', '')).rstrip('/')
+    headers = {}
+    for meta_key, header_name in _REMNAWAVE_FORWARDED_HEADERS:
+        value = request.META.get(meta_key)
+        if value:
+            headers[header_name] = value
+    try:
+        response = httpx.get(f'{base}/{user_vpn.sub_id}', headers=headers,
+                             timeout=_REMNAWAVE_TIMEOUT, follow_redirects=False)
+    except httpx.HTTPError as error:
+        # Ни адрес, ни sub_id в лог не идут: ссылка подписки — это доступ к
+        # трафику конкретного человека.
+        logger.warning('Remnawave upstream failed: %s', type(error).__name__)
+        return None
+    if response.status_code != 200 or len(response.content) > _REMNAWAVE_MAX_BYTES:
+        logger.warning('Remnawave upstream refused: status=%s', response.status_code)
+        return None
+    passthrough = {
+        name: value for name, value in response.headers.items()
+        if name.lower() not in _REMNAWAVE_OVERRIDDEN_HEADERS
+        and name.lower() not in ('content-length', 'content-encoding', 'transfer-encoding')
+    }
+    return response.content, response.headers.get('content-type', 'text/plain'), passthrough
+
+
 @csrf_exempt
 @require_GET
 def subscription_proxy(request, sub_id: str):
@@ -974,7 +1033,6 @@ def subscription_proxy(request, sub_id: str):
         return _refused(request)
 
     server = user_vpn.server
-    params = _get_params(server.id, server.inbound_id)
 
     # Balance / remaining days for the status remark and the expiry header.
     # Negative balances exist (a manual debit can outrun the balance), and they
@@ -984,6 +1042,26 @@ def subscription_proxy(request, sub_id: str):
     balance = float(getattr(user, 'balance', 0) or 0) if user else 0.0
     days = max(int(balance // price), 0) if price > 0 else 0
     status_label = f'осталось {days} дней' if days > 0 else 'подписка окончена'
+
+    # Remnawave отдаёт документ, собранный под конкретное приложение, поэтому
+    # весь разбор User-Agent ниже его не касается. Стоит до чтения параметров из
+    # 3x-ui: в этом режиме к старой панели не должно уходить ни одного запроса.
+    if _remnawave_proxy_enabled():
+        upstream = _remnawave_upstream(request, user_vpn)
+        if upstream is not None:
+            body, content_type, passthrough = upstream
+            resp = HttpResponse(body, content_type=content_type)
+            _with_headers(resp, passthrough)
+            # Наши заголовки последними: срок считает бот, и он же владеет
+            # названием профиля и объявлением.
+            resp['Profile-Update-Interval'] = '12'
+            _with_headers(resp, _client_ui_headers(days))
+            return _no_cache_response(_with_headers(resp, hwid_headers))
+        # Панель недоступна — отдаём то, что умеет старый путь, пока он жив.
+        # Пустой ответ или 502 клиент читает как «серверов нет», а это ровно та
+        # авария, которую мы уже видели 2026-08-20.
+
+    params = _get_params(server.id, server.inbound_id)
 
     # Client endpoint hosts.
     # Direct = public NL sub domain on the inbound port.

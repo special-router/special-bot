@@ -1,5 +1,5 @@
 from apps.servers.models import Server
-from apps.servers.vpn_client import APIVPNClient
+from apps.servers.vpn_client import vpn_client_for
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 
@@ -22,7 +22,7 @@ async def add_vpn_to_user(user: TelegramUser, server: Server) -> UserVPN:
         )
         user_vpn = await UserVPN.objects.with_related_user().with_related_server().aget(id=user_vpn.id)
 
-    vpn_client = APIVPNClient(server)
+    vpn_client = vpn_client_for(server)
     await vpn_client.enable_user(user_vpn, enabled=True)
     if not user_vpn.vpn_key:
         user_vpn.vpn_key = await vpn_client.get_key(user_vpn)

@@ -3,7 +3,7 @@ from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 
 from django.db import IntegrityError
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
@@ -75,6 +75,18 @@ class DailyBillingTests(TestCase):
                 with patch('apps.subscriptions.tasks.timezone.now', return_value=now):
                     update_user_vpn()
             return disable, bot_class.return_value.send_message
+
+    @override_settings(BILLING_PAUSED=True)
+    def test_paused_billing_neither_charges_nor_disables(self):
+        """На техработах бот закрыт: списать деньги можно, вернуть их человеку — нет."""
+        user = self.make_user(1042, balance='7.00')
+        user_vpn = self.add_subscription(user, days_ago=1)
+
+        disable, _ = self.run_billing()
+
+        self.assertEqual(self.charges_for(user_vpn), 0)
+        self.assertEqual(self.balance_of(user), Decimal('7.00'))
+        disable.assert_not_awaited()
 
     def test_partially_funded_account_keeps_oldest_and_disables_newest(self):
         user = self.make_user(1001, balance='15.00')
