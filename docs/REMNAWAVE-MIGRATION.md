@@ -57,6 +57,8 @@ Reality-параметры для сборки ссылок читаются и�
 | `apps/servers/remnawave_inventory.py` | инвентарь клиентов и inbound-ов из панели |
 | `apps/subscriptions/views.py` | Reality-параметры из настроек; прокси выключен |
 | `apps/subscriptions/tasks.py` | `BILLING_PAUSED`; `sync_expiry_times` не идёт в панель |
+| `apps/vpn/services/subscription_delivery.py` | выбор пути выдачи ссылки по флагу |
+| `apps/servers/remnawave_subscription.py` | сборка ссылки без 3x-ui |
 | `apps/monitoring/probes.py` | L0 и канарейка читают действующую панель |
 
 Панель опознаёт пользователя целочисленным `id`; поля `uuid` у неё нет.
@@ -118,6 +120,13 @@ enough`. Поднято до 16384 при `worker_rlimit_nofile 65535` и
 `x-remnawave-client-type: browser`. Долгоживущий токен создаётся полями `name` и
 `expiresInDays`.
 
+**Предохранитель выдачи спрятал аварию.** `get_user_access_url` продолжал
+собирать ссылку через `XUISubscriptionConnector`, то есть через остановленный
+3x-ui. Каждый запрос падал, срабатывал `except`, и клиент получал прямой
+`vless://` — одну точку вместо четырнадцати. Ошибок в логе при этом нет, есть
+только `Subscription delivery fallback` на WARNING. Правило на будущее: при
+смене control plane смотреть частоту этой строки, а не отсутствие ошибок.
+
 ## Списание на время работ
 
 ```
@@ -145,6 +154,7 @@ BILLING_PAUSED=true
   `/root/pre-remnawave-20260821-140003/` и в локальной копии.
 - **`telegram_id 726461711` (UserVPN 195)** — нужна свежая ссылка: его старый
   16-символьный не-hex `sub_id` панель не приняла, наш `sub_id` заменён на
-  панельный.
+  панельный. Новая ссылка уже отдаётся ботом и проверена: `HTTP 200`, 5308 байт.
+  Остаётся написать человеку.
 - **Снять `BILLING_PAUSED`** при открытии бота.
 - **Анонс техработ** написан, не опубликован.

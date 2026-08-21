@@ -137,10 +137,17 @@ env DJANGO_SETTINGS_MODULE=bot.settings DATABASE_URL='sqlite:///:memory:' \
 - `apps/subscriptions/views.py` — `subscription_proxy` is the whole public
   endpoint; `_build_vless`, `_get_params`, `_reality_params`, `_endpoint`.
 - `apps/vpn/services/subscription_delivery.py` — `get_user_access_url`, the bot
-  side, with the direct `vless://` key as fallback on any exception.
+  side, with the direct `vless://` key as fallback on any exception. The
+  fallback is silent by design and once hid a real outage: see below.
+- `apps/servers/remnawave_subscription.py` — link building on the Remnawave
+  path. `sub_id` already lives in our database and equals the panel's
+  `shortUuid`, so the panel is asked one question only: does this client exist.
 - `apps/servers/subscription_connector.py` — `subId` creation/lookup in 3x-ui.
+  Dead on the live stack since 2026-08-21; reachable only with
+  `REMNAWAVE_ENABLED=false`.
 - `apps/subscriptions/management/commands/sync_expiry_times.py` — mirrors
-  remaining days into panel `expiryTime` and the status label.
+  remaining days into panel `expiryTime` and the status label. Also 3x-ui only;
+  the daily task returns early under the flag.
 - Tests: `apps/subscriptions/test_views.py`.
 
 **How it behaves today**
@@ -169,7 +176,9 @@ for any client that reads headers; it stays on by default until a real client is
 observed rendering it, because a client that ignores headers has nowhere else to
 read the term.
 
-`sync_expiry_times` runs at 00:05 UTC, after billing at 00:00 UTC.
+`sync_expiry_times` runs at 00:05 UTC, after billing at 00:00 UTC, and returns
+immediately while `REMNAWAVE_ENABLED` is on: entitlement is our balance, and the
+panel's own expiry is deliberately far-future.
 
 **Hosts** BOT renders; NL nginx terminates TLS and proxies to BOT `:8001`.
 
@@ -177,7 +186,7 @@ read the term.
 `SUBSCRIPTION_BASE_URL`, `SUBSCRIPTION_DIRECT_ADVERTISED_PORT`,
 `STATUS_INBOUND_ID`, `MIRROR_INBOUND_IDS`, `SUBSCRIPTION_STATUS_ENTRY_ENABLED`,
 `SUBSCRIPTION_PROFILE_TITLE`, `SUBSCRIPTION_SUPPORT_URL`,
-`SUBSCRIPTION_ANNOUNCE_TEXT`.
+`SUBSCRIPTION_ANNOUNCE_TEXT`, `REMNAWAVE_ENABLED`.
 
 **Validation**
 
@@ -198,7 +207,15 @@ env DJANGO_SETTINGS_MODULE=bot.settings DATABASE_URL='sqlite:///:memory:' \
 - The mocked subscription exposes only `id`, `enabled`, `server`, `user_id`,
   `vpn_uuid` — read anything else with `getattr(..., default)`.
 - 3x-ui's own subscription endpoint cannot replace this view: it emits the first
-  client UUID of the inbound for every subscriber.
+  client UUID of the inbound for every subscriber. Remnawave's own endpoint
+  cannot replace it either, for a different reason: nine of the fourteen lines
+  are mirror-provider countries the panel has never heard of.
+- **The delivery fallback hides its own cause.** On 2026-08-21 the cutover left
+  `get_user_access_url` dialling the stopped 3x-ui; every exception became a
+  direct `vless://` key, so customers silently got one server instead of
+  fourteen and the only trace was `Subscription delivery fallback: %s` at
+  WARNING. When changing the control plane, read that line's rate, not the
+  absence of errors.
 
 ---
 

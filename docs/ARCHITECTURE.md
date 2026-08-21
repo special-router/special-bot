@@ -81,6 +81,7 @@ internal canary, not of the customer path.
 | Concern | Path |
 |---|---|
 | Subscription endpoint | `apps/subscriptions/views.py` |
+| Link delivery to the bot | `apps/vpn/services/subscription_delivery.py`, `apps/servers/remnawave_subscription.py` |
 | Device binding | `apps/subscriptions/devices.py`, `apps/subscriptions/models.py` |
 | Daily billing | `apps/subscriptions/tasks.py` |
 | Balance | `apps/users/querysets.py`, `apps/payments/` |
