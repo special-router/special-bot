@@ -76,7 +76,24 @@ async def _fetch_inbounds(api: RemnawaveAPI) -> list[dict[str, Any]]:
     return inbounds
 
 
-def _inbound_row(server: Server, index: int, inbound: dict[str, Any],
+def _inbound_id(server: Server, inbound: dict[str, Any]) -> int:
+    """Стабильный номер inbound-а в терминах ``SPECIAL_MONITOR_EXPECTED_INBOUNDS``.
+
+    У Remnawave собственных числовых id нет, а порядковый номер в профиле
+    меняется от любой перестановки и выглядел бы как дрейф инвентаря. Поэтому
+    inbound опознаётся по порту: ожидания в настройках задают порт, и именно он
+    определяет, куда попадёт клиент.
+    """
+    port = int(inbound.get('port') or 0)
+    for expected in getattr(settings, 'SPECIAL_MONITOR_EXPECTED_INBOUNDS', []) or []:
+        if int(expected.get('server_id', -1)) != server.id:
+            continue
+        if int(expected.get('port', -1)) == port:
+            return int(expected.get('inbound_id', 0))
+    return port
+
+
+def _inbound_row(server: Server, inbound: dict[str, Any],
                  users: list[dict[str, Any]]) -> InboundSnapshot:
     stream = inbound.get('streamSettings') or {}
     active = [user for user in users if str(user.get('status')) == _ACTIVE]
@@ -87,7 +104,7 @@ def _inbound_row(server: Server, index: int, inbound: dict[str, Any],
     return InboundSnapshot(
         server_id=server.id,
         server_name=server.name,
-        inbound_id=index,
+        inbound_id=_inbound_id(server, inbound),
         port=int(inbound.get('port') or 0),
         protocol=str(inbound.get('protocol') or ''),
         network=str(stream.get('network') or ''),
@@ -103,10 +120,7 @@ async def _snapshot_once(server: Server) -> list[InboundSnapshot]:
     api = RemnawaveAPI()
     users = await _fetch_users(api)
     inbounds = await _fetch_inbounds(api)
-    rows = [
-        _inbound_row(server, index, inbound, users)
-        for index, inbound in enumerate(inbounds, start=1)
-    ]
+    rows = [_inbound_row(server, inbound, users) for inbound in inbounds]
     return sorted(rows, key=lambda item: (item.server_id, item.port, item.inbound_id))
 
 

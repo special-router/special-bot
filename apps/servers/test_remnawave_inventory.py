@@ -66,6 +66,36 @@ class InventoryShapeTests(SimpleTestCase):
         self.assertTrue(all(row.clients == 2 for row in rows))
         self.assertTrue(all(row.enabled_clients == 1 for row in rows))
 
+    @override_settings(**_API, SPECIAL_MONITOR_EXPECTED_INBOUNDS=[
+        {'server_id': 1, 'inbound_id': 5, 'port': 8443},
+        {'server_id': 1, 'inbound_id': 10, 'port': 8080},
+    ])
+    async def test_inbound_id_follows_the_port_not_the_order_in_the_profile(self):
+        """Перестановка inbound-ов в профиле — не дрейф инвентаря, а порядок ключей."""
+        users = {'users': [_user('u1')], 'total': 1}
+        reordered = _profiles(
+            _inbound('grpc', 8080, 'grpc', 'reality'),
+            _inbound('tcp', 8443, 'tcp', 'reality'),
+        )
+        with patch('apps.servers.remnawave_inventory.RemnawaveAPI') as api_class:
+            api_class.return_value.request_json = AsyncMock(
+                side_effect=_responder([users, users], reordered))
+            rows = await fetch_inbound_snapshots(_server())
+
+        self.assertEqual({(row.inbound_id, row.port) for row in rows},
+                         {(10, 8080), (5, 8443)})
+
+    @override_settings(**_API, SPECIAL_MONITOR_EXPECTED_INBOUNDS=[])
+    async def test_unexpected_inbound_is_identified_by_its_port(self):
+        users = {'users': [_user('u1')], 'total': 1}
+        with patch('apps.servers.remnawave_inventory.RemnawaveAPI') as api_class:
+            api_class.return_value.request_json = AsyncMock(
+                side_effect=_responder([users, users],
+                                       _profiles(_inbound('x', 20443, 'xhttp', 'none'))))
+            rows = await fetch_inbound_snapshots(_server())
+
+        self.assertEqual([(row.inbound_id, row.port) for row in rows], [(20443, 20443)])
+
     @override_settings(**_API)
     async def test_disabled_client_is_not_counted_as_entitled_access(self):
         """Отключённый в панели не должен выглядеть как выданный доступ."""
