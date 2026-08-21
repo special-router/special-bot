@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
+from django.core.exceptions import SynchronousOnlyOperation
 from django.test import override_settings
 
 from apps.servers.subscription_connector import SubscriptionClientMissing
@@ -97,64 +98,63 @@ _PANEL = dict(REMNAWAVE_ENABLED=True, REMNAWAVE_API_URL='https://panel.test',
               REMNAWAVE_API_TOKEN='t' * 32, SUBSCRIPTION_BASE_URL='https://sub.example.test/sub')
 
 
-class RemnawaveDeliveryTests(IsolatedAsyncioTestCase):
-    """С включённой панелью выдача не должна ходить в остановленный 3x-ui.
+class _LazyUserVPN:
+    """Запись, у которой связь ``user`` не подгружена.
 
-    Это не теория: после переключения ``get_user_access_url`` падал в fallback
-    на каждой выдаче, и клиент получал прямой ключ — один сервер вместо всего
-    списка. Видно это было только по строке в логе.
+    Так её и отдаёт ``with_related_server()`` — именно этим запросом ходит экран
+    «Подписки». Django на такое обращение из async-контекста бросает
+    ``SynchronousOnlyOperation``.
     """
 
-    def _user_vpn(self, sub_id='abcdef0123456789'):
-        return SimpleNamespace(
-            server=SimpleNamespace(), sub_id=sub_id, enabled=True, id=801,
-            vpn_key='vless://legacy', user=SimpleNamespace(telegram_id=1),
-        )
+    def __init__(self, sub_id='abcdef0123456789'):
+        self.sub_id = sub_id
+        self.server = SimpleNamespace()
+        self.enabled = True
+        self.id = 801
+        self.vpn_key = 'vless://legacy'
+
+    @property
+    def user(self):
+        raise SynchronousOnlyOperation('You cannot call this from an async context')
+
+
+class RemnawaveDeliveryTests(IsolatedAsyncioTestCase):
+    """С включённой панелью выдача обязана вернуть ссылку подписки.
+
+    Оба провала были живыми. Сначала выдача ходила в остановленный 3x-ui.
+    Потом — дёргала ленивую связь ``user`` ради проверки в панели. Каждый раз
+    исключение съедал предохранитель, и клиент получал прямой ключ: один сервер
+    вместо четырнадцати, при зелёном мониторинге и пустом логе ошибок.
+    """
 
     @override_settings(**_PANEL)
     @patch('apps.vpn.services.subscription_delivery.XUISubscriptionConnector')
-    @patch('apps.servers.remnawave_subscription.RemnawaveAPI')
-    async def test_prepare_builds_the_link_without_touching_the_old_panel(
-        self, api_class, connector_class,
+    async def test_issuing_a_link_touches_neither_old_panel_nor_lazy_relations(
+        self, connector_class,
     ):
-        api_class.return_value.get_user_by_username = AsyncMock(return_value={'id': 7})
-
-        url = await prepare_subscription_url(self._user_vpn())
+        url = await prepare_subscription_url(_LazyUserVPN())
 
         self.assertEqual(url, 'https://sub.example.test/sub/abcdef0123456789')
         connector_class.assert_not_called()
 
     @override_settings(**_PANEL)
     @patch('apps.vpn.services.subscription_delivery.XUISubscriptionConnector')
-    async def test_read_only_path_needs_no_panel_call_at_all(self, connector_class):
-        url = await get_subscription_url(self._user_vpn())
+    async def test_read_only_path_behaves_the_same(self, connector_class):
+        url = await get_subscription_url(_LazyUserVPN())
 
         self.assertEqual(url, 'https://sub.example.test/sub/abcdef0123456789')
         connector_class.assert_not_called()
 
     @override_settings(**_PANEL)
-    @patch('apps.servers.remnawave_subscription.RemnawaveAPI')
-    async def test_client_unknown_to_the_panel_is_reported_not_papered_over(self, api_class):
-        api_class.return_value.get_user_by_username = AsyncMock(return_value=None)
-
-        with self.assertRaises(SubscriptionClientMissing):
-            await prepare_subscription_url(self._user_vpn())
-
-    @override_settings(**_PANEL)
-    @patch('apps.servers.remnawave_subscription.RemnawaveAPI')
-    async def test_missing_sub_id_is_reported_instead_of_inventing_one(self, api_class):
+    async def test_missing_sub_id_is_reported_instead_of_inventing_one(self):
         """shortUuid в Remnawave задаётся только при создании — присвоить нельзя."""
         with self.assertRaises(SubscriptionClientMissing):
-            await prepare_subscription_url(self._user_vpn(sub_id=''))
-
-        api_class.return_value.get_user_by_username.assert_not_called()
+            await prepare_subscription_url(_LazyUserVPN(sub_id=''))
 
     @override_settings(**_PANEL, SUBSCRIPTION_DELIVERY_ENABLED=True)
-    @patch('apps.servers.remnawave_subscription.RemnawaveAPI')
-    async def test_active_customer_gets_the_subscription_not_the_direct_key(self, api_class):
-        api_class.return_value.get_user_by_username = AsyncMock(return_value={'id': 7})
+    @patch('apps.vpn.services.subscription_delivery.logger.warning')
+    async def test_customer_gets_the_subscription_not_the_direct_key(self, warning):
+        url = await get_user_access_url(_LazyUserVPN())
 
-        url = await get_user_access_url(self._user_vpn())
-
-        self.assertTrue(url.startswith('https://'))
-        self.assertNotEqual(url, 'vless://legacy')
+        self.assertEqual(url, 'https://sub.example.test/sub/abcdef0123456789')
+        warning.assert_not_called()

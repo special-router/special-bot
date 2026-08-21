@@ -1,29 +1,26 @@
 """Выдача ссылки подписки без 3x-ui.
 
-``sub_id`` уже лежит в нашей базе — он же ``shortUuid`` в панели. Ходить за ним
-в панель незачем: адрес подписки строится из того, что у нас есть, а лишний
-сетевой запрос на каждой выдаче ключа означает, что недоступность панели
-превращается в «клиент получил один сервер вместо четырнадцати».
+``sub_id`` уже лежит в нашей базе — он же ``shortUuid`` в панели, и адрес
+подписки собирается из него одной строкой.
 
-Панель здесь спрашивается ровно об одном — существует ли клиент. Отсутствие
-``shortUuid`` у нас при живой панели значит, что запись рассинхронизирована, и
-об этом надо сказать, а не молча выдать прямой ключ.
+Панель здесь не спрашивается вообще, и это осознанно. Ответ ``/sub/`` строит наш
+же Django из своей базы и своих настроек — доступность панели на него не влияет.
+Значит, любой запрос к панели на этом пути добавляет только один исход: панель
+недоступна, вызывающий код ловит исключение, срабатывает предохранитель, и
+клиент получает прямой ключ — один сервер вместо четырнадцати. Ровно так и
+случилось 2026-08-21.
+
+Расхождение нашей записи с панелью ловится там, где для этого есть повод и
+расписание, — пробой control plane (``entitled_missing``), а не на каждом
+открытии экрана «Подписки».
 """
-import logging
-
-from django.conf import settings
-
-from apps.servers.remnawave import RemnawaveAPI
-from apps.servers.remnawave_client import remnawave_username
 from apps.servers.subscription_connector import (
     SubscriptionClientMissing,
     SubscriptionReference,
     build_subscription_url,
 )
 from apps.vpn.models import UserVPN
-
-
-logger = logging.getLogger(__name__)
+from django.conf import settings
 
 
 def _reference(sub_id: str) -> SubscriptionReference:
@@ -33,32 +30,19 @@ def _reference(sub_id: str) -> SubscriptionReference:
     )
 
 
-async def get_existing_subscription_reference(user_vpn: UserVPN) -> SubscriptionReference:
-    """Ссылка по уже присвоенному ``sub_id``; ничего не меняет.
+async def subscription_reference(user_vpn: UserVPN) -> SubscriptionReference:
+    """Ссылка по присвоенному ``sub_id``; ничего не меняет и никуда не ходит.
 
-    Экраны просмотра ходят сюда, поэтому открытие профиля не может создать новую
-    личность подписки.
-    """
-    sub_id = getattr(user_vpn, 'sub_id', '') or ''
-    if not sub_id:
-        raise SubscriptionClientMissing('no subscription id assigned')
-    return _reference(sub_id)
-
-
-async def ensure_subscription_reference(user_vpn: UserVPN) -> SubscriptionReference:
-    """То же, но с проверкой, что панель знает этого клиента.
+    Читается ровно одно поле самой записи. Ленивые связи не трогаются: в
+    async-контексте обращение к неподгруженной связи бросает
+    ``SynchronousOnlyOperation``, а вызывающий код принимает это за аварию
+    панели и молча выдаёт прямой ключ.
 
     ``shortUuid`` в Remnawave задаётся только при создании, поэтому присвоить
-    его задним числом нельзя — недостающий ``sub_id`` чинится пересозданием
-    клиента в панели, а не здесь. Молча выдать что-нибудь означало бы выдать
-    ссылку, которая ведёт в никуда.
+    недостающий ``sub_id`` задним числом нельзя: такая запись чинится
+    пересозданием клиента в панели, а не здесь.
     """
     sub_id = getattr(user_vpn, 'sub_id', '') or ''
     if not sub_id:
         raise SubscriptionClientMissing('no subscription id assigned')
-
-    panel_user = await RemnawaveAPI().get_user_by_username(remnawave_username(user_vpn))
-    if panel_user is None:
-        raise SubscriptionClientMissing('client is unknown to the control plane')
-
     return _reference(sub_id)

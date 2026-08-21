@@ -15,7 +15,6 @@ import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.utils import timezone
 from telegram import Bot, LabeledPrice
@@ -24,7 +23,7 @@ from apps.analytics.models import MoneyEvent
 from apps.servers.control_plane import fetch_control_plane_client_ids, fetch_inbound_snapshots
 from apps.servers.models import Server, TariffServer
 from apps.servers.remnawave import RemnawaveAPI
-from apps.servers.remnawave_client import remnawave_username
+from apps.servers.remnawave_client import panel_identity
 from apps.servers.subscription_connector import build_subscription_url
 from apps.vpn.management.commands.audit_legacy_vpn import get_server_entitlement
 from apps.vpn.models import UserVPN
@@ -238,10 +237,10 @@ async def _canary_subscription_from_xui(user_vpn: UserVPN) -> str:
 
 
 async def _canary_subscription_from_remnawave(user_vpn: UserVPN) -> str:
-    # Имя строится из ``user.telegram_id``. Связь ленивая, и обращение к ней из
-    # async-контекста — SynchronousOnlyOperation, которое проба поймала бы как
-    # canary_protocol и показала как аварию туннеля.
-    username = await sync_to_async(remnawave_username)(user_vpn)
+    # Имя строится из ленивой связи ``user``; ``panel_identity`` берёт её так,
+    # чтобы async-контекст не превратил это в SynchronousOnlyOperation, которое
+    # проба показала бы как аварию туннеля.
+    username, _ = await panel_identity(user_vpn)
     panel_user = await RemnawaveAPI().get_user_by_username(username)
     if panel_user is None or str(panel_user.get('status')) != 'ACTIVE':
         raise RuntimeError('canary_client_missing')

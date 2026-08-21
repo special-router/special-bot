@@ -1,11 +1,17 @@
 """Перенос на Remnawave: то, что должно пережить переключение без правок у клиента."""
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from django.core.exceptions import SynchronousOnlyOperation
 from django.test import SimpleTestCase, override_settings
 
 from apps.servers.remnawave import RemnawaveAPI, RemnawaveError, configured
-from apps.servers.remnawave_client import RemnawaveVPNClient, remnawave_username
+from apps.servers.remnawave_client import (
+    RemnawaveVPNClient,
+    panel_identity,
+    remnawave_username,
+)
 from apps.servers.vpn_client import APIVPNClient, vpn_client_for
 
 
@@ -32,6 +38,24 @@ def _user_vpn(**overrides):
     return SimpleNamespace(**base)
 
 
+class _LazyRelation:
+    """Запись, чья связь ``user`` резолвится только в синхронном потоке.
+
+    Так ведёт себя ``UserVPN``, вынутый без ``select_related('user')``: доступ
+    к связи из async-контекста Django запрещает.
+    """
+
+    id = 807
+
+    @property
+    def user(self):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return SimpleNamespace(telegram_id=6847813966)
+        raise SynchronousOnlyOperation('You cannot call this from an async context')
+
+
 class ClientSelectionTests(SimpleTestCase):
     @override_settings(REMNAWAVE_ENABLED=False)
     def test_disabled_flag_keeps_every_request_on_the_old_panel(self):
@@ -46,9 +70,21 @@ class IdentityTests(SimpleTestCase):
     def test_username_separates_two_records_of_the_same_person(self):
         first = remnawave_username(_user_vpn(id=807))
         second = remnawave_username(_user_vpn(id=808))
-
         self.assertNotEqual(first, second)
         self.assertNotIn(' ', first)
+
+    @override_settings(REMNAWAVE_ENABLED=True, **_API)
+    async def test_panel_calls_survive_an_unloaded_user_relation(self):
+        """Биллинг и отключение работают с записями, где ``user`` не подгружен.
+
+        Обращение к ленивой связи из async-контекста бросает
+        ``SynchronousOnlyOperation``, а вызывающий код читает это как аварию
+        панели: оплативший остался бы без ссылки, неоплативший — включённым.
+        """
+        username, telegram_id = await panel_identity(_LazyRelation())
+
+        self.assertEqual(telegram_id, 6847813966)
+        self.assertEqual(username, 'tg_6847813966_807')
 
     @override_settings(REMNAWAVE_ENABLED=True, **_API, **_REALITY)
     async def test_issued_link_keeps_the_uuid_the_customer_already_has(self):

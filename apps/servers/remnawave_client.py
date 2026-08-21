@@ -15,6 +15,7 @@ import logging
 from datetime import timedelta
 from typing import Final
 
+from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.utils.timezone import now
 
@@ -42,6 +43,23 @@ def remnawave_username(user_vpn: UserVPN) -> str:
     разводит две записи одного человека на разных серверах.
     """
     return f'tg_{user_vpn.user.telegram_id}_{user_vpn.id}'
+
+
+async def panel_identity(user_vpn: UserVPN) -> tuple[str, int]:
+    """Имя клиента в панели и его telegram_id, взятые безопасно для async.
+
+    ``user`` подгружен не всегда: ``with_related_server()`` берёт только сервер,
+    а экран «Подписки» ходит именно им. Обращение к неподгруженной связи внутри
+    async-контекста бросает ``SynchronousOnlyOperation``, вызывающий код видит
+    исключение и принимает его за аварию панели.
+
+    Один поток на сетевой вызов к панели ничего не стоит, а зависимость от того,
+    каким запросом запись достали, стоила выдачи прямого ключа вместо подписки.
+    """
+    def read() -> tuple[str, int]:
+        return remnawave_username(user_vpn), user_vpn.user.telegram_id
+
+    return await sync_to_async(read)()
 
 
 def reality_params() -> dict:
@@ -73,15 +91,17 @@ class RemnawaveVPNClient:
         self._api = RemnawaveAPI()
 
     async def _find(self, user_vpn: UserVPN) -> dict | None:
-        return await self._api.get_user_by_username(remnawave_username(user_vpn))
+        username, _ = await panel_identity(user_vpn)
+        return await self._api.get_user_by_username(username)
 
     async def _create(self, user_vpn: UserVPN) -> dict:
         limit = user_vpn.device_limit or getattr(settings, 'SUBSCRIPTION_DEVICE_LIMIT', 0)
+        username, telegram_id = await panel_identity(user_vpn)
         return await self._api.create_user(
-            username=remnawave_username(user_vpn),
+            username=username,
             expire_at=_expire_at(),
             vless_uuid=str(user_vpn.vpn_uuid),
-            telegram_id=user_vpn.user.telegram_id,
+            telegram_id=telegram_id,
             hwid_device_limit=limit or None,
             description=self._server.name,
             short_uuid=user_vpn.sub_id or '',

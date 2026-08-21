@@ -4,6 +4,7 @@ import logging
 
 from django.conf import settings
 
+from apps.servers import remnawave_subscription
 from apps.servers.subscription_connector import (
     SubscriptionClientMissing,
     SubscriptionConnectorDisabled,
@@ -26,9 +27,7 @@ async def get_subscription_url(user_vpn: UserVPN) -> str:
     открытие профиля не может создать новую личность подписки.
     """
     if _remnawave_enabled():
-        from apps.servers import remnawave_subscription
-
-        reference = await remnawave_subscription.get_existing_subscription_reference(user_vpn)
+        reference = await remnawave_subscription.subscription_reference(user_vpn)
         return reference.url
     connector = XUISubscriptionConnector(user_vpn.server)
     reference = await connector.get_existing_subscription_reference(user_vpn)
@@ -38,9 +37,9 @@ async def get_subscription_url(user_vpn: UserVPN) -> str:
 async def prepare_subscription_url(user_vpn: UserVPN) -> str:
     """Ссылка подписки для выдачи клиенту."""
     if _remnawave_enabled():
-        from apps.servers import remnawave_subscription
-
-        reference = await remnawave_subscription.ensure_subscription_reference(user_vpn)
+        # На Remnawave присваивать нечего: shortUuid неизменяем после создания,
+        # поэтому обе ветки читают один и тот же уже присвоенный sub_id.
+        reference = await remnawave_subscription.subscription_reference(user_vpn)
         return reference.url
     connector = XUISubscriptionConnector(user_vpn.server)
     reference = await connector.ensure_subscription_reference(user_vpn)
