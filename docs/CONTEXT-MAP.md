@@ -141,7 +141,14 @@ env DJANGO_SETTINGS_MODULE=bot.settings DATABASE_URL='sqlite:///:memory:' \
   fallback is silent by design and once hid a real outage: see below.
 - `apps/servers/remnawave_subscription.py` — link building on the Remnawave
   path. `sub_id` already lives in our database and equals the panel's
-  `shortUuid`, so the panel is asked one question only: does this client exist.
+  `shortUuid`, so nothing is asked of the panel at all: `/sub/` is rendered by
+  our own Django, and a panel round-trip here could only add one outcome —
+  panel down, exception, fallback, one server instead of fourteen. Record drift
+  is caught by the control-plane probe, which has a schedule for it.
+- `apps/servers/remnawave_client.py` — `panel_identity` is the only place the
+  `user` relation is read for a panel call. Reading it directly inside an async
+  context raises `SynchronousOnlyOperation`, and every caller here treats an
+  exception as a dead panel.
 - `apps/servers/subscription_connector.py` — `subId` creation/lookup in 3x-ui.
   Dead on the live stack since 2026-08-21; reachable only with
   `REMNAWAVE_ENABLED=false`.
@@ -210,12 +217,17 @@ env DJANGO_SETTINGS_MODULE=bot.settings DATABASE_URL='sqlite:///:memory:' \
   client UUID of the inbound for every subscriber. Remnawave's own endpoint
   cannot replace it either, for a different reason: nine of the fourteen lines
   are mirror-provider countries the panel has never heard of.
-- **The delivery fallback hides its own cause.** On 2026-08-21 the cutover left
-  `get_user_access_url` dialling the stopped 3x-ui; every exception became a
-  direct `vless://` key, so customers silently got one server instead of
-  fourteen and the only trace was `Subscription delivery fallback: %s` at
-  WARNING. When changing the control plane, read that line's rate, not the
-  absence of errors.
+- **The delivery fallback hides its own cause.** It fired twice on 2026-08-21.
+  First the cutover left `get_user_access_url` dialling the stopped 3x-ui. Then
+  the repair kept one panel round-trip whose username came from the lazy `user`
+  relation, which raises `SynchronousOnlyOperation` under `async` — and the
+  «Подписки» screen loads records with `with_related_server()`, so the relation
+  is never cached there. Both times every exception became a direct `vless://`
+  key: one server instead of fourteen, green monitoring, empty error log, and
+  the only trace was `Subscription delivery fallback: %s` at WARNING.
+  Two rules follow. Issuing a link must read our own record and nothing else.
+  And when changing the control plane, read that line's rate, not the absence
+  of errors.
 
 ---
 
