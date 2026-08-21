@@ -916,8 +916,11 @@ def _xray_outbound_from_link(link: str, tag: str) -> dict | None:
         'streamSettings': stream,
     }
     # Vision несовместим с мультиплексированием: соединение с ``flow`` несёт
-    # собственное обрамление, поверх которого mux ломает поток.
-    if not user['flow']:
+    # собственное обрамление, поверх которого mux ломает поток. XHTTP
+    # мультиплексирует сам, на уровне транспорта, и Mux.Cool поверх него рвёт
+    # соединение сразу после установки: клиент получает EOF на первом же
+    # запросе, а строка при этом выглядит совершенно исправной.
+    if not user['flow'] and network != 'xhttp':
         outbound['mux'] = {
             'enabled': True,
             'concurrency': 6,

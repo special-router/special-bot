@@ -131,6 +131,25 @@ class LinkToOutboundTests(SimpleTestCase):
         self.assertEqual(outbound['streamSettings']['hysteriaSettings']['auth'], _UUID)
         self.assertEqual(outbound['streamSettings']['tlsSettings']['alpn'], ['h3'])
 
+    def test_xhttp_carries_no_mux(self):
+        link = ('vless://' + _UUID + '@sub.example.test:443?type=xhttp&security=tls'
+                '&sni=sub.example.test&path=%2Fassets%2Fv1%2Fx&host=sub.example.test#x')
+
+        outbound = _xray_outbound_from_link(link, 't4')
+
+        # XHTTP мультиплексирует сам; Mux.Cool поверх него рвёт соединение сразу
+        # после установки, и клиент получает EOF на первом же запросе.
+        self.assertNotIn('mux', outbound)
+        self.assertEqual(outbound['streamSettings']['xhttpSettings']['path'], '/assets/v1/x')
+
+    def test_flowless_tcp_keeps_mux(self):
+        link = ('vless://' + _UUID + '@13.143.214.1:443?type=tcp&security=reality'
+                '&pbk=KEY&sni=cloudrynth.com#x')
+
+        outbound = _xray_outbound_from_link(link, 't5')
+
+        self.assertTrue(outbound['mux']['enabled'])
+
     def test_reality_without_a_public_key_is_refused(self):
         link = 'vless://' + _UUID + '@1.2.3.4:443?type=tcp&security=reality&sni=a.test#x'
 
