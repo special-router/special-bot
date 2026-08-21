@@ -192,8 +192,9 @@ Panel database backed up to `/etc/x-ui/x-ui.db.bak.20260813-194800` first.
 
 **Still open:**
 
-- **The rule does not survive a reboot.** Nothing on this host makes iptables
-  persistent. A restart reopens the endpoint.
+- ~~**The rule does not survive a reboot.**~~ Closed: `iptables-restore.service`
+  is enabled and active, and `/etc/iptables/rules.v4` carries the `:3000` pair.
+  Re-verified 2026-08-21.
 - **The panel credential must be rotated.** It sat in a world-readable file
   behind an internet-reachable service; treat it as disclosed.
 - **Nobody in this project owns the service.** Whoever deployed it on 2026-08-05
@@ -273,9 +274,10 @@ Related and worth knowing before any firewall work: **inbound 13 shares its
 Reality SNI with inbound 5**, so a rule aimed at one can silently affect the
 other.
 
-**The iptables rules currently in place are not persistent across a reboot.**
-A reboot re-opens what was blocked. Treat every "port is closed" claim as valid
-only until the next restart.
+**The iptables rules survive a reboot** via `iptables-restore.service`, but
+`/etc/iptables/rules.v4` is a snapshot taken by hand. A rule added live and not
+saved back is silently lost at the next restart; the file currently predates the
+Remnawave migration and still matches on the four ports that matter.
 
 **Rule for this whole area:** check for established connections and ownership
 *before* blocking a port or disabling an inbound. This is not caution for its own

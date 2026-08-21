@@ -51,9 +51,14 @@ made the previous version of this document contradict itself.
   panel knows nothing about; proxying `/sub/` to it would delete them.
 - Subscription transport is live on `sub.special-wifi.ru`. NL nginx terminates
   TLS and proxies `/sub/` to Django on BOT `:8001`, which is reachable only from
-  the NL origin. The panel is served by the same nginx on `:8843`.
+  the NL origin. The panel is served by the same nginx on `:8843`, closed to
+  everyone but the bot host and a cookie the operator collects from a secret
+  URL; without it the panel answers `404`.
 - Delivery is enabled: the bot issues subscription URLs as the primary path,
-  with the direct `vless://` key retained as fallback and rollback.
+  with the direct `vless://` key retained as fallback and rollback. On cutover
+  day the fallback fired on every request — the delivery path still dialled the
+  stopped 3x-ui — and customers got a single direct key instead of the full
+  list. Fixed and verified on live records.
 - nginx `worker_connections` is 16384 with `worker_rlimit_nofile 65535`. The
   Debian default of 768 was exhausted within minutes of the cutover, because
   every Reality connection now traverses the stream proxy.
@@ -95,9 +100,13 @@ docker exec special-bot-web-1 python manage.py shell -c \
 
 - BOT: persistent 1 GiB `/swapfile`, UFW active, `:8001` published on the public
   IPv4 only and firewalled to the NL origin.
-- NL: externally reachable on 22, 80, 443, 2096, 3000, 8080, 8443, 27914, plus
-  8843 for the Remnawave panel. **The iptables rules are not persistent across a
-  reboot.** See [`OPEN-ITEMS.md`](OPEN-ITEMS.md#reducing-the-nl-host-to-2280443).
+- NL: externally reachable on 22, 80, 443, 8443, and 8843 for the panel. Probed
+  from an outside host on 2026-08-21: `3000`, `8080`, `23133`, `27914` refuse,
+  and `2096`, `3100`, `3101`, `20443` do not answer — the last three are bound
+  to `127.0.0.1` and reached only through nginx. The iptables rules **do**
+  survive a reboot via `iptables-restore.service`, but `/etc/iptables/rules.v4`
+  is written by hand; a live-only rule is lost at the next restart. See
+  [`OPEN-ITEMS.md`](OPEN-ITEMS.md#reducing-the-nl-host-to-2280443).
 - NL now has a persistent 2 GiB `/swapfile` in `/etc/fstab`. It had none, and
   the panel took 396 MiB of it within the hour.
 - SSH on both hosts: `PasswordAuthentication no`,
