@@ -136,6 +136,13 @@ env DJANGO_SETTINGS_MODULE=bot.settings DATABASE_URL='sqlite:///:memory:' \
 
 - `apps/subscriptions/views.py` — `subscription_proxy` is the whole public
   endpoint; `_build_vless`, `_get_params`, `_reality_params`, `_endpoint`.
+- `apps/subscriptions/page.py` — the same URL answers a browser with a page and
+  an app with the document, split on `Accept: text/html` rather than on any
+  User-Agent. The page is built from the very `links` list the client receives,
+  so it cannot drift from the subscription. `remnawave/subscription-page` was
+  not used: it fetches `api/sub/<shortUuid>` from the panel, which knows only
+  our own endpoints and none of the nine mirror countries, and it renders the
+  panel's far-future expiry, which contradicts the balance the bot charges.
 - `apps/vpn/services/subscription_delivery.py` — `get_user_access_url`, the bot
   side, with the direct `vless://` key as fallback on any exception. The
   fallback is silent by design and once hid a real outage: see below.

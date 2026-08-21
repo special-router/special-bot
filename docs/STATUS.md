@@ -56,9 +56,15 @@ made the previous version of this document contradict itself.
   URL; without it the panel answers `404`.
 - Delivery is enabled: the bot issues subscription URLs as the primary path,
   with the direct `vless://` key retained as fallback and rollback. On cutover
-  day the fallback fired on every request — the delivery path still dialled the
-  stopped 3x-ui — and customers got a single direct key instead of the full
-  list. Fixed and verified on live records.
+  day the fallback fired on every request — first because the delivery path
+  still dialled the stopped 3x-ui, then because the repair read a lazy `user`
+  relation inside `async` — and customers got a single direct key instead of the
+  full list. Fixed and verified on live records.
+- The same `/sub/<id>` now answers a browser with a page and an app with the
+  document, split on `Accept: text/html`. Measured live: browser `200 text/html`
+  with 13 countries and 8 install buttons, v2rayNG and Happ `200 application/json`,
+  curl `200 text/plain` — and the page's country count equals the document's
+  endpoints minus the status entry.
 - nginx `worker_connections` is 16384 with `worker_rlimit_nofile 65535`. The
   Debian default of 768 was exhausted within minutes of the cutover, because
   every Reality connection now traverses the stream proxy.
