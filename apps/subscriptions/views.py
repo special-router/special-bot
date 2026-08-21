@@ -75,7 +75,41 @@ async def _fetch_params(server_id: int, inbound_id: int) -> dict:
     }
 
 
+def _configured_params(inbound_id: int) -> dict | None:
+    """Параметры Reality из настроек, без обращения к 3x-ui.
+
+    После перехода на Remnawave старой панели, у которой их можно было
+    спросить, больше нет: конфиг ноды задаём мы, и эти значения — то же самое,
+    что в него положено. Совпадение с прежним inbound-ом и есть причина, по
+    которой уже выданные ссылки продолжают работать.
+
+    Порт здесь — тот, что слушает ядро (8443). Наружу клиент набирает 443 через
+    nginx, и это отдельное значение (``SUBSCRIPTION_DIRECT_ADVERTISED_PORT``);
+    подменять одно другим тут нельзя, иначе релейная линия получит чужой порт.
+    """
+    if not getattr(settings_relays(), 'REMNAWAVE_ENABLED', False):
+        return None
+    public_key = str(getattr(settings_relays(), 'REMNAWAVE_REALITY_PUBLIC_KEY', ''))
+    server_name = str(getattr(settings_relays(), 'REMNAWAVE_REALITY_SERVER_NAME', ''))
+    short_id = str(getattr(settings_relays(), 'REMNAWAVE_REALITY_SHORT_ID', ''))
+    if not (public_key and server_name and short_id):
+        # Неполные настройки дали бы ссылку, которая выглядит рабочей и не
+        # подключается. Пусть лучше сработает прежний путь, пока он есть.
+        return None
+    return {
+        'public_key': public_key,
+        'server_name': server_name,
+        'short_ids': [short_id],
+        'port': int(getattr(settings_relays(), 'REMNAWAVE_REALITY_PORT', 8443) or 8443),
+        'network': 'tcp',
+        'inbound_id': inbound_id,
+    }
+
+
 def _get_params(server_id: int, inbound_id: int) -> dict:
+    configured = _configured_params(inbound_id)
+    if configured is not None:
+        return configured
     fetched_at, params = _reality_params(server_id, inbound_id)
     if time.time() - fetched_at > _PARAM_TTL_SECONDS:
         _reality_params.cache_clear()

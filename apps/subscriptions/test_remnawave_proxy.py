@@ -5,7 +5,41 @@ from unittest.mock import patch
 import httpx
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
-from apps.subscriptions.views import _remnawave_proxy_enabled, _remnawave_upstream
+from apps.subscriptions.views import (
+    _configured_params, _remnawave_proxy_enabled, _remnawave_upstream)
+
+
+_REALITY = dict(
+    REMNAWAVE_ENABLED=True,
+    REMNAWAVE_REALITY_PUBLIC_KEY='p' * 43,
+    REMNAWAVE_REALITY_SERVER_NAME='example.test',
+    REMNAWAVE_REALITY_SHORT_ID='aabb',
+    REMNAWAVE_REALITY_PORT=8443,
+)
+
+
+class ConfiguredParamsTests(SimpleTestCase):
+    """Подписка должна собираться, когда 3x-ui уже выключен."""
+
+    @override_settings(**_REALITY)
+    def test_params_come_from_settings_without_asking_any_panel(self):
+        params = _configured_params(5)
+
+        self.assertEqual(params['public_key'], 'p' * 43)
+        self.assertEqual(params['short_ids'], ['aabb'])
+        # Порт ядра, а не тот, что набирает клиент: наружу 443 отдаёт nginx.
+        self.assertEqual(params['port'], 8443)
+
+    @override_settings(REMNAWAVE_ENABLED=False, **{k: v for k, v in _REALITY.items()
+                                                   if k != 'REMNAWAVE_ENABLED'})
+    def test_old_panel_stays_authoritative_until_the_switch(self):
+        self.assertIsNone(_configured_params(5))
+
+    @override_settings(REMNAWAVE_ENABLED=True, REMNAWAVE_REALITY_PUBLIC_KEY='',
+                       REMNAWAVE_REALITY_SERVER_NAME='', REMNAWAVE_REALITY_SHORT_ID='')
+    def test_incomplete_settings_fall_back_instead_of_issuing_a_dead_link(self):
+        """Ссылка с пустым ключом выглядит рабочей и не подключается."""
+        self.assertIsNone(_configured_params(5))
 
 
 _PROXY = dict(REMNAWAVE_SUBSCRIPTION_PROXY_ENABLED=True,

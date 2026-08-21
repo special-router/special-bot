@@ -193,5 +193,13 @@ def sync_expiry_times():
     """Mirror remaining balance days into 3x-ui client expiryTime so subscription
     clients (happ) display how many days are left. Does not create transactions and
     does not enable disabled clients."""
+    # Задача пишет в 3x-ui. После перехода на Remnawave панели, в которую она
+    # пишет, больше нет, и без этой проверки она падала бы каждую ночь. Срок
+    # клиенту показывают заголовки подписки, они считаются по балансу и от этой
+    # задачи не зависят.
+    if getattr(settings, 'REMNAWAVE_ENABLED', False):
+        logger.info('sync_expiry_times skipped: 3x-ui is no longer the control plane')
+        return
+
     from django.core.management import call_command
     call_command('sync_expiry_times')
