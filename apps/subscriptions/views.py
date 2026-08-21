@@ -1019,6 +1019,13 @@ def subscription_proxy(request, sub_id: str):
         if body is not None:
             resp = HttpResponse(body, content_type='application/json')
             resp['Profile-Update-Interval'] = '12'
+            # Клиент держит собственный набор правил маршрутизации и по
+            # умолчанию накладывает его поверх профиля. Для списка ссылок это
+            # ровно то, что нужно: своих правил там нет. У документа они свои, и
+            # два набора одновременно дают профиль, который соединяется, но
+            # никуда не ведёт — трафик уходит по чужим правилам. Провайдер, чей
+            # документ на этом клиенте работает, гасит их тем же заголовком.
+            resp['routing-enable'] = '0'
             _with_headers(resp, _client_ui_headers(days))
             return _no_cache_response(_with_headers(resp, hwid_headers))
 

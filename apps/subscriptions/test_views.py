@@ -2413,3 +2413,39 @@ class XrayJsonPerClientRolloutTests(SimpleTestCase):
     @override_settings(SUBSCRIPTION_XRAY_JSON_ROLLED_OUT_CLIENTS=['happ'])
     def test_an_unknown_client_is_still_untouched(self, _params):
         self.assertEqual(self._response('curl/8.0')['Content-Type'], 'text/plain')
+
+
+@override_settings(
+    SUBSCRIPTION_BASE_URL='https://direct.example/sub',
+    SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=False,
+    SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=False,
+    SUBSCRIPTION_XRAY_JSON_ENABLED=True,
+    SUBSCRIPTION_XRAY_JSON_ROLLED_OUT_CLIENTS=['happ'],
+)
+@patch('apps.subscriptions.views._get_params', return_value={
+    'public_key': 'synthetic-public-key', 'server_name': 'sni.example',
+    'short_ids': ['synthetic-short-id'], 'port': 8443, 'network': 'tcp',
+})
+class XrayJsonClientRoutingTests(SimpleTestCase):
+    def _response(self, user_agent):
+        subscription = SimpleNamespace(
+            id=1, enabled=True,
+            server=SimpleNamespace(id=1, inbound_id=5, client_vpn_host='relay.example:443',
+                                   tariff=SimpleNamespace(price='7.00')),
+            user_id=1, vpn_uuid='synthetic-local-id',
+        )
+        with patch('apps.subscriptions.views.UserVPN.objects') as user_vpn_objects, \
+                patch('apps.subscriptions.views.TelegramUser.objects') as telegram_user_objects:
+            user_vpn_objects.select_related.return_value.get.return_value = subscription
+            telegram_user_objects.annotate_balance.return_value.filter.return_value.first.return_value = (
+                SimpleNamespace(balance='70.00'))
+            request = RequestFactory().get('/sub/synthetic', HTTP_USER_AGENT=user_agent)
+            return views.subscription_proxy(request, 'synthetic')
+
+    def test_the_document_disables_the_client_s_own_routing(self, _params):
+        """Два набора правил разом дают профиль, который соединяется и никуда не ведёт."""
+        self.assertEqual(self._response('Happ/2.0')['routing-enable'], '0')
+
+    def test_the_link_list_leaves_client_routing_alone(self, _params):
+        """У списка ссылок своих правил нет, и глушить клиентские незачем."""
+        self.assertNotIn('routing-enable', self._response('curl/8.0'))
