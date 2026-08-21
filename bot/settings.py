@@ -420,6 +420,14 @@ SUBSCRIPTION_XRAY_JSON_ENABLED = env.bool('SUBSCRIPTION_XRAY_JSON_ENABLED', Fals
 SUBSCRIPTION_XRAY_JSON_TEST_USER_IDS = env.json('SUBSCRIPTION_XRAY_JSON_TEST_USER_IDS', default=[])
 SUBSCRIPTION_XRAY_JSON_ALL_USERS_ENABLED = env.bool(
     'SUBSCRIPTION_XRAY_JSON_ALL_USERS_ENABLED', False)
+# Клиенты, на которых формат уже проверен вручную и потому раскатан всем:
+# ``happ``, ``v2rayng``. Список отдельный от выкатки по людям, потому что риск
+# здесь другой — не «этому человеку рано», а «этот клиент читает документ своим
+# кодом, и никто не видел результат». Проверка ядром (`xray -test`) сюда не
+# считается: 2026-08-20 она отвечала «Configuration OK» на документ, у которого
+# в приложении не было ни одного сервера.
+SUBSCRIPTION_XRAY_JSON_ROLLED_OUT_CLIENTS = env.json(
+    'SUBSCRIPTION_XRAY_JSON_ROLLED_OUT_CLIENTS', default=[])
 
 # Branding and environment carried in subscription response headers, which is
 # how the client app builds its own interface. Values reach the wire verbatim,

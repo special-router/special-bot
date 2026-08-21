@@ -488,11 +488,21 @@ def _wants_xray_json(user_agent: str, user_vpn_id: int | None = None) -> bool:
     from django.conf import settings
     if not getattr(settings, 'SUBSCRIPTION_XRAY_JSON_ENABLED', False):
         return False
-    if not getattr(settings, 'SUBSCRIPTION_XRAY_JSON_ALL_USERS_ENABLED', False):
-        allowed = getattr(settings, 'SUBSCRIPTION_XRAY_JSON_TEST_USER_IDS', [])
-        if not isinstance(allowed, list) or user_vpn_id not in allowed:
-            return False
-    return bool(_V2RAYNG_UA_PATTERN.search(user_agent) or _HAPP_UA_PATTERN.search(user_agent))
+    happ = bool(_HAPP_UA_PATTERN.search(user_agent))
+    if not (happ or _V2RAYNG_UA_PATTERN.search(user_agent)):
+        return False
+    # Раскатка считается по клиенту, а не по всей ветке сразу. Документ,
+    # проверенный на живом Happ, ничего не обещает про v2rayNG: он читает тот же
+    # JSON другим кодом, и отказ у него выглядел бы так же — как пропавшие
+    # серверы. Клиент попадает сюда после того, как на нём кто-то проверил
+    # выдачу руками, а не после того, как ядро согласилось прочитать конфиг.
+    rolled_out = getattr(settings, 'SUBSCRIPTION_XRAY_JSON_ROLLED_OUT_CLIENTS', [])
+    if isinstance(rolled_out, list) and ('happ' in rolled_out if happ else 'v2rayng' in rolled_out):
+        return True
+    if getattr(settings, 'SUBSCRIPTION_XRAY_JSON_ALL_USERS_ENABLED', False):
+        return True
+    allowed = getattr(settings, 'SUBSCRIPTION_XRAY_JSON_TEST_USER_IDS', [])
+    return isinstance(allowed, list) and user_vpn_id in allowed
 
 
 def _reality_stream_settings(params: dict) -> dict:
