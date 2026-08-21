@@ -15,19 +15,33 @@ from apps.vpn.models import UserVPN
 logger = logging.getLogger(__name__)
 
 
-async def get_subscription_url(user_vpn: UserVPN) -> str:
-    """Return an existing 3x-ui subscription URL without changing control plane.
+def _remnawave_enabled() -> bool:
+    return bool(getattr(settings, 'REMNAWAVE_ENABLED', False))
 
-    Display flows use this read-only path for disabled connections so viewing
-    a profile can never create a new subscription identity.
+
+async def get_subscription_url(user_vpn: UserVPN) -> str:
+    """Существующая ссылка подписки, без изменения control plane.
+
+    Экраны просмотра ходят по этому пути и для отключённых записей, поэтому
+    открытие профиля не может создать новую личность подписки.
     """
+    if _remnawave_enabled():
+        from apps.servers import remnawave_subscription
+
+        reference = await remnawave_subscription.get_existing_subscription_reference(user_vpn)
+        return reference.url
     connector = XUISubscriptionConnector(user_vpn.server)
     reference = await connector.get_existing_subscription_reference(user_vpn)
     return reference.url
 
 
 async def prepare_subscription_url(user_vpn: UserVPN) -> str:
-    """Assign a missing subId and return its URL when the connector is enabled."""
+    """Ссылка подписки для выдачи клиенту."""
+    if _remnawave_enabled():
+        from apps.servers import remnawave_subscription
+
+        reference = await remnawave_subscription.ensure_subscription_reference(user_vpn)
+        return reference.url
     connector = XUISubscriptionConnector(user_vpn.server)
     reference = await connector.ensure_subscription_reference(user_vpn)
     return reference.url
