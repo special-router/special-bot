@@ -783,7 +783,8 @@ def _cascade(stages: list[tuple[str, list[str]]], name: str) -> tuple[list[dict]
 
 
 def _build_xray_json(uuid: str, params: dict, direct_host: str, direct_port: int,
-                     relay_host: str, relay_port: int, flow: str) -> dict:
+                     relay_host: str, relay_port: int, flow: str,
+                     own_outbounds: list[dict] | None = None) -> dict:
     """Наш профиль для Happ/v2rayNG: три транспорта одного узла лестницей.
 
     Порядок ступеней здесь — не результат замера, а решение: обычный TCP, затем
@@ -795,8 +796,13 @@ def _build_xray_json(uuid: str, params: dict, direct_host: str, direct_port: int
 
     Секции ``inbounds`` нет: оба клиента заводят свой VPN-интерфейс в ядро сами,
     как и в документе, который отдаёт Sosa.
+
+    ``own_outbounds`` подменяет только сами точки: лестница, балансировщики и
+    маршрутизация остаются здешними, потому что теги те же. Так профиль и
+    список берут одни и те же четыре точки из панели, не повторяя её логику
+    сборки ссылок.
     """
-    outbounds = _xray_json_outbounds(
+    outbounds = own_outbounds if own_outbounds else _xray_json_outbounds(
         uuid, params, direct_host, direct_port, relay_host, relay_port, flow)
     tags = {outbound['tag'] for outbound in outbounds}
     stages = [('own-l1', [tag for tag in ('proxy-nl-direct', 'proxy-ru-relay') if tag in tags])]
@@ -1014,6 +1020,123 @@ _REMNAWAVE_FORWARDED_HEADERS = (
 )
 _REMNAWAVE_TIMEOUT = 10.0
 _REMNAWAVE_MAX_BYTES = 1024 * 1024
+# Наши собственные точки, взятые из панели вместо настроек. Панель отдаёт их
+# под тем же ``sub_id`` без токена и уже с UUID этого клиента, поэтому здесь
+# нет ни ключей, ни сборки ссылок — только перенос готовых строк. Девять
+# зеркальных стран панель не знает и знать не может: у зеркала одна учётка на
+# всех, а всякая ссылка панели несёт личный UUID. Поэтому берётся ровно наша
+# часть, а остальное по-прежнему добавляем мы.
+_PANEL_LINKS_TIMEOUT = 5.0
+_PANEL_LINKS_MAX_BYTES = 64 * 1024
+_PANEL_LINKS_USER_AGENT = 'v2rayN/6.0'
+
+
+def _panel_links_allowed(user_vpn_id: int) -> bool:
+    """Кому выдача собирается из панели, а кому по-прежнему из настроек.
+
+    Три ступени, как у запасных точек, и по той же причине: полная раскатка —
+    отдельное состояние, а не список, в который каждый раз надо дописывать
+    нового клиента. День, когда его не дописали, выглядит как молча укоротившаяся
+    подписка у одного человека.
+    """
+    relays = settings_relays()
+    if not getattr(relays, 'REMNAWAVE_ENDPOINTS_ENABLED', False):
+        return False
+    if not str(getattr(relays, 'REMNAWAVE_API_URL', '')).strip():
+        return False
+    if getattr(relays, 'REMNAWAVE_ENDPOINTS_ALL_USERS_ENABLED', False):
+        return True
+    allowed = getattr(relays, 'REMNAWAVE_ENDPOINTS_TEST_USER_IDS', [])
+    # Пустой или битый список во время раскатки = не получает никто.
+    return isinstance(allowed, list) and bool(allowed) and user_vpn_id in allowed
+
+
+def _panel_links(user_vpn) -> list[str] | None:
+    """Наши точки в том виде, в каком их отдаёт панель, или ``None``.
+
+    ``None`` означает «панель не ответила» и возвращает выдачу на сборку из
+    настроек — то есть на сегодняшнее поведение. Пустой список сюда не
+    приравнивается: панель без хостов ответила бы «серверов нет», а это ровно
+    та авария, ради которой прокси-путь и был отключён.
+
+    Чужие строки отбрасываются по UUID. Панель обязана вернуть точки этого
+    клиента, и если в ответе оказалась чужая идентичность, это не деградация,
+    которую можно пережить, а выдача чужого доступа.
+    """
+    if not _panel_links_allowed(user_vpn.id):
+        return None
+    base = str(getattr(settings_relays(), 'REMNAWAVE_API_URL', '')).strip().rstrip('/')
+    try:
+        response = httpx.get(f'{base}/api/sub/{user_vpn.sub_id}',
+                             headers={'User-Agent': _PANEL_LINKS_USER_AGENT},
+                             timeout=_PANEL_LINKS_TIMEOUT, follow_redirects=False)
+    except httpx.HTTPError as error:
+        # Ни адреса, ни ``sub_id`` в логе: ссылка подписки — доступ к трафику.
+        logger.warning('Panel endpoints unavailable: %s', type(error).__name__)
+        return None
+    if response.status_code != 200 or len(response.content) > _PANEL_LINKS_MAX_BYTES:
+        logger.warning('Panel endpoints refused: status=%s', response.status_code)
+        return None
+    try:
+        decoded = _decode_subscription_payload(response.content)
+    except ValueError:
+        return None
+    expected = str(user_vpn.vpn_uuid)
+    links = []
+    for raw_line in decoded.splitlines():
+        if not raw_line.startswith(b'vless://'):
+            continue
+        line = raw_line.decode('utf-8', 'replace')
+        try:
+            if urlsplit(line).username != expected:
+                continue
+        except ValueError:
+            continue
+        links.append(line)
+    return links or None
+
+
+def _panel_outbound_tag(link: str, direct_host: str) -> str:
+    """Ступень лестницы, которой соответствует строка панели.
+
+    Теги те же, что строит ``_xray_json_outbounds``, потому что маршрутизацию,
+    балансировщики и порядок ступеней документ берёт из них. Новый тег здесь
+    означал бы точку, на которую не ссылается ни одно правило: клиент её видит
+    и не использует.
+    """
+    try:
+        parts = urlsplit(link)
+        query = {key: values[0] for key, values in parse_qs(parts.query).items()}
+    except ValueError:
+        return ''
+    network = query.get('type', 'tcp')
+    if network == 'xhttp':
+        return 'proxy-xhttp'
+    if network == 'grpc':
+        return 'proxy-grpc'
+    if network != 'tcp':
+        return ''
+    return 'proxy-nl-direct' if parts.hostname == direct_host else 'proxy-ru-relay'
+
+
+def _panel_outbounds(links: list[str], direct_host: str) -> list[dict]:
+    """Те же строки, что уходят списком, но секциями документа.
+
+    Один источник на оба формата: список и профиль расходились бы иначе на
+    любой правке хостов в панели, а расхождение здесь видно только у клиента.
+    """
+    outbounds = []
+    taken = set()
+    for link in links:
+        tag = _panel_outbound_tag(link, direct_host)
+        if not tag or tag in taken:
+            continue
+        outbound = _xray_outbound_from_link(link, tag)
+        if outbound is None:
+            continue
+        taken.add(tag)
+        outbounds.append(outbound)
+    return outbounds
 
 
 def _remnawave_proxy_enabled() -> bool:
@@ -1118,13 +1241,19 @@ def subscription_proxy(request, sub_id: str):
     flow = ''
 
     user_agent = request.META.get('HTTP_USER_AGENT', '')
-    if _wants_xray_json(user_agent, user_vpn.id) and _xray_json_ready(params, direct_host):
+    # Один запрос на оба формата: список и профиль должны нести одни и те же
+    # точки, а два похода в панель разошлись бы ровно в тот момент, когда там
+    # правят хосты.
+    panel_links = _panel_links(user_vpn)
+    if _wants_xray_json(user_agent, user_vpn.id) and (
+            panel_links or _xray_json_ready(params, direct_host)):
         try:
             # Массив, а не один объект: клиент рисует по профилю на элемент и
             # берёт имя из ``remarks``. Наш узел идёт первым — он единственный,
             # за который отвечаем мы, а всё после него чужое.
             documents = [_build_xray_json(
-                uuid_str, params, direct_host, direct_port, relay_host, relay_port, flow)]
+                uuid_str, params, direct_host, direct_port, relay_host, relay_port, flow,
+                own_outbounds=_panel_outbounds(panel_links, direct_host) if panel_links else None)]
             if _is_backup_test_user(user_vpn.id):
                 documents.extend(_mirror_xray_profiles(
                     _backup_links() or [], _wants_hysteria_outbound(user_agent)))
@@ -1154,27 +1283,33 @@ def subscription_proxy(request, sub_id: str):
     # 2) and 3) are the two endpoints this deployment operates and is
     # accountable for, so a customer scanning the list reaches them before
     # anything a third party serves.  Everything below them is a fallback.
-    # 2) Direct NL primary.
-    links.append(_build_vless(uuid_str, direct_host, direct_port,
-                              _endpoint_label(_OWN_REGION_CODE), params, flow=flow))
-    # 3) RU relay (only if configured).
-    if relay_host:
-        links.append(_build_vless(uuid_str, relay_host, relay_port,
-                                  _endpoint_label(_OWN_REGION_CODE, whitelisted=True),
-                                  params, flow=flow))
-    # 3.5) XHTTP на том же имени и порту, что и сама подписка. Стоит сразу за
-    # нашими двумя линиями: это наш endpoint, и он единственный не опознаётся
-    # как VPN-хендшейк — то есть первое, что стоит попробовать, когда обычная
-    # линия перестала работать у конкретного оператора.
-    xhttp_link = _xhttp_link(uuid_str, direct_host)
-    if xhttp_link:
-        links.append(xhttp_link)
-    # 3.6) gRPC на том же узле, порт 80. Идёт после XHTTP, потому что XHTTP
-    # неотличим от обычного HTTPS, а этот — отличим; но он держится там, где
-    # уже не поднимается TCP-Reality, и это проверено на живой сети партнёра.
-    grpc_link = _grpc_link(uuid_str, direct_host)
-    if grpc_link:
-        links.append(grpc_link)
+    # Панель, когда отвечает, и есть их описание: те же четыре точки, но
+    # заведённые там, где их правят. Настройки остаются запасным путём, а не
+    # вторым источником — иначе правка хостов расходилась бы с выдачей молча.
+    if panel_links:
+        links.extend(panel_links)
+    else:
+        # 2) Direct NL primary.
+        links.append(_build_vless(uuid_str, direct_host, direct_port,
+                                  _endpoint_label(_OWN_REGION_CODE), params, flow=flow))
+        # 3) RU relay (only if configured).
+        if relay_host:
+            links.append(_build_vless(uuid_str, relay_host, relay_port,
+                                      _endpoint_label(_OWN_REGION_CODE, whitelisted=True),
+                                      params, flow=flow))
+        # 3.5) XHTTP на том же имени и порту, что и сама подписка. Стоит сразу
+        # за нашими двумя линиями: это наш endpoint, и он единственный не
+        # опознаётся как VPN-хендшейк — то есть первое, что стоит попробовать,
+        # когда обычная линия перестала работать у конкретного оператора.
+        xhttp_link = _xhttp_link(uuid_str, direct_host)
+        if xhttp_link:
+            links.append(xhttp_link)
+        # 3.6) gRPC на том же узле, порт 80. Идёт после XHTTP, потому что XHTTP
+        # неотличим от обычного HTTPS, а этот — отличим; но он держится там, где
+        # уже не поднимается TCP-Reality, и это проверено на живой сети партнёра.
+        grpc_link = _grpc_link(uuid_str, direct_host)
+        if grpc_link:
+            links.append(grpc_link)
     # 4) Same-origin internal transport canary. Every candidate independently
     # stable-reads its own live inbound and silently omits on any uncertainty.
     if _is_internal_test_user(user_vpn.id):

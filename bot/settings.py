@@ -483,6 +483,16 @@ REMNAWAVE_REALITY_PORT = env.int('REMNAWAVE_REALITY_PORT', 443)
 REMNAWAVE_SUBSCRIPTION_PROXY_ENABLED = env.bool(
     'REMNAWAVE_SUBSCRIPTION_PROXY_ENABLED', False)
 REMNAWAVE_SUBSCRIPTION_BASE_URL = env.str('REMNAWAVE_SUBSCRIPTION_BASE_URL', '')
+# Наши точки берутся из панели, а не из четырёх переменных выше. Панель отдаёт
+# их под тем же ``sub_id``, уже с UUID клиента, поэтому сервер добавляют там же,
+# где им управляют, и деплой для этого не нужен. Зеркальные девять стран панель
+# не знает: у зеркала одна учётка на всех, а всякая её ссылка именная. Их
+# по-прежнему добавляет ``/sub/``, и только поэтому список остаётся полным.
+REMNAWAVE_ENDPOINTS_ENABLED = env.bool('REMNAWAVE_ENDPOINTS_ENABLED', False)
+# Раскатка по одному. Список пуст — не получает никто, даже при поднятом флаге
+# выше: во время раскатки это единственное безопасное значение по умолчанию.
+REMNAWAVE_ENDPOINTS_ALL_USERS_ENABLED = env.bool('REMNAWAVE_ENDPOINTS_ALL_USERS_ENABLED', False)
+REMNAWAVE_ENDPOINTS_TEST_USER_IDS = env.json('REMNAWAVE_ENDPOINTS_TEST_USER_IDS', [])
 
 # Additional inbound ids whose client ``enable``/``subId`` state must mirror the
 # primary ``Server.inbound_id``. Used for subscription endpoints that share the

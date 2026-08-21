@@ -206,6 +206,9 @@ Live since **2026-08-21**; see [`REMNAWAVE-MIGRATION.md`](REMNAWAVE-MIGRATION.md
 | `REMNAWAVE_REALITY_PORT` | int | `443` | `8443` | Port advertised in generated links. |
 | `REMNAWAVE_SUBSCRIPTION_PROXY_ENABLED` | bool | `False` | `false` | Whether `/sub/<sub_id>` proxies to the panel. **Stays off.** The live payload carries nine mirror-provider countries the panel knows nothing about; proxying deletes them, which the customer reads as "the servers are gone" — the 2026-08-20 incident. |
 | `REMNAWAVE_SUBSCRIPTION_BASE_URL` | str | empty | set | Upstream used only when the proxy flag is on. |
+| `REMNAWAVE_ENDPOINTS_ENABLED` | bool | `False` | `true` | Whether our own four endpoints come from the panel instead of the `REMNAWAVE_REALITY_*` settings. The panel answers `/api/sub/<sub_id>` without a token and already stamps the customer's own uuid, so a server is added where it is managed and no deploy follows. Unlike the proxy flag above this keeps `/sub/` as the assembler, so the nine mirror countries survive. Any panel failure falls back to the built links. Raised, but reaching one operator account only — see the two rows below. |
+| `REMNAWAVE_ENDPOINTS_ALL_USERS_ENABLED` | bool | `False` | `false` | Full rollout as its own state. An allowlist holding every id there happens to be today has to be rewritten for each new customer, and the day it is not, that customer silently gets a shorter list than the person beside them. |
+| `REMNAWAVE_ENDPOINTS_TEST_USER_IDS` | json | `[]` | `[801]` | Who receives the panel-built endpoints while the rollout is partial. Empty or malformed means nobody, even with the flag above raised. |
 
 ## Billing pause
 
