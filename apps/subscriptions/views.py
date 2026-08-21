@@ -35,8 +35,11 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
 from apps.servers.models import Server
+from apps.servers.subscription_connector import build_subscription_url
+from apps.subscriptions import page
 from apps.subscriptions.devices import (
-    client_hwid, client_metadata, hwid_strict, register_device, valid_hwid)
+    bound_devices, client_hwid, client_metadata, device_limit_for, hwid_strict,
+    register_device, valid_hwid)
 from apps.subscriptions.models import MirrorEndpointLiveness
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
@@ -1180,6 +1183,21 @@ def subscription_proxy(request, sub_id: str):
     backup_links = _backup_links() if _is_backup_test_user(user_vpn.id) else None
     if backup_links:
         links.extend(backup_links)
+
+    # Браузеру — страница, приложению — документ. Стоит после сборки links,
+    # поэтому страница показывает ровно тот список, который получит клиент:
+    # разойтись им нечем.
+    if page.wants_page(request):
+        html = page.render(
+            subscription_url=build_subscription_url(settings_relays().SUBSCRIPTION_BASE_URL, sub_id),
+            days=days,
+            status_label=status_label,
+            links=links,
+            devices=bound_devices(user_vpn),
+            device_limit=device_limit_for(user_vpn),
+        )
+        resp = HttpResponse(html, content_type='text/html; charset=utf-8')
+        return _no_cache_response(_with_headers(resp, hwid_headers))
 
     payload = '\n'.join(links) + '\n'
     encoded = base64.b64encode(payload.encode('utf-8'))
