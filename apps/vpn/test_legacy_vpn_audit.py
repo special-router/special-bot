@@ -87,6 +87,17 @@ class LegacyVpnAuditCommandTests(TestCase):
         self.assertIn('entitled_missing=1', str(raised.exception))
 
     @patch('apps.vpn.management.commands.audit_legacy_vpn.fetch_active_control_plane_client_ids', new_callable=AsyncMock)
+    def test_django_disabled_funded_record_is_not_required(self, fetch_clients):
+        UserVPN.objects.filter(vpn_uuid=self.paid_uuid).update(enabled=False)
+        fetch_clients.return_value = ({str(self.paid_uuid)}, set())
+
+        output = StringIO()
+        management.call_command('audit_legacy_vpn', stdout=output)
+
+        self.assertIn('entitled=0', output.getvalue())
+        self.assertIn('entitled_missing=0', output.getvalue())
+
+    @patch('apps.vpn.management.commands.audit_legacy_vpn.fetch_active_control_plane_client_ids', new_callable=AsyncMock)
     def test_unpaid_client_is_not_required(self, fetch_clients):
         fetch_clients.return_value = (set(), set())
 

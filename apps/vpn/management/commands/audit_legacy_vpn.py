@@ -57,7 +57,13 @@ async def fetch_control_plane_client_ids(server: Server) -> tuple[set[str], set[
 
 
 def get_server_entitlement(server: Server) -> tuple[int, set[str]]:
-    """Return record count and UUIDs entitled by the deployed balance rule."""
+    """Return record count and enabled UUIDs entitled by the deployed balance rule.
+
+    Balance alone is insufficient: Django's ``enabled`` flag is the billing
+    task's authoritative access decision. A manually or financially disabled
+    record may still have money and must not be required to remain enabled in
+    the panel.
+    """
     records = list(
         UserVPN.objects.filter(server_id=server.id).annotate(
             entitlement_balance=Coalesce(
@@ -67,7 +73,10 @@ def get_server_entitlement(server: Server) -> tuple[int, set[str]]:
             )
         )
     )
-    entitled = {str(user_vpn.vpn_uuid) for user_vpn in records if user_vpn.entitlement_balance >= server.tariff.price}
+    entitled = {
+        str(user_vpn.vpn_uuid) for user_vpn in records
+        if user_vpn.enabled and user_vpn.entitlement_balance >= server.tariff.price
+    }
     return len(records), entitled
 
 

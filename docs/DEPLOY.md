@@ -104,7 +104,7 @@ What the script does on the host, in order:
 - `git fetch` + `git merge --ff-only origin/main`, then refuses if `HEAD` is not
   the commit you said you were deploying;
 - tags the current `vpnbot:latest` as a rollback image and copies `.environment`;
-- runs `audit_legacy_vpn` and refuses unless it prints `Legacy VPN audit passed.`;
+- runs the provider-neutral L0 control-plane audit and refuses unless the active panel (Remnawave or 3x-ui, selected by the same runtime flag as provisioning and monitoring) reports no entitled user missing and no expected inbound drift;
 - `docker build -t vpnbot:latest .`;
 - **migrates through one throwaway container** — `docker compose run --rm web
   python manage.py migrate`. Every long-running service has
@@ -114,7 +114,7 @@ What the script does on the host, in order:
   force-recreates `broadcast`. If the proof fails, the broadcast worker is
   stopped and removed and the deploy says `BROADCAST_QUARANTINED` — an old image
   must never consume that queue;
-- runs `audit_legacy_vpn` again and asserts `SUBSCRIPTION_CONNECTOR_ENABLED`.
+- runs the same active control-plane audit again and asserts `SUBSCRIPTION_CONNECTOR_ENABLED`.
 
 Any non-zero exit restores `.environment` and the previous image, purges the
 `safe_broadcast_v1` queue, brings `web` up alone, waits for it to answer

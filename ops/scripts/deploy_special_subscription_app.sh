@@ -94,10 +94,18 @@ rollback() {
 }
 trap rollback EXIT
 
-timeout 90 docker exec special-bot-web-1 python manage.py audit_legacy_vpn >/tmp/special-pre-audit.out 2>&1
+timeout 90 docker exec special-bot-web-1 python -c '
+import os, django
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "bot.settings")
+django.setup()
+from apps.monitoring.probes import run_control_plane_probe
+result = run_control_plane_probe()
+assert result.ok, result.error_class
+print("Active control-plane audit passed.")
+' >/tmp/special-pre-audit.out 2>&1
 pre_audit=$(tail -1 /tmp/special-pre-audit.out)
 rm -f /tmp/special-pre-audit.out
-[[ "$pre_audit" == 'Legacy VPN audit passed.' ]] || { echo 'BLOCK: pre-deploy legacy audit failed'; exit 23; }
+[[ "$pre_audit" == 'Active control-plane audit passed.' ]] || { echo 'BLOCK: pre-deploy active control-plane audit failed'; exit 23; }
 
 # Update the existing key only; never print the environment file.
 # Delivery flag is left as-is; it will be enabled explicitly after canary validation.
@@ -126,10 +134,18 @@ else
   echo 'BROADCAST_QUARANTINED: deployed image lacks safe_broadcast_v1; worker left stopped' >&2
 fi
 
-timeout 90 docker exec special-bot-web-1 python manage.py audit_legacy_vpn >/tmp/special-post-audit.out 2>&1
+timeout 90 docker exec special-bot-web-1 python -c '
+import os, django
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "bot.settings")
+django.setup()
+from apps.monitoring.probes import run_control_plane_probe
+result = run_control_plane_probe()
+assert result.ok, result.error_class
+print("Active control-plane audit passed.")
+' >/tmp/special-post-audit.out 2>&1
 post_audit=$(tail -1 /tmp/special-post-audit.out)
 rm -f /tmp/special-post-audit.out
-[[ "$post_audit" == 'Legacy VPN audit passed.' ]] || { echo 'FAIL: post-deploy legacy audit failed'; exit 24; }
+[[ "$post_audit" == 'Active control-plane audit passed.' ]] || { echo 'FAIL: post-deploy active control-plane audit failed'; exit 24; }
 
 timeout 30 docker exec special-bot-web-1 python manage.py shell -c '
 from django.conf import settings
