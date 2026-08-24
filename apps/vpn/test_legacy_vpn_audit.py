@@ -48,7 +48,7 @@ class LegacyVpnAuditCommandTests(TestCase):
                 ('7.00', TransactionStatusChoices.SUCCESS, now(), 'MANUAL', None, cls.user.id),
             )
 
-    @patch('apps.vpn.management.commands.audit_legacy_vpn.fetch_control_plane_client_ids', new_callable=AsyncMock)
+    @patch('apps.vpn.management.commands.audit_legacy_vpn.fetch_active_control_plane_client_ids', new_callable=AsyncMock)
     def test_matching_entitlement_passes(self, fetch_clients):
         fetch_clients.return_value = ({str(self.paid_uuid)}, {str(self.paid_uuid)})
         output = StringIO()
@@ -68,7 +68,7 @@ class LegacyVpnAuditCommandTests(TestCase):
         self.assertNotIn('1001', text)
         self.assertNotIn('1002', text)
 
-    @patch('apps.vpn.management.commands.audit_legacy_vpn.fetch_control_plane_client_ids', new_callable=AsyncMock)
+    @patch('apps.vpn.management.commands.audit_legacy_vpn.fetch_active_control_plane_client_ids', new_callable=AsyncMock)
     def test_missing_entitled_client_fails(self, fetch_clients):
         fetch_clients.return_value = (set(), set())
 
@@ -77,7 +77,7 @@ class LegacyVpnAuditCommandTests(TestCase):
 
         self.assertIn('entitled_missing=1', str(raised.exception))
 
-    @patch('apps.vpn.management.commands.audit_legacy_vpn.fetch_control_plane_client_ids', new_callable=AsyncMock)
+    @patch('apps.vpn.management.commands.audit_legacy_vpn.fetch_active_control_plane_client_ids', new_callable=AsyncMock)
     def test_disabled_entitled_client_fails(self, fetch_clients):
         fetch_clients.return_value = ({str(self.paid_uuid)}, set())
 
@@ -86,7 +86,7 @@ class LegacyVpnAuditCommandTests(TestCase):
 
         self.assertIn('entitled_missing=1', str(raised.exception))
 
-    @patch('apps.vpn.management.commands.audit_legacy_vpn.fetch_control_plane_client_ids', new_callable=AsyncMock)
+    @patch('apps.vpn.management.commands.audit_legacy_vpn.fetch_active_control_plane_client_ids', new_callable=AsyncMock)
     def test_unpaid_client_is_not_required(self, fetch_clients):
         fetch_clients.return_value = (set(), set())
 
@@ -96,7 +96,7 @@ class LegacyVpnAuditCommandTests(TestCase):
         self.assertIn('entitled_missing=1', str(raised.exception))
         self.assertNotIn('entitled_missing=2', str(raised.exception))
 
-    @patch('apps.vpn.management.commands.audit_legacy_vpn.fetch_control_plane_client_ids', new_callable=AsyncMock)
+    @patch('apps.vpn.management.commands.audit_legacy_vpn.fetch_active_control_plane_client_ids', new_callable=AsyncMock)
     def test_control_plane_api_error_is_sanitized(self, fetch_clients):
         fetch_clients.side_effect = RuntimeError('https://user:password@panel.invalid/secret')
         output = StringIO()
@@ -108,7 +108,7 @@ class LegacyVpnAuditCommandTests(TestCase):
         self.assertNotIn('panel.invalid', str(raised.exception))
         self.assertNotIn('password', str(raised.exception))
 
-    @patch('apps.vpn.management.commands.audit_legacy_vpn.fetch_control_plane_client_ids', new_callable=AsyncMock)
+    @patch('apps.vpn.management.commands.audit_legacy_vpn.fetch_active_control_plane_client_ids', new_callable=AsyncMock)
     def test_control_plane_extra_is_reported_without_failing(self, fetch_clients):
         fetch_clients.return_value = (
             {str(self.paid_uuid), str(self.unpaid_uuid)},
@@ -124,7 +124,7 @@ class LegacyVpnAuditCommandTests(TestCase):
         self.assertIn('compatibility_count=0', text)
         self.assertNotIn(str(self.unpaid_uuid), text)
 
-    @patch('apps.vpn.management.commands.audit_legacy_vpn.fetch_control_plane_client_ids', new_callable=AsyncMock)
+    @patch('apps.vpn.management.commands.audit_legacy_vpn.fetch_active_control_plane_client_ids', new_callable=AsyncMock)
     def test_control_plane_only_identity_is_counted_without_exposure(self, fetch_clients):
         compatibility_uuid = '00000000-0000-0000-0000-000000000003'
         fetch_clients.return_value = (

@@ -7,6 +7,7 @@ from django.db.models import DecimalField, Sum, Value
 from django.db.models.functions import Coalesce
 
 from apps.servers.models import Server
+from apps.servers.control_plane import fetch_control_plane_client_ids as fetch_active_control_plane_client_ids
 from apps.vpn.models import UserVPN
 from utils.py3xui.async_api import AsyncApi
 
@@ -82,7 +83,8 @@ class Command(BaseCommand):
         for server in servers:
             records_total, entitled_ids = get_server_entitlement(server)
             try:
-                control_plane_ids, enabled_control_plane_ids = asyncio.run(fetch_control_plane_client_ids(server))
+                control_plane_ids, enabled_control_plane_ids = asyncio.run(
+                    fetch_active_control_plane_client_ids(server))
             except Exception:
                 raise CommandError(f'Legacy VPN audit failed for server_id={server.id}.') from None
 
