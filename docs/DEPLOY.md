@@ -104,7 +104,7 @@ What the script does on the host, in order:
 - `git fetch` + `git merge --ff-only origin/main`, then refuses if `HEAD` is not
   the commit you said you were deploying;
 - tags the current `vpnbot:latest` as a rollback image and copies `.environment`;
-- runs the provider-neutral L0 control-plane audit and refuses unless the active panel (Remnawave or 3x-ui, selected by the same runtime flag as provisioning and monitoring) reports no entitled user missing and no expected inbound drift;
+- before building, runs a bootstrap-safe entitlement audit inside the current image: Django `enabled` plus balance define required UUIDs, while the provider-neutral control-plane layer selects Remnawave or 3x-ui from the same runtime flag as provisioning; refuses if any required UUID is not enabled. The calculation is inline so a stale rollback image cannot reintroduce the retired 3x-ui-only audit.
 - `docker build -t vpnbot:latest .`;
 - **migrates through one throwaway container** — `docker compose run --rm web
   python manage.py migrate`. Every long-running service has

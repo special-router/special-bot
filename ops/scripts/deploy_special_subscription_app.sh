@@ -95,17 +95,27 @@ rollback() {
 trap rollback EXIT
 
 timeout 90 docker exec special-bot-web-1 python -c '
-import os, django
+import asyncio, os, django
+from decimal import Decimal
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "bot.settings")
 django.setup()
-from apps.monitoring.probes import run_control_plane_probe
-result = run_control_plane_probe()
-assert result.ok, result.error_class
-print("Active control-plane audit passed.")
+from django.db.models import DecimalField, Sum, Value
+from django.db.models.functions import Coalesce
+from apps.servers.control_plane import fetch_control_plane_client_ids
+from apps.servers.models import Server
+from apps.vpn.models import UserVPN
+for server in Server.objects.select_related("tariff").order_by("id"):
+    rows = UserVPN.objects.filter(server_id=server.id, enabled=True).annotate(
+        balance=Coalesce(Sum("user__transactions__amount"), Value(Decimal("0.00")),
+                         output_field=DecimalField(max_digits=10, decimal_places=2)))
+    entitled = {str(row.vpn_uuid) for row in rows if row.balance >= server.tariff.price}
+    _all_ids, enabled_ids = asyncio.run(fetch_control_plane_client_ids(server))
+    assert not entitled - enabled_ids, "entitled_missing"
+print("Active entitlement audit passed.")
 ' >/tmp/special-pre-audit.out 2>&1
 pre_audit=$(tail -1 /tmp/special-pre-audit.out)
 rm -f /tmp/special-pre-audit.out
-[[ "$pre_audit" == 'Active control-plane audit passed.' ]] || { echo 'BLOCK: pre-deploy active control-plane audit failed'; exit 23; }
+[[ "$pre_audit" == 'Active entitlement audit passed.' ]] || { echo 'BLOCK: pre-deploy active entitlement audit failed'; exit 23; }
 
 # Update the existing key only; never print the environment file.
 # Delivery flag is left as-is; it will be enabled explicitly after canary validation.
