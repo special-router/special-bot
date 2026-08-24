@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import copy
 import datetime
 import hashlib
 import ipaddress
@@ -635,11 +636,12 @@ def _xray_json_routing(balancers: list[dict], loop_rules: list[dict], entry: tup
     адресу второй раз — то есть отправило бы в ``direct`` то, что первая ступень
     только что не смогла провести.
 
-    Про DNS здесь не сказано ничего, и это осознанно. Правило, уводившее
-    запросы к 1.1.1.1 и 8.8.8.8 в туннель, стояло здесь и мешало: на мёртвой
-    первой ступени вставал сам резолв. Заменившая его связка из собственной
-    ``dns``-секции и ``dns-out`` оказалась не лучше — профиль пинговался, а
-    трафик не шёл. Имена разрешает клиент, как делал до всего этого.
+    DNS follows the complete profile shape that the same Happ client receives
+    from the working provider: static bootstrap addresses, DoH resolvers,
+    ``dns-out`` and a port-53 rule. The earlier experiment removed this while
+    Happ was still overlaying its own routing rules; ``routing-enable: 0`` now
+    removes that independent conflict, so a self-contained raw profile must not
+    depend on client-global DNS state.
 
     ``entry`` говорит, чем начинается путь: балансировщиком или прямым
     outbound-ом. Второе — когда ступень всего одна: выбирать не из чего, а
@@ -653,14 +655,18 @@ def _xray_json_routing(balancers: list[dict], loop_rules: list[dict], entry: tup
         'balancers': balancers,
         'rules': [
             *loop_rules,
-            # DNS профиль себе не переопределяет. Своя ``dns``-секция с
-            # DoH-серверами создаёт зависимость по кругу: чтобы резолвить имя,
-            # надо открыть соединение, а чтобы открыть — резолвить имя. Клиент
-            # разрешает имена сам и делал это, пока эта секция здесь не
-            # появилась. Правило порта 53 без ``dns-out`` тоже не нужно.
-            # QUIC к 443 глушится намеренно: браузер, которому не дали h3,
-            # переспрашивает по TCP и уходит в тот же туннель, а не остаётся с
-            # UDP-потоком, который туннель провести не берётся.
+            # DNS resolver tags become synthetic inbound tags inside Xray. The
+            # working provider graph sends the Russian resolver direct and the
+            # global resolvers through the first available VPN leg.
+            {'type': 'field', 'inboundTag': ['yandex-dns'], 'outboundTag': 'direct'},
+            {'type': 'field', 'inboundTag': ['google-dns', 'cloudflare-dns'], kind: tag},
+            # A raw document disables Happ's global routing rules and therefore
+            # carries its own DNS route. This rule precedes ordinary traffic:
+            # name resolution is infrastructure for choosing a leg, not traffic
+            # that should wait behind a dead first leg.
+            {'type': 'field', 'network': 'tcp,udp', 'port': '53', 'outboundTag': 'dns-out'},
+            # QUIC to 443 is blocked intentionally: browsers retry over TCP and
+            # enter the same tunnel instead of leaving an unsupported UDP flow.
             {'type': 'field', 'network': 'udp', 'port': '443', 'outboundTag': 'block'},
             {'type': 'field', 'protocol': ['bittorrent'], 'outboundTag': 'direct'},
             {'type': 'field', 'ip': ['geoip:private'], 'outboundTag': 'direct'},
@@ -670,6 +676,60 @@ def _xray_json_routing(balancers: list[dict], loop_rules: list[dict], entry: tup
             {'type': 'field', 'network': 'tcp,udp', kind: tag},
         ],
     }
+
+
+def _xray_json_inbounds() -> list[dict]:
+    """Loopback-only adapters matching the working Happ profile shape."""
+    return [
+        {
+            'tag': 'socks',
+            'listen': '127.0.0.1',
+            'port': 10808,
+            'protocol': 'socks',
+            'settings': {'auth': 'noauth', 'udp': True, 'userLevel': 8},
+            'sniffing': {
+                'enabled': True,
+                'destOverride': ['http', 'tls', 'quic'],
+                'routeOnly': True,
+            },
+        },
+        {
+            'tag': 'http',
+            'listen': '127.0.0.1',
+            'port': 10809,
+            'protocol': 'http',
+            'settings': {'userLevel': 8},
+        },
+    ]
+
+
+def _xray_json_dns() -> dict:
+    """Provider-validated DNS plumbing for a self-contained Happ profile."""
+    return {
+        'queryStrategy': 'UseIPv4',
+        'hosts': {
+            'cloudflare-dns.com': ['1.1.1.1', '1.0.0.1'],
+            'one.one.one.one': ['1.1.1.1', '1.0.0.1'],
+            'dns.google': ['8.8.8.8', '8.8.4.4'],
+            'common.dot.dns.yandex.net': ['77.88.8.8', '77.88.8.1'],
+        },
+        'servers': [
+            {'address': 'https://cloudflare-dns.com/dns-query',
+             'tag': 'cloudflare-dns', 'timeoutMs': 1000},
+            {'address': 'https://dns.google/dns-query',
+             'tag': 'google-dns', 'timeoutMs': 1000},
+            {'address': 'https://common.dot.dns.yandex.net/dns-query',
+             'domains': ['geosite:category-ru'], 'tag': 'yandex-dns', 'timeoutMs': 1000},
+            {'address': 'localhost', 'domains': ['geosite:private'], 'tag': 'localhost-dns'},
+        ],
+    }
+
+
+_DNS_OUTBOUND = {
+    'tag': 'dns-out',
+    'protocol': 'dns',
+    'settings': {'blockTypes': [28], 'nonIPQuery': 'skip'},
+}
 
 
 def _xray_json_burst_observatory() -> dict:
@@ -813,6 +873,8 @@ def _build_xray_json(uuid: str, params: dict, direct_host: str, direct_port: int
     document = {
         'remarks': f'{_endpoint_label(_OWN_REGION_CODE)} авто',
         'log': {'loglevel': 'warning'},
+        'inbounds': _xray_json_inbounds(),
+        'dns': _xray_json_dns(),
         'policy': {
             'levels': {'0': {
                 'handshake': 4, 'connIdle': 300, 'uplinkOnly': 2,
@@ -820,7 +882,7 @@ def _build_xray_json(uuid: str, params: dict, direct_host: str, direct_port: int
             }},
         },
         'routing': _xray_json_routing(balancers, loop_rules, entry),
-        'outbounds': outbounds + loops,
+        'outbounds': outbounds + loops + [_DNS_OUTBOUND],
     }
     # Замеры существуют ради выбора. Без балансировщиков выбирать нечего, и
     # секция осталась бы работой, результат которой никто не читает.
@@ -967,10 +1029,13 @@ def _mirror_xray_profiles(links: list[str], allow_hysteria: bool) -> list[dict]:
         profile = {
             'remarks': country,
             'log': {'loglevel': 'warning'},
-                'routing': _xray_json_routing(balancers, loop_rules, entry),
+            'inbounds': _xray_json_inbounds(),
+            'dns': _xray_json_dns(),
+            'routing': _xray_json_routing(balancers, loop_rules, entry),
             'outbounds': outbounds + loops + [
                 {'tag': 'direct', 'protocol': 'freedom'},
                 {'tag': 'block', 'protocol': 'blackhole'},
+                _DNS_OUTBOUND,
             ],
         }
         if balancers:
@@ -1258,8 +1323,15 @@ def subscription_proxy(request, sub_id: str):
                 uuid_str, params, direct_host, direct_port, relay_host, relay_port, flow,
                 own_outbounds=_panel_outbounds(panel_links, direct_host) if panel_links else None)]
             if _is_backup_test_user(user_vpn.id):
-                documents.extend(_mirror_xray_profiles(
-                    _backup_links() or [], _wants_hysteria_outbound(user_agent)))
+                native_profiles = _native_mirror_profiles() \
+                    if _native_mirror_profiles_enabled(user_agent) else None
+                if native_profiles:
+                    documents.extend(native_profiles)
+                else:
+                    # Native failure costs only fidelity, never availability:
+                    # retain the already-shipped bounded endpoint profiles.
+                    documents.extend(_mirror_xray_profiles(
+                        _backup_links() or [], _wants_hysteria_outbound(user_agent)))
             body = json.dumps(documents).encode('utf-8')
         except (KeyError, TypeError, ValueError):
             body = None
@@ -1490,6 +1562,11 @@ _BACKUP_CACHE: dict[str, tuple[float, list[str]]] = {}
 _BACKUP_CACHE_LOCK = threading.RLock()
 _BACKUP_FETCHING: dict[str, threading.Event] = {}
 _BACKUP_CACHE_GENERATION = 0
+# Complete Happ configs are cached separately from rendered URI lines: the two
+# fetch the same bearer source under different format-selecting User-Agents and
+# must never satisfy one another's cache lookup.
+_NATIVE_PROFILE_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_NATIVE_PROFILE_FETCHING: dict[str, threading.Event] = {}
 
 
 def _backup_links() -> list[str] | None:
@@ -1558,6 +1635,7 @@ def _clear_backup_cache() -> None:
     global _BACKUP_CACHE_GENERATION
     with _BACKUP_CACHE_LOCK:
         _BACKUP_CACHE.clear()
+        _NATIVE_PROFILE_CACHE.clear()
         _BACKUP_CACHE_GENERATION += 1
 
 
@@ -1569,6 +1647,13 @@ def _evict_backup_cache(active_keys: set[str]) -> None:
                 _BACKUP_CACHE.pop(key, None)
         while len(_BACKUP_CACHE) > _BACKUP_CACHE_HARD_MAX_ENTRIES:
             _BACKUP_CACHE.pop(next(iter(_BACKUP_CACHE)), None)
+        for key, (expiry, _profiles) in list(_NATIVE_PROFILE_CACHE.items()):
+            # Native keys include the fixed format selector after a NUL byte.
+            source_key = key.partition('\x00')[0]
+            if expiry <= now or source_key not in active_keys:
+                _NATIVE_PROFILE_CACHE.pop(key, None)
+        while len(_NATIVE_PROFILE_CACHE) > _BACKUP_CACHE_HARD_MAX_ENTRIES:
+            _NATIVE_PROFILE_CACHE.pop(next(iter(_NATIVE_PROFILE_CACHE)), None)
 
 
 def _cached_upstream_links(url: str) -> list[str]:
@@ -1626,6 +1711,258 @@ def _cached_upstream_links(url: str) -> list[str]:
         with _BACKUP_CACHE_LOCK:
             _BACKUP_FETCHING.pop(key, None)
             in_flight.set()
+
+
+_NATIVE_PROFILE_MAX_PROFILES = 16
+_NATIVE_PROFILE_MAX_OUTBOUNDS = 128
+_NATIVE_PROFILE_MAX_BALANCERS = 32
+_NATIVE_PROFILE_MAX_RULES = 128
+_NATIVE_PROFILE_MAX_DEPTH = 24
+_NATIVE_PROFILE_MAX_STRING = 8192
+_NATIVE_PROFILE_ALLOWED_KEYS = frozenset({
+    'remarks', 'log', 'dns', 'inbounds', 'outbounds', 'routing', 'policy',
+    'stats', 'burstObservatory',
+})
+_NATIVE_PROFILE_ALLOWED_PROTOCOLS = frozenset({
+    'vless', 'hysteria', 'freedom', 'blackhole', 'dns', 'loopback',
+})
+_NATIVE_PROFILE_ALLOWED_INBOUND_PROTOCOLS = frozenset({'socks', 'http'})
+
+
+def _native_mirror_profiles_enabled(user_agent: str) -> bool:
+    """Whether this request may receive preserved third-party Happ configs."""
+    from django.conf import settings
+    return (
+        getattr(settings, 'SUBSCRIPTION_XRAY_JSON_NATIVE_MIRRORS_ENABLED', False) is True
+        and bool(_HAPP_UA_PATTERN.search(user_agent))
+    )
+
+
+def _native_mirror_user_agent() -> str:
+    """Return the fixed provider format selector, never the customer's UA."""
+    from django.conf import settings
+    value = _validated_upstream_user_agent(getattr(
+        settings, 'SUBSCRIPTION_XRAY_JSON_NATIVE_MIRROR_USER_AGENT', 'Happ/2.9.0'))
+    # A neutral/default agent can select a link list or instruction document.
+    # Native preservation is useful only when configuration still identifies a
+    # Happ-compatible provider response explicitly.
+    return value if _HAPP_UA_PATTERN.search(value) else ''
+
+
+def _bounded_native_json(value, *, depth: int = 0) -> bool:
+    """Bound recursive work and reject control strings in executable JSON."""
+    if depth > _NATIVE_PROFILE_MAX_DEPTH:
+        return False
+    if value is None or isinstance(value, (bool, int, float)):
+        return True
+    if isinstance(value, str):
+        return (
+            len(value) <= _NATIVE_PROFILE_MAX_STRING
+            and '\x00' not in value and '\r' not in value and '\n' not in value
+        )
+    if isinstance(value, list):
+        return (
+            len(value) <= _MIRROR_MAX_DOCUMENT_ENTRIES
+            and all(_bounded_native_json(item, depth=depth + 1) for item in value)
+        )
+    if isinstance(value, dict):
+        return (
+            len(value) <= 256
+            and all(
+                isinstance(key, str) and len(key) <= 128
+                and _bounded_native_json(item, depth=depth + 1)
+                for key, item in value.items()
+            )
+        )
+    return False
+
+
+def _safe_native_outbound(outbound: dict) -> bool:
+    """Validate dial targets while retaining protocol-specific provider fields."""
+    protocol = str(outbound.get('protocol', '')).lower()
+    if protocol not in ('vless', 'hysteria'):
+        return True
+    settings = outbound.get('settings')
+    if not isinstance(settings, dict):
+        return False
+    if protocol == 'hysteria':
+        host, port = settings.get('address'), _mirror_port(settings.get('port'))
+        return isinstance(host, str) and _safe_endpoint_host(host) and port is not None
+    vnext = settings.get('vnext')
+    if not isinstance(vnext, list) or not 1 <= len(vnext) <= 4:
+        return False
+    for server in vnext:
+        if not isinstance(server, dict):
+            return False
+        host, port, users = server.get('address'), _mirror_port(server.get('port')), server.get('users')
+        if (not isinstance(host, str) or not _safe_endpoint_host(host) or port is None
+                or not isinstance(users, list) or not 1 <= len(users) <= 4
+                or not all(isinstance(user, dict) and isinstance(user.get('id'), str) and user.get('id')
+                           for user in users)):
+            return False
+    return True
+
+
+def _safe_native_inbounds(value) -> bool:
+    """Accept only the two local client adapters used by known Happ profiles."""
+    if not isinstance(value, list) or not value or len(value) > 4:
+        return False
+    tags = set()
+    for inbound in value:
+        if not isinstance(inbound, dict):
+            return False
+        if set(inbound) - {'tag', 'port', 'listen', 'protocol', 'settings', 'sniffing', 'allocate'}:
+            return False
+        protocol, tag, port = str(inbound.get('protocol', '')).lower(), inbound.get('tag'), inbound.get('port')
+        if (protocol not in _NATIVE_PROFILE_ALLOWED_INBOUND_PROTOCOLS
+                or not isinstance(tag, str) or not tag or tag in tags
+                or type(port) is not int or not 1 <= port <= 65535):
+            return False
+        listen = inbound.get('listen')
+        if listen not in (None, '127.0.0.1', '::1', 'localhost'):
+            return False
+        tags.add(tag)
+    return True
+
+
+def _native_profile(profile) -> dict | None:
+    """Deep-copy one bounded provider profile while retaining its whole graph.
+
+    Tags in Xray selectors are prefixes rather than foreign keys, so validating
+    them as exact outbound references would reject the provider's working
+    document. We instead validate every executable section's container bounds,
+    the complete protocol allowlist, unique explicit tags, and the local-only
+    inbound adapters, then preserve DNS/routing/balancers/loops verbatim.
+    """
+    if (not isinstance(profile, dict) or not profile
+            or set(profile) - _NATIVE_PROFILE_ALLOWED_KEYS
+            or not _bounded_native_json(profile)):
+        return None
+    remarks = profile.get('remarks')
+    if not isinstance(remarks, str) or not remarks.strip() or len(remarks) > 128:
+        return None
+    if not _safe_native_inbounds(profile.get('inbounds')):
+        return None
+    outbounds = profile.get('outbounds')
+    if not isinstance(outbounds, list) or not 1 <= len(outbounds) <= _NATIVE_PROFILE_MAX_OUTBOUNDS:
+        return None
+    tags, endpoint_count = set(), 0
+    for outbound in outbounds:
+        if not isinstance(outbound, dict):
+            return None
+        tag, protocol = outbound.get('tag'), str(outbound.get('protocol', '')).lower()
+        if (not isinstance(tag, str) or not tag or len(tag) > 256 or tag in tags
+                or protocol not in _NATIVE_PROFILE_ALLOWED_PROTOCOLS
+                or not _safe_native_outbound(outbound)):
+            return None
+        tags.add(tag)
+        endpoint_count += protocol in ('vless', 'hysteria')
+    if endpoint_count == 0:
+        return None
+    routing = profile.get('routing')
+    if not isinstance(routing, dict):
+        return None
+    balancers, rules = routing.get('balancers'), routing.get('rules')
+    if (not isinstance(balancers, list) or len(balancers) > _NATIVE_PROFILE_MAX_BALANCERS
+            or not all(isinstance(item, dict) for item in balancers)
+            or not isinstance(rules, list) or len(rules) > _NATIVE_PROFILE_MAX_RULES
+            or not all(isinstance(item, dict) for item in rules)
+            or not isinstance(profile.get('dns'), dict)
+            or not isinstance(profile.get('burstObservatory'), dict)):
+        return None
+    preserved = copy.deepcopy(profile)
+    # The provider omits ``listen``, which makes standalone Xray bind these
+    # adapters publicly. Happ needs their tags and ports, not LAN exposure.
+    for inbound in preserved['inbounds']:
+        inbound['listen'] = '127.0.0.1'
+    return preserved
+
+
+def _sanitize_native_profiles(payload: bytes, headers: dict[str, str]) -> list[dict]:
+    """Accept a complete bounded Happ array or reject the source atomically."""
+    if _upstream_identity_refused(headers):
+        raise _UpstreamPlaceholderDocument('upstream_client_identity_placeholder')
+    document = _load_upstream_json(payload)
+    if not isinstance(document, list) or not 1 <= len(document) <= _NATIVE_PROFILE_MAX_PROFILES:
+        return []
+    profiles = [_native_profile(profile) for profile in document]
+    # Partial preservation silently changes the provider's routing choices.
+    return [profile for profile in profiles if profile is not None] if all(profiles) else []
+
+
+def _cached_native_profiles(url: str, user_agent: str) -> list[dict]:
+    """Fetch and cache a provider's complete Happ profiles independently."""
+    from django.conf import settings
+    source_key = _backup_cache_key(url)
+    key = f'{source_key}\x00{hashlib.sha256(user_agent.encode("ascii")).hexdigest()}'
+    now = time.monotonic()
+    with _BACKUP_CACHE_LOCK:
+        cached = _NATIVE_PROFILE_CACHE.get(key)
+        if cached and cached[0] > now:
+            return copy.deepcopy(cached[1])
+        if cached:
+            _NATIVE_PROFILE_CACHE.pop(key, None)
+        in_flight = _NATIVE_PROFILE_FETCHING.get(key)
+        if in_flight is None:
+            in_flight = threading.Event()
+            _NATIVE_PROFILE_FETCHING[key] = in_flight
+            generation = _BACKUP_CACHE_GENERATION
+            fetcher = True
+        else:
+            fetcher = False
+    if not fetcher:
+        in_flight.wait()
+        with _BACKUP_CACHE_LOCK:
+            cached = _NATIVE_PROFILE_CACHE.get(key)
+            return copy.deepcopy(cached[1]) if cached and cached[0] > time.monotonic() else []
+    try:
+        response_headers, payload = _fetch_upstream_payload(url, user_agent=user_agent)
+        profiles = _sanitize_native_profiles(payload, response_headers)
+        if not profiles:
+            return []
+        ttl = _bounded_number(getattr(settings, 'SUBSCRIPTION_BACKUP_CACHE_TTL_SECONDS', 300),
+                              default=300, lower=1, upper=3600)
+        with _BACKUP_CACHE_LOCK:
+            if generation != _BACKUP_CACHE_GENERATION:
+                return []
+            _NATIVE_PROFILE_CACHE[key] = (time.monotonic() + ttl, profiles)
+            active_keys = {_backup_cache_key(url) for url in getattr(
+                settings, 'SUBSCRIPTION_BACKUP_UPSTREAM_URLS', []) if isinstance(url, str)}
+        _evict_backup_cache(active_keys)
+        return copy.deepcopy(profiles)
+    except _UpstreamPlaceholderDocument:
+        logger.warning(
+            'subscription backup source %s served a client-identification placeholder '
+            'instead of native profiles; check the configured client identity', source_key[:12])
+        return []
+    except (ValueError, UnicodeError, OSError):
+        return []
+    finally:
+        with _BACKUP_CACHE_LOCK:
+            _NATIVE_PROFILE_FETCHING.pop(key, None)
+            in_flight.set()
+
+
+def _native_mirror_profiles() -> list[dict] | None:
+    """Return all configured native Happ profiles, or decline atomically."""
+    from django.conf import settings
+    user_agent = _native_mirror_user_agent()
+    urls = getattr(settings, 'SUBSCRIPTION_BACKUP_UPSTREAM_URLS', [])
+    source_limit = int(_bounded_number(
+        getattr(settings, 'SUBSCRIPTION_BACKUP_MAX_SOURCES', 8), default=8, lower=1, upper=32))
+    if not user_agent or not isinstance(urls, list):
+        return None
+    valid_urls = [url for url in urls if isinstance(url, str) and _valid_upstream_url(url)][:source_limit]
+    if not valid_urls:
+        return None
+    _evict_backup_cache({_backup_cache_key(url) for url in valid_urls})
+    profiles = []
+    for url in valid_urls:
+        source_profiles = _cached_native_profiles(url, user_agent)
+        if not source_profiles or len(profiles) + len(source_profiles) > _NATIVE_PROFILE_MAX_PROFILES:
+            return None
+        profiles.extend(source_profiles)
+    return profiles or None
 
 
 def _is_public_unicast(address: str) -> bool:
@@ -1701,7 +2038,7 @@ def _host_header(host: str, port: int) -> str:
     return host if port == 443 else f'{host}:{port}'
 
 
-def _fetch_upstream_payload(url: str) -> tuple[dict[str, str], bytes]:
+def _fetch_upstream_payload(url: str, *, user_agent: str | None = None) -> tuple[dict[str, str], bytes]:
     """Fetch identity bytes over TLS pinned to one pre-resolved public IP.
 
     A single absolute monotonic deadline starts before DNS. Every blocking
@@ -1711,6 +2048,10 @@ def _fetch_upstream_payload(url: str) -> tuple[dict[str, str], bytes]:
     Response headers travel back with the body because a provider says whether
     it accepted our client identity there, and a document alone cannot be told
     apart from the instructions it serves to a client it does not recognize.
+
+    ``user_agent`` is an internal format selector, never copied from the
+    customer's request. It passes through the same printable-ASCII validation
+    as the configured default so it cannot add request headers.
     """
     from django.conf import settings
     deadline_seconds = _bounded_number(getattr(settings, 'SUBSCRIPTION_BACKUP_FETCH_DEADLINE_SECONDS', 8),
@@ -1747,7 +2088,7 @@ def _fetch_upstream_payload(url: str) -> tuple[dict[str, str], bytes]:
         request = (
             f'GET {target} HTTP/1.1\r\n'
             f'Host: {_host_header(host, port)}\r\n'
-            f'User-Agent: {_upstream_user_agent()}\r\n'
+            f'User-Agent: {_upstream_user_agent() if user_agent is None else _validated_upstream_user_agent(user_agent)}\r\n'
             f'{identity}'
             'Accept-Encoding: identity\r\n'
             'Connection: close\r\n\r\n'
@@ -2015,6 +2356,16 @@ def _upstream_identity_refused(headers: dict[str, str]) -> bool:
                for name in _UPSTREAM_IDENTITY_REFUSED_HEADERS)
 
 
+def _validated_upstream_user_agent(value) -> str:
+    """Return one printable format selector or the neutral safe default."""
+    if not isinstance(value, str):
+        return _DEFAULT_UPSTREAM_USER_AGENT
+    value = value.strip()
+    if not value or len(value) > 128 or not all(' ' <= character <= '~' for character in value):
+        return _DEFAULT_UPSTREAM_USER_AGENT
+    return value
+
+
 def _upstream_user_agent() -> str:
     """Return the agent this deployment presents to providers.
 
@@ -2024,13 +2375,8 @@ def _upstream_user_agent() -> str:
     than letting configuration write arbitrary bytes into a request header.
     """
     from django.conf import settings
-    value = getattr(settings, 'SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT', '')
-    if not isinstance(value, str):
-        return _DEFAULT_UPSTREAM_USER_AGENT
-    value = value.strip()
-    if not value or len(value) > 128 or not all(' ' <= character <= '~' for character in value):
-        return _DEFAULT_UPSTREAM_USER_AGENT
-    return value
+    return _validated_upstream_user_agent(
+        getattr(settings, 'SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT', ''))
 
 
 def _sanitize_upstream_payload(payload: bytes, headers: dict[str, str] | None = None) -> list[str]:

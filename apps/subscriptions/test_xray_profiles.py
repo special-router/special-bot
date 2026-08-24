@@ -1,10 +1,13 @@
 """Составной документ для Happ: массив профилей, внутри каждого — лестница."""
+import json
 from django.test import SimpleTestCase, override_settings
 
 from apps.subscriptions.views import (
     _build_xray_json,
     _cascade,
     _mirror_xray_profiles,
+    _native_profile,
+    _sanitize_native_profiles,
     _wants_hysteria_outbound,
     _xray_outbound_from_link,
 )
@@ -92,6 +95,21 @@ class OwnProfileTests(SimpleTestCase):
         first_loop = next(i for i, rule in enumerate(rules) if 'inboundTag' in rule)
         first_direct = next(i for i, rule in enumerate(rules) if rule.get('outboundTag') == 'direct')
         self.assertLess(first_loop, first_direct)
+
+    def test_own_profile_resolves_names_inside_the_raw_document(self):
+        document = _build_xray_json(_UUID, _PARAMS, 'sub.example.test', 443, '', 0, '')
+
+        self.assertEqual(document['dns']['hosts']['cloudflare-dns.com'], ['1.1.1.1', '1.0.0.1'])
+        self.assertIn('dns-out', {outbound['tag'] for outbound in document['outbounds']})
+        dns_rule = next(rule for rule in document['routing']['rules'] if rule.get('port') == '53')
+        self.assertEqual(dns_rule['outboundTag'], 'dns-out')
+
+    def test_local_adapters_match_the_working_happ_shape_and_never_bind_publicly(self):
+        document = _build_xray_json(_UUID, _PARAMS, 'sub.example.test', 443, '', 0, '')
+
+        self.assertEqual([inbound['protocol'] for inbound in document['inbounds']], ['socks', 'http'])
+        self.assertTrue(all(inbound['listen'] == '127.0.0.1' for inbound in document['inbounds']))
+        self.assertEqual(document['inbounds'][0]['sniffing']['destOverride'], ['http', 'tls', 'quic'])
 
     def test_relay_shares_the_first_stage_with_direct(self):
         document = _build_xray_json(_UUID, _PARAMS, 'sub.example.test', 443, 'relay.test', 443, '')
@@ -192,18 +210,21 @@ class MirrorProfileTests(SimpleTestCase):
         self.assertNotIn('burstObservatory', profile)
         self.assertEqual(profile['routing']['rules'][-1]['outboundTag'], 'M0-s0')
 
-    def test_every_profile_carries_its_own_direct_and_block(self):
+    def test_every_profile_carries_its_own_direct_block_and_dns(self):
         profile = _mirror_xray_profiles(self.LINKS, allow_hysteria=True)[0]
 
         tags = [outbound['tag'] for outbound in profile['outbounds']]
-        self.assertEqual(tags[-2:], ['direct', 'block'])
+        self.assertEqual(tags[-3:], ['direct', 'block', 'dns-out'])
 
-    def test_the_profile_does_not_redefine_dns_at_all(self):
-        """Со своей dns-секцией профиль пинговался, но трафик не шёл."""
+    def test_profile_carries_provider_validated_dns_plumbing(self):
+        """routing-enable=0 requires raw profiles to resolve names themselves."""
         profile = _mirror_xray_profiles(self.LINKS, allow_hysteria=True)[0]
 
-        self.assertNotIn('dns', profile)
-        self.assertNotIn('dns-out', str(profile))
+        self.assertEqual(profile['dns']['queryStrategy'], 'UseIPv4')
+        dns_outbound = next(
+            outbound for outbound in profile['outbounds'] if outbound.get('protocol') == 'dns')
+        dns_rule = next(rule for rule in profile['routing']['rules'] if rule.get('port') == '53')
+        self.assertEqual(dns_rule['outboundTag'], dns_outbound['tag'])
         self.assertNotIn('1.1.1.1/32', str(profile['routing']['rules']))
 
     def test_single_candidate_stage_has_no_latency_threshold(self):
@@ -217,6 +238,102 @@ class MirrorProfileTests(SimpleTestCase):
         profile = _mirror_xray_profiles(self.LINKS, allow_hysteria=True)[0]
 
         self.assertEqual(profile['burstObservatory']['subjectSelector'], ['M0'])
+
+
+class NativeMirrorProfileTests(SimpleTestCase):
+    def _profile(self):
+        return {
+            'remarks': 'Country',
+            'log': {'loglevel': 'warning'},
+            'dns': {'servers': [{'address': 'https://dns.example/dns-query'}]},
+            'inbounds': [
+                {'tag': 'socks-in', 'port': 1080, 'protocol': 'socks',
+                 'settings': {'udp': True}},
+                {'tag': 'http-in', 'port': 1081, 'protocol': 'http',
+                 'settings': {}},
+            ],
+            'outbounds': [
+                {'tag': 'edge-tcp', 'protocol': 'vless', 'settings': {
+                    'vnext': [{'address': 'edge.example', 'port': 443,
+                               'users': [{'id': _UUID, 'encryption': 'none'}]}]},
+                 'streamSettings': {'network': 'tcp', 'security': 'reality'}},
+                {'tag': 'loop-next', 'protocol': 'loopback',
+                 'settings': {'inboundTag': 'reroute-next'}},
+                {'tag': 'dns-out', 'protocol': 'dns', 'settings': {}},
+                {'tag': 'direct', 'protocol': 'freedom'},
+                {'tag': 'block', 'protocol': 'blackhole'},
+            ],
+            'routing': {
+                'domainStrategy': 'IPIfNonMatch',
+                'balancers': [{
+                    'tag': 'auto', 'selector': ['edge'],
+                    'fallbackTag': 'loop-next',
+                    'strategy': {'type': 'leastLoad', 'settings': {'expected': 1}},
+                }],
+                'rules': [
+                    {'inboundTag': ['reroute-next'], 'outboundTag': 'edge-tcp'},
+                    {'network': 'tcp,udp', 'outboundTag': 'dns-out', 'port': '53'},
+                    {'network': 'tcp,udp', 'balancerTag': 'auto'},
+                ],
+            },
+            'policy': {'system': {'statsOutboundDownlink': True}},
+            'stats': {},
+            'burstObservatory': {
+                'subjectSelector': ['edge'],
+                'pingConfig': {'destination': 'https://probe.example/', 'interval': '10s'},
+            },
+        }
+
+    def test_the_complete_provider_graph_is_preserved(self):
+        profile = self._profile()
+
+        preserved = _native_profile(profile)
+
+        expected = self._profile()
+        for inbound in expected['inbounds']:
+            inbound['listen'] = '127.0.0.1'
+        self.assertEqual(preserved, expected)
+        self.assertIsNot(preserved, profile)
+        self.assertTrue(all(inbound['listen'] == '127.0.0.1' for inbound in preserved['inbounds']))
+        self.assertIn('dns', preserved)
+        self.assertEqual(preserved['routing']['balancers'][0]['fallbackTag'], 'loop-next')
+        self.assertIn('dns-out', {outbound['tag'] for outbound in preserved['outbounds']})
+
+    def test_public_or_unknown_inbounds_are_rejected(self):
+        for listen, protocol in (('0.0.0.0', 'socks'), (None, 'dokodemo-door')):
+            profile = self._profile()
+            profile['inbounds'][0]['listen'] = listen
+            profile['inbounds'][0]['protocol'] = protocol
+            with self.subTest(listen=listen, protocol=protocol):
+                self.assertIsNone(_native_profile(profile))
+
+    def test_private_provider_dial_target_is_rejected(self):
+        profile = self._profile()
+        profile['outbounds'][0]['settings']['vnext'][0]['address'] = '127.0.0.1'
+
+        self.assertIsNone(_native_profile(profile))
+
+
+    def test_unknown_outbound_protocol_is_rejected(self):
+        profile = self._profile()
+        profile['outbounds'][0]['protocol'] = 'exec'
+
+        self.assertIsNone(_native_profile(profile))
+
+    def test_one_bad_profile_rejects_the_source_atomically(self):
+        good = self._profile()
+        bad = self._profile()
+        bad['outbounds'][0]['protocol'] = 'unknown'
+
+        payload = json.dumps([good, bad]).encode()
+
+        self.assertEqual(_sanitize_native_profiles(payload, {}), [])
+
+    def test_identity_refusal_never_preserves_instruction_profiles(self):
+        payload = json.dumps([self._profile()]).encode()
+
+        with self.assertRaises(ValueError):
+            _sanitize_native_profiles(payload, {'x-hwid-limit': 'true'})
 
 
 class HysteriaCapabilityTests(SimpleTestCase):

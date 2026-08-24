@@ -615,7 +615,7 @@ class XrayJsonSubscriptionTests(SimpleTestCase):
         self.assertIn('remarks', document)
         self.assertEqual(document['routing']['balancers'][0]['tag'], 'own-l1')
         tags = {outbound['tag'] for outbound in document['outbounds']}
-        self.assertEqual(tags, {'proxy-nl-direct', 'proxy-ru-relay', 'direct', 'block'})
+        self.assertEqual(tags, {'proxy-nl-direct', 'proxy-ru-relay', 'direct', 'block', 'dns-out'})
 
         rule_index = {}
         for index, rule in enumerate(document['routing']['rules']):
@@ -687,6 +687,74 @@ class XrayJsonSubscriptionTests(SimpleTestCase):
         for header in ('subscription-userinfo', 'profile-title', 'announce',
                        'support-url', 'profile-web-page-url', 'Profile-Update-Interval'):
             self.assertEqual(json_response.get(header), base64_response.get(header))
+
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED=True,
+        SUBSCRIPTION_XRAY_JSON_NATIVE_MIRRORS_ENABLED=True,
+    )
+    @patch('apps.subscriptions.views._backup_links')
+    @patch('apps.subscriptions.views._native_mirror_profiles')
+    def test_happ_keeps_the_provider_native_routing_graph(
+        self, native_profiles, backup_links, _params,
+    ):
+        native_profiles.return_value = [{
+            'remarks': 'Provider country',
+            'dns': {'servers': [{'address': 'https://dns.example/dns-query'}]},
+            'inbounds': [{'tag': 'socks-in', 'port': 1080, 'protocol': 'socks', 'settings': {}}],
+            'outbounds': [
+                {'tag': 'provider-edge', 'protocol': 'vless'},
+                {'tag': 'provider-loop', 'protocol': 'loopback',
+                 'settings': {'inboundTag': 'provider-reroute'}},
+                {'tag': 'dns-out', 'protocol': 'dns'},
+            ],
+            'routing': {
+                'balancers': [{'tag': 'provider-auto', 'selector': ['provider'],
+                               'fallbackTag': 'provider-loop'}],
+                'rules': [{'inboundTag': ['provider-reroute'],
+                           'outboundTag': 'provider-edge'}],
+            },
+            'burstObservatory': {'subjectSelector': ['provider']},
+        }]
+
+        documents = json.loads(self._response('Happ/2.0').content)
+
+        self.assertEqual(len(documents), 2)
+        self.assertEqual(documents[1], native_profiles.return_value[0])
+        self.assertEqual(documents[1]['routing']['balancers'][0]['fallbackTag'], 'provider-loop')
+        self.assertIn('dns', documents[1])
+        backup_links.assert_not_called()
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED=True,
+        SUBSCRIPTION_XRAY_JSON_NATIVE_MIRRORS_ENABLED=True,
+    )
+    @patch('apps.subscriptions.views._mirror_xray_profiles', return_value=[{'remarks': 'fallback'}])
+    @patch('apps.subscriptions.views._backup_links', return_value=['vless://fallback'])
+    @patch('apps.subscriptions.views._native_mirror_profiles', return_value=None)
+    def test_native_source_failure_keeps_the_existing_mirror_fallback(
+        self, native_profiles, backup_links, mirror_profiles, _params,
+    ):
+        documents = json.loads(self._response('Happ/2.0').content)
+
+        self.assertEqual(documents[-1], {'remarks': 'fallback'})
+        backup_links.assert_called_once_with()
+        mirror_profiles.assert_called_once()
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED=True,
+        SUBSCRIPTION_XRAY_JSON_NATIVE_MIRRORS_ENABLED=True,
+    )
+    @patch('apps.subscriptions.views._native_mirror_profiles')
+    def test_v2rayng_never_receives_happ_fork_profiles(
+        self, native_profiles, _params,
+    ):
+        self._response('V2rayNG/1.9.9')
+
+        native_profiles.assert_not_called()
 
 
 class XrayJsonDeviceGateTests(SimpleTestCase):
@@ -1323,6 +1391,28 @@ class MirrorIngestTests(SimpleTestCase):
         views._fetch_upstream_payload('https://subscription.example/opaque')
 
         self.assertIn('User-Agent: SFI/1.9\r\n', b''.join(tls_socket.sent).decode('ascii'))
+
+    @override_settings(SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT='SFI/1.9')
+    @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
+    @patch('apps.subscriptions.views.ssl.create_default_context')
+    @patch('apps.subscriptions.views.socket.create_connection')
+    def test_internal_agent_override_selects_happ_without_header_injection(
+        self, create_connection, create_context, resolve,
+    ):
+        for value, expected in (
+            ('Happ/2.9.0', 'Happ/2.9.0'),
+            ('Happ/2.9.0\r\nX-Injected: 1', 'SPECIAL-subscription-backup/1'),
+        ):
+            tls_socket = _FakeTLSSocket(b'HTTP/1.1 200 OK\r\n\r\n{}')
+            create_connection.return_value = Mock()
+            create_context.return_value.wrap_socket.return_value = tls_socket
+
+            views._fetch_upstream_payload(
+                'https://subscription.example/opaque', user_agent=value)
+
+            request = b''.join(tls_socket.sent).decode('ascii')
+            self.assertIn(f'User-Agent: {expected}\r\n', request)
+            self.assertNotIn('X-Injected:', request)
 
     @override_settings(
         SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,

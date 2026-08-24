@@ -428,6 +428,17 @@ SUBSCRIPTION_XRAY_JSON_ALL_USERS_ENABLED = env.bool(
 # в приложении не было ни одного сервера.
 SUBSCRIPTION_XRAY_JSON_ROLLED_OUT_CLIENTS = env.json(
     'SUBSCRIPTION_XRAY_JSON_ROLLED_OUT_CLIENTS', default=[])
+# Preserve an upstream provider's complete Happ profile graph (DNS, routing,
+# balancers, loopback failover and observatory) instead of reconstructing it
+# from endpoint links. This remains a separate default-off gate because the
+# fetched document is executable client configuration from a third party.
+SUBSCRIPTION_XRAY_JSON_NATIVE_MIRRORS_ENABLED = env.bool(
+    'SUBSCRIPTION_XRAY_JSON_NATIVE_MIRRORS_ENABLED', False)
+# A fixed, validated Happ identity selects the upstream Xray-profile array.
+# It is deliberately not copied from the customer's User-Agent: the configured
+# provider format must not vary with arbitrary request input.
+SUBSCRIPTION_XRAY_JSON_NATIVE_MIRROR_USER_AGENT = env.str(
+    'SUBSCRIPTION_XRAY_JSON_NATIVE_MIRROR_USER_AGENT', 'Happ/2.9.0')
 
 # Branding and environment carried in subscription response headers, which is
 # how the client app builds its own interface. Values reach the wire verbatim,

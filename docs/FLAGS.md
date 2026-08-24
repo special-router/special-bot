@@ -234,6 +234,8 @@ Live since **2026-08-21**; see [`REMNAWAVE-MIGRATION.md`](REMNAWAVE-MIGRATION.md
 | `SUBSCRIPTION_XRAY_JSON_TEST_USER_IDS` | json | `[]` | set | `UserVPN` ids that receive the raw Xray-core JSON profile. Rollout is by list, like the mirrors: a format change reads to the customer not as "a different format" but as "the servers are gone". |
 | `SUBSCRIPTION_XRAY_JSON_ROLLED_OUT_CLIENTS` | json | `[]` | set | Client apps the format is confirmed on (`happ`, `v2rayng`). Separate from the per-person list because the risk differs: not "too early for this person" but "this app parses the document its own way". |
 | `SUBSCRIPTION_XRAY_JSON_ALL_USERS_ENABLED` | bool | `False` | `false` | Opens the format to everyone. Deliberately a separate flag so it is never turned on merely as a side effect of enabling the branch. |
+| `SUBSCRIPTION_XRAY_JSON_NATIVE_MIRRORS_ENABLED` | bool | `False` | `false` | For Happ only, preserve every validated upstream Xray profile as a complete graph — DNS, local client adapters, routing rules, balancers, loopback fallback, observatory and provider outbounds — instead of rebuilding country profiles from extracted links. Failure falls back to the bounded reconstructed profiles; it never shortens the response. Separate default-off gate because this is executable third-party configuration and must be canaried independently of the raw-JSON format itself. |
+| `SUBSCRIPTION_XRAY_JSON_NATIVE_MIRROR_USER_AGENT` | str | `Happ/2.9.0` | unset | Fixed validated format selector used only for the provider fetch. It is never copied from the customer's request; malformed or non-Happ values disable native preservation rather than selecting an arbitrary upstream format. |
 
 ## Backup provider
 
