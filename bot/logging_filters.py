@@ -4,6 +4,9 @@ import re
 
 
 _SUBSCRIPTION_PATH = re.compile(r'(/sub/)[^\s?"\']+')
+_ROUTER_CONFIG_PATH = re.compile(
+    r'(/api/v1/vpn/box/)[0-9a-fA-F-]+(/config/?)'
+)
 # Warning records from httpx/urllib3/py3xui commonly contain absolute URLs.
 # Redact authority and path, not just known panel prefixes, because that prefix
 # itself is privileged and must never be configured into this filter.
@@ -26,5 +29,6 @@ class SubscriptionPathRedactionFilter(logging.Filter):
 def _redact(value):
     if isinstance(value, str):
         value = _SUBSCRIPTION_PATH.sub(r'\1[REDACTED]', value)
+        value = _ROUTER_CONFIG_PATH.sub(r'\1[REDACTED]\2', value)
         return _CONTROL_PLANE_URL.sub('[REDACTED]', value)
     return value

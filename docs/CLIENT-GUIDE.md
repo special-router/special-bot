@@ -39,3 +39,13 @@ Happ/OpenWrt/PassWall2/router automation is not declared production-ready until
 there is a maintained integration repository, target hardware and a responsible
 owner. Manual import of the same standard subscription may be tested only on
 explicit canary devices.
+
+The maintained compatibility API for an owned router is
+`GET /api/v1/vpn/box/<vpn_uuid>/config/`. The UUID is a per-customer bearer
+credential: pass it only in private provisioning, never logs or support
+tickets. The endpoint returns one Xray `outbounds` document assembled from the
+active control-plane settings; callers do not receive Remnawave credentials.
+Unknown and Django-disabled UUIDs return the same 404, and every response is
+`no-store`. This endpoint does not replace the customer subscription portfolio:
+it is the narrow compatibility surface for router firmware that already stores
+the customer's UUID.

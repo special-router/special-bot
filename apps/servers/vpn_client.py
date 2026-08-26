@@ -166,7 +166,6 @@ class APIVPNClient:
                                     {
                                         'id': str(user_vpn.vpn_uuid),
                                         'encryption': 'none',
-                                        'flow': 'xtls-rprx-vision',
                                     }
                                 ],
                             }
