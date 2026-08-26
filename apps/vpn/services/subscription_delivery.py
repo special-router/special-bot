@@ -37,8 +37,9 @@ async def get_subscription_url(user_vpn: UserVPN) -> str:
 async def prepare_subscription_url(user_vpn: UserVPN) -> str:
     """Ссылка подписки для выдачи клиенту."""
     if _remnawave_enabled():
-        # На Remnawave присваивать нечего: shortUuid неизменяем после создания,
-        # поэтому обе ветки читают один и тот же уже присвоенный sub_id.
+        # shortUuid неизменяем после создания. Runtime-создание заранее
+        # сохраняет тот же sub_id, а исторический drift чинит отдельная
+        # reconciliation-команда; выдача остаётся полностью read-only.
         reference = await remnawave_subscription.subscription_reference(user_vpn)
         return reference.url
     connector = XUISubscriptionConnector(user_vpn.server)

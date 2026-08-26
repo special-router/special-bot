@@ -115,7 +115,12 @@ class CreatePayloadTests(SimpleTestCase):
             if method == 'GET':
                 return None
             captured.update({'method': method, 'path': path, 'body': json_body})
-            return {'id': 2}
+            return {
+                'id': 2,
+                'vlessUuid': json_body['vlessUuid'],
+                'telegramId': json_body['telegramId'],
+                'shortUuid': json_body['shortUuid'],
+            }
 
         with patch.object(RemnawaveAPI, '_request', fake_request):
             with override_settings(**settings_overrides):
@@ -167,7 +172,13 @@ class IdentityFieldTests(SimpleTestCase):
         return captured
 
     async def test_status_change_addresses_the_user_by_id(self):
-        captured = await self._capture_patch({'id': 42, 'username': 'x'})
+        captured = await self._capture_patch({
+            'id': 42,
+            'username': 'x',
+            'vlessUuid': _UUID,
+            'telegramId': 6847813966,
+            'shortUuid': 'a' * 32,
+        })
 
         self.assertEqual(captured['method'], 'PATCH')
         self.assertEqual(captured['body']['id'], 42)

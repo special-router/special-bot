@@ -18,13 +18,16 @@
 from __future__ import annotations
 
 import asyncio
-from secrets import token_hex
 
 from asgiref.sync import sync_to_async
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.servers.remnawave import RemnawaveAPI, RemnawaveError, configured
-from apps.servers.remnawave_client import RemnawaveVPNClient, remnawave_username
+from apps.servers.remnawave_client import (
+    RemnawaveVPNClient,
+    remnawave_username,
+    synchronize_panel_sub_id,
+)
 from apps.vpn.models import UserVPN
 
 
@@ -58,17 +61,12 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
-            if not user_vpn.sub_id:
-                # Без sub_id подписку не по чему отдавать. Такие записи есть:
-                # ``sub_id`` раздавался отдельным шагом и не всем.
-                if apply:
-                    user_vpn.sub_id = token_hex(16)
-                    await user_vpn.asave(update_fields=['sub_id', 'updated_at'])
-                assigned_sub_ids += 1
-
-            username = remnawave_username(user_vpn)
             try:
-                if await api.get_user_by_username(username) is not None:
+                existing_user = await api.get_user_by_username(remnawave_username(user_vpn))
+                if existing_user is not None:
+                    if apply and not user_vpn.sub_id:
+                        await synchronize_panel_sub_id(user_vpn, existing_user)
+                        assigned_sub_ids += 1
                     existing += 1
                     continue
                 if not apply:
@@ -76,12 +74,12 @@ class Command(BaseCommand):
                     continue
                 client = RemnawaveVPNClient(user_vpn.server)
                 await client.enable_user(user_vpn, enabled=user_vpn.enabled)
+                if user_vpn.sub_id:
+                    assigned_sub_ids += 1
                 created += 1
-            except RemnawaveError as error:
+            except RemnawaveError:
                 failed += 1
-                # Текст ошибки от панели — единственное, что называет
-                # непринятое поле, и клиентских данных в нём нет.
-                self.stderr.write(f'{username}: {error}')
+                self.stderr.write(f'user_vpn_id={user_vpn.id}: RemnawaveError')
 
         mode = 'применено' if apply else 'без записи (--apply не задан)'
         self.stdout.write(

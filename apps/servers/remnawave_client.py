@@ -13,10 +13,12 @@
 """
 import logging
 from datetime import timedelta
+from secrets import token_hex
 from typing import Final
 
 from asgiref.sync import sync_to_async
 from django.conf import settings
+from django.db import transaction
 from django.utils.timezone import now
 
 from apps.servers.models import Server
@@ -27,6 +29,69 @@ from apps.vpn.models import UserVPN
 logger = logging.getLogger(__name__)
 
 _FAR_FUTURE_DAYS: Final[int] = 3650
+_SUB_ID_BYTES: Final[int] = 16
+
+
+async def _ensure_sub_id(user_vpn: UserVPN) -> str:
+    """Atomically assign the immutable panel subscription id before creation."""
+    if user_vpn.sub_id:
+        return str(user_vpn.sub_id)
+
+    @sync_to_async
+    def assign() -> str:
+        with transaction.atomic():
+            locked = UserVPN.objects.select_for_update().get(pk=user_vpn.pk)
+            if locked.sub_id:
+                value = str(locked.sub_id)
+            else:
+                while True:
+                    value = token_hex(_SUB_ID_BYTES)
+                    if not UserVPN.objects.filter(sub_id=value).exists():
+                        break
+                locked.sub_id = value
+                locked.save(update_fields=['sub_id', 'updated_at'])
+        user_vpn.sub_id = value
+        return value
+
+    return await assign()
+
+
+async def panel_subscription_id(user_vpn: UserVPN, panel_user: dict) -> str:
+    """Validate panel identity and return its subscription id without logging it."""
+    _username, telegram_id = await panel_identity(user_vpn)
+    if str(panel_user.get('vlessUuid') or '').lower() != str(user_vpn.vpn_uuid).lower():
+        raise RemnawaveError('panel VLESS identity mismatch')
+    if str(panel_user.get('telegramId') or '') != str(telegram_id):
+        raise RemnawaveError('panel Telegram identity mismatch')
+    short_uuid = str(panel_user.get('shortUuid') or '').strip()
+    if not short_uuid:
+        raise RemnawaveError('panel subscription id is missing')
+    return short_uuid
+
+
+async def synchronize_panel_sub_id(user_vpn: UserVPN, panel_user: dict) -> str:
+    """Copy an already-issued panel id into Django after strict identity checks."""
+    short_uuid = await panel_subscription_id(user_vpn, panel_user)
+    if user_vpn.sub_id:
+        if str(user_vpn.sub_id) != short_uuid:
+            raise RemnawaveError('Django and panel subscription ids differ')
+        return short_uuid
+
+    @sync_to_async
+    def synchronize() -> str:
+        with transaction.atomic():
+            locked = UserVPN.objects.select_for_update().get(pk=user_vpn.pk)
+            if locked.sub_id and locked.sub_id != short_uuid:
+                raise RemnawaveError('Django and panel subscription ids differ')
+            if UserVPN.objects.exclude(pk=locked.pk).filter(sub_id=short_uuid).exists():
+                raise RemnawaveError('panel subscription id is already assigned')
+            if not locked.sub_id:
+                locked.sub_id = short_uuid
+                locked.save(update_fields=['sub_id', 'updated_at'])
+        user_vpn.sub_id = short_uuid
+        return short_uuid
+
+    return await synchronize()
 
 
 def _expire_at() -> str:
@@ -97,15 +162,18 @@ class RemnawaveVPNClient:
     async def _create(self, user_vpn: UserVPN) -> dict:
         limit = user_vpn.device_limit or getattr(settings, 'SUBSCRIPTION_DEVICE_LIMIT', 0)
         username, telegram_id = await panel_identity(user_vpn)
-        return await self._api.create_user(
+        sub_id = await _ensure_sub_id(user_vpn)
+        created = await self._api.create_user(
             username=username,
             expire_at=_expire_at(),
             vless_uuid=str(user_vpn.vpn_uuid),
             telegram_id=telegram_id,
             hwid_device_limit=limit or None,
             description=self._server.name,
-            short_uuid=user_vpn.sub_id or '',
+            short_uuid=sub_id,
         )
+        await synchronize_panel_sub_id(user_vpn, created)
+        return created
 
     async def add_user(self, user_vpn: UserVPN):
         if await self._find(user_vpn) is None:
@@ -128,6 +196,7 @@ class RemnawaveVPNClient:
                 return
             await self._create(user_vpn)
             return
+        await synchronize_panel_sub_id(user_vpn, existing)
         await self._api.set_status(existing['id'], enabled=enabled)
 
     async def get_key(self, user_vpn: UserVPN) -> str:

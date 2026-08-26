@@ -38,9 +38,10 @@ async def subscription_reference(user_vpn: UserVPN) -> SubscriptionReference:
     ``SynchronousOnlyOperation``, а вызывающий код принимает это за аварию
     панели и молча выдаёт прямой ключ.
 
-    ``shortUuid`` в Remnawave задаётся только при создании, поэтому присвоить
-    недостающий ``sub_id`` задним числом нельзя: такая запись чинится
-    пересозданием клиента в панели, а не здесь.
+    ``shortUuid`` в Remnawave задаётся только при создании. Если историческая
+    Django-запись его потеряла, отдельная reconciliation-команда копирует уже
+    существующее значение панели после проверки личности и уникальности; путь
+    выдачи по-прежнему остаётся строго read-only.
     """
     sub_id = getattr(user_vpn, 'sub_id', '') or ''
     if not sub_id:

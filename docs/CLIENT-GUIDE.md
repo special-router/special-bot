@@ -49,3 +49,14 @@ Unknown and Django-disabled UUIDs return the same 404, and every response is
 `no-store`. This endpoint does not replace the customer subscription portfolio:
 it is the narrow compatibility surface for router firmware that already stores
 the customer's UUID.
+
+
+New Remnawave clients receive a cryptographically random 32-character
+subscription id in Django before the panel create call; the same value is sent
+as `shortUuid` and checked against the panel response. Historical records with
+an empty `sub_id` are repaired with
+`python manage.py repair_remnawave_sub_ids` (dry-run) and explicit `--apply`.
+The command copies an existing panel `shortUuid` only after matching the VLESS
+identity and Telegram owner and proving uniqueness. `--notify` queues a private,
+auditable notification only for rows actually repaired; it never puts a URL or
+credential in the message.
