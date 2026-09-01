@@ -461,6 +461,12 @@ SUBSCRIPTION_STATUS_ENTRY_ENABLED = env.bool('SUBSCRIPTION_STATUS_ENTRY_ENABLED'
 # каждый день с этим флагом сервис работает бесплатно.
 BILLING_PAUSED = env.bool('BILLING_PAUSED', False)
 
+# Dedicated credential for the router administrator's narrow provisioning API.
+# It is not a Remnawave token and grants no panel or inventory access.
+ROUTER_PROVISIONING_API_TOKEN = env.str('ROUTER_PROVISIONING_API_TOKEN', '')
+ROUTER_PROVISIONING_PUBLIC_BASE_URL = env.str(
+    'ROUTER_PROVISIONING_PUBLIC_BASE_URL', '')
+
 # --- Remnawave -------------------------------------------------------------
 # Панель, к которой обращается бот. Пока false — работает 3x-ui и ни один
 # запрос к Remnawave не уходит. Переключение и откат стоят один перезапуск

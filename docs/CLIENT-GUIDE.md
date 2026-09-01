@@ -60,3 +60,23 @@ The command copies an existing panel `shortUuid` only after matching the VLESS
 identity and Telegram owner and proving uniqueness. `--notify` queues a private,
 auditable notification only for rows actually repaired; it never puts a URL or
 credential in the message.
+
+## Universal router provisioning
+
+Router firmware is built once. During operator setup it sends the customer's
+numeric Telegram id to `POST /api/v1/vpn/router/provision/` with the dedicated
+router-service bearer and an optional `server_id`. The API accepts only an
+existing bot customer, idempotently returns an already assigned credential or
+activates it through the same Django/Remnawave service used by the bot, and
+returns only `vpn_uuid`, `config_url`, and `created`. It never returns panel
+credentials, `sub_id`, another customer's record, or an inventory.
+
+The board stores the returned UUID/config URL with mode `0600`, never logs them,
+and then refreshes the existing `GET /api/v1/vpn/box/<vpn_uuid>/config/` endpoint.
+Download into a temporary file, bound the response size, validate JSON, run
+`xray -test`, atomically replace the previous config, and prove real HTTPS
+traffic before considering the update healthy. On 404, 5xx, timeout or invalid
+JSON, preserve the last working file and report only the status class. The
+service bearer belongs in the operator provisioning tool, not in deployed
+customer boards; a future device-token model will remove the shared customer
+UUID from newly provisioned hardware.

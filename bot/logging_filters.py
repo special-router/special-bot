@@ -7,6 +7,9 @@ _SUBSCRIPTION_PATH = re.compile(r'(/sub/)[^\s?"\']+')
 _ROUTER_CONFIG_PATH = re.compile(
     r'(/api/v1/vpn/box/)[0-9a-fA-F-]+(/config/?)'
 )
+_AUTHORIZATION_BEARER = re.compile(
+    r'''(?i)(authorization["'\s:=]+bearer\s+)[^\s,"']+'''
+)
 # Warning records from httpx/urllib3/py3xui commonly contain absolute URLs.
 # Redact authority and path, not just known panel prefixes, because that prefix
 # itself is privileged and must never be configured into this filter.
@@ -30,5 +33,6 @@ def _redact(value):
     if isinstance(value, str):
         value = _SUBSCRIPTION_PATH.sub(r'\1[REDACTED]', value)
         value = _ROUTER_CONFIG_PATH.sub(r'\1[REDACTED]\2', value)
+        value = _AUTHORIZATION_BEARER.sub(r'\1[REDACTED]', value)
         return _CONTROL_PLANE_URL.sub('[REDACTED]', value)
     return value

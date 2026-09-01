@@ -187,6 +187,13 @@ Not a redundant mirror: every candidate is on the same NL origin.
 | `XUI_CONTROL_PLANE_READ_ATTEMPTS` | int | `4` | ? | Reads of the control-plane inventory repeat until two consecutive results agree. A single short read would otherwise look like missing entitlement and page the duty engineer. The name kept its `XUI_` prefix; both panels honour it. |
 | `XUI_CONTROL_PLANE_READ_BACKOFF` | float | `1.5` | ? | Backoff between those attempts. |
 
+## Router provisioning API
+
+| Setting | Type | Default | Prod | What it does |
+|---|---|---|---|---|
+| `ROUTER_PROVISIONING_API_TOKEN` | str | empty | set | Dedicated bearer for the narrow operator endpoint that provisions an existing Telegram customer and returns only that customer's router credential. It is not a Remnawave token. Never log or commit it. |
+| `ROUTER_PROVISIONING_PUBLIC_BASE_URL` | str | empty | set | Public HTTPS origin used in the returned router config URL. Empty falls back to the request origin; production should set it explicitly behind the trusted reverse proxy. |
+
 ## Remnawave control plane
 
 Live since **2026-08-21**; see [`REMNAWAVE-MIGRATION.md`](REMNAWAVE-MIGRATION.md).
