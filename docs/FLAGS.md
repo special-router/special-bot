@@ -69,7 +69,7 @@ Shipped-but-inert features are listed together in
 |---|---|---|---|---|
 | `SUBSCRIPTION_CONNECTOR_ENABLED` | bool | `False` | `true` | Allows creating/assigning `subId` in 3x-ui. `prepare_xui_subscriptions --apply` refuses without it. |
 | `SUBSCRIPTION_DELIVERY_ENABLED` | bool | `False` | `true` | Makes the bot issue subscription URLs instead of direct `vless://` keys, and registers the `/subscription` handler. Off falls back to the stored direct key. |
-| `SUBSCRIPTION_BASE_URL` | str | falls back to `SUB_URL`, then empty | set | Public subscription base. `subscription_proxy` takes the Direct hostname from it. |
+| `SUBSCRIPTION_BASE_URL` | str | falls back to `SUB_URL`, then empty | `https://cfg.special-wifi.ru/sub/` | Public config-delivery base, CDN-proxied and deliberately separate from VPN endpoints. `subscription_proxy` takes the Direct hostname from it only when panel endpoints are disabled. |
 | `SUB_URL` | str | empty | ? | Legacy alias, read only as the fallback for `SUBSCRIPTION_BASE_URL`. |
 | `SUBSCRIPTION_DIRECT_ADVERTISED_PORT` | int | `0` | ? | Port advertised for NL Direct. Zero advertises the inbound's own port. Exists because xray may bind privately behind the shared SNI-routed `:443`. |
 | `MIRROR_INBOUND_IDS` | json | `[]` | **`[]`** | Inbound ids whose client `enable`/`subId` state mirrors the primary inbound. Add/remove/enable/disable propagate to every id listed. **Read from the running container 2026-08-13: empty, not `[14]` as this row claimed.** Inbound 14 is disabled and holds 79 clients with no email; nothing mirrors to it today. |

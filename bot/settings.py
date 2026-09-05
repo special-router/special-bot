@@ -34,7 +34,7 @@ SECRET_KEY = env.str('SECRET_KEY', 'django-insecure-local-development-only')
 DEBUG = env.bool('DEBUG', False)
 ALLOWED_HOSTS = env.list(
     'ALLOWED_HOSTS',
-    default=['localhost', '127.0.0.1', '0.0.0.0', 'sub.special-wifi.ru'],
+    default=['localhost', '127.0.0.1', '0.0.0.0', 'sub.special-wifi.ru', 'cfg.special-wifi.ru'],
 )
 
 # TLS терминирует nginx на другом хосте, поэтому до gunicorn запрос доезжает
