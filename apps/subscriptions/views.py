@@ -1300,8 +1300,20 @@ def subscription_proxy(request, sub_id: str):
     # Direct = public NL sub domain on the inbound port.
     # Relay  = the client_vpn_host stored on the server (e.g. the RU relay front).
     relay_host, relay_port = _endpoint(server.client_vpn_host, params['port'])
-    sub_domain = settings_relays().SUBSCRIPTION_BASE_URL.split('/')[2].split(':')[0]  # config-delivery hostname
-    direct_host = sub_domain
+    # Config delivery and the VPN data plane deliberately use different hosts.
+    # ``SUBSCRIPTION_BASE_URL`` is CDN-fronted and cannot terminate Reality,
+    # XHTTP or gRPC. The VPN host comes from the server/control-plane record.
+    sub_domain = settings_relays().SUBSCRIPTION_BASE_URL.split('/')[2].split(':')[0]
+    direct_host = str(getattr(server, 'vpn_url', '') or '').strip()
+    try:
+        parsed_vpn_url = urlsplit(direct_host if '://' in direct_host else f'https://{direct_host}')
+        direct_host = parsed_vpn_url.hostname or ''
+    except ValueError:
+        direct_host = ''
+    if not direct_host:
+        direct_host = str(getattr(server, 'ip_address', '') or '').strip()
+    if not direct_host:
+        direct_host = sub_domain
     # Panel-managed endpoint links are authoritative for the VPN data plane.
     # Config delivery now lives on a separate CDN hostname, so using it to
     # classify the panel's direct endpoint would mis-tag every own TCP link.

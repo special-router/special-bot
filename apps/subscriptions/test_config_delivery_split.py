@@ -38,6 +38,7 @@ class ConfigDeliverySplitTests(TestCase):
         server = Server.objects.create(
             name='NL', ip_address='192.0.2.1', ssh_username='x', ssh_password='x',
             vpn_username='x', vpn_password='x', vpn_key='x', tariff=tariff,
+            vpn_url='https://sub.special-wifi.ru/panel-path',
             inbound_id=5, client_vpn_host='201.34.132.118:443',
         )
         self.vpn = UserVPN.objects.create(
