@@ -1571,7 +1571,7 @@ _NATIVE_PROFILE_FETCHING: dict[str, threading.Event] = {}
 
 
 def _backup_links() -> list[str] | None:
-    """Return a bounded, stable-deduplicated aggregate of opaque VLESS lines."""
+    """Return a bounded, stable-deduplicated aggregate of opaque proxy lines."""
     from django.conf import settings
     if not getattr(settings, 'SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED', False):
         _clear_backup_cache()
@@ -2381,17 +2381,36 @@ def _upstream_user_agent() -> str:
 
 
 def _sanitize_upstream_payload(payload: bytes, headers: dict[str, str] | None = None) -> list[str]:
-    """Decode payload framing while retaining accepted VLESS line bytes exactly."""
+    """Decode payload framing while retaining accepted proxy lines exactly."""
     structured = _structured_upstream_links(payload, headers)
     if structured is not None:
         return structured
     decoded = _decode_subscription_payload(payload)
     links = []
     for raw_line in decoded.splitlines():
-        if not raw_line.startswith(b'vless://') or _is_sentinel_vless_line(raw_line):
+        if raw_line.startswith(b'vless://'):
+            if not _is_sentinel_vless_line(raw_line):
+                links.append(raw_line.decode('utf-8'))
             continue
-        links.append(raw_line.decode('utf-8'))
+        if raw_line.startswith((b'hy2://', b'hysteria2://')) and _valid_raw_hysteria_line(raw_line):
+            links.append(raw_line.decode('utf-8'))
     return links
+
+
+def _valid_raw_hysteria_line(raw_line: bytes) -> bool:
+    """Accept one complete Hysteria2 URI without normalising bearer bytes."""
+    try:
+        line = raw_line.decode('utf-8')
+        parts = urlsplit(line)
+        query = {key: values[0] for key, values in parse_qs(parts.query).items()}
+    except (UnicodeDecodeError, ValueError):
+        return False
+    if parts.scheme not in ('hy2', 'hysteria2'):
+        return False
+    if not parts.username or not parts.hostname or parts.port is None or not query.get('sni'):
+        return False
+    return not any(character in value for value in (parts.username, parts.hostname, query['sni'])
+                   for character in ' \r\n\t#?/@')
 
 
 def _decode_subscription_payload(payload: bytes) -> bytes:
