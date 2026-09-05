@@ -273,7 +273,7 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 _no_redirect_opener = urllib.request.build_opener(NoRedirectHandler)
 
 
-def fetch_subscription_entry(url: str, expected_uuid: str) -> str:
+def fetch_subscription_entry(url: str, expected_uuid: str, *, excluded: str = '') -> str:
     request = urllib.request.Request(url, headers={'User-Agent': 'SPECIAL-production-canary/1'})
     with _no_redirect_opener.open(request, timeout=20) as response:
         if response.status != 200:
@@ -287,7 +287,7 @@ def fetch_subscription_entry(url: str, expected_uuid: str) -> str:
     # the first working VLESS entry whose client UUID matches the canary and
     # whose host is not a loopback info-only endpoint.
     for link in links:
-        if not link.startswith('vless://'):
+        if link == excluded or not link.startswith('vless://'):
             continue
         parsed = urllib.parse.urlsplit(link)
         if urllib.parse.unquote(parsed.username or '') != expected_uuid:
@@ -450,7 +450,15 @@ def run_protocol_canary() -> LayerResult:
         subscription_link = fetch_subscription_entry(subscription_url, str(user_vpn.vpn_uuid))
         # Reality anti-replay can cause flakes on low-latency paths; retry up to 3 times.
         subscription_ok = any(run_vless(subscription_link, xray_path, expected_egress) for _ in range(3))
-        direct_ok = any(run_vless(user_vpn.vpn_key, xray_path, expected_egress) for _ in range(3))
+        # The historical ``vpn_key`` is the RU relay link for every record. That
+        # path is intentionally no longer mandatory, so using it as the second
+        # half of L2 kept the whole product red after the CDN split. Verify a
+        # different current VLESS line from the same rendered subscription
+        # instead: this still proves two real data-plane paths without pinning
+        # monitoring to a retired legacy field.
+        secondary_link = fetch_subscription_entry(
+            subscription_url, str(user_vpn.vpn_uuid), excluded=subscription_link)
+        direct_ok = any(run_vless(secondary_link, xray_path, expected_egress) for _ in range(3))
     except Exception:
         return LayerResult(layer='l2', ok=False, error_class='canary_protocol')
     return LayerResult(

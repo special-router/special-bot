@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import os
 import subprocess
 import sys
@@ -28,6 +29,7 @@ from apps.monitoring.probes import (
     build_xray_config,
     cash_gap_days,
     get_canary_subscription,
+    fetch_subscription_entry,
     probe_invoice_link,
     run_checkout_probe,
     run_control_plane_probe,
@@ -309,6 +311,25 @@ class ProtocolCanaryConfigurationTests(TestCase):
 
         self.assertEqual(result.error_class, 'not_configured')
         self.assertEqual(result.details, {'status': 'invalid_health_url'})
+
+
+class SubscriptionEntrySelectionTests(TestCase):
+    def test_excluded_entry_selects_the_next_matching_vless_line(self):
+        first = ('vless://11111111-2222-3333-4444-555555555555@first.example:443'
+                 '?security=reality#first')
+        second = ('vless://11111111-2222-3333-4444-555555555555@second.example:443'
+                  '?security=reality#second')
+        payload = base64.b64encode(f'{first}\n{second}\n'.encode())
+        with patch('apps.monitoring.probes._no_redirect_opener.open') as opened:
+            opened.return_value.__enter__.return_value.status = 200
+            opened.return_value.__enter__.return_value.read.return_value = payload
+            selected = fetch_subscription_entry(
+                'https://config.example/sub/x',
+                '11111111-2222-3333-4444-555555555555',
+                excluded=first,
+            )
+
+        self.assertEqual(selected, second)
 
 
 class CanarySubscriptionSourceTests(TestCase):
