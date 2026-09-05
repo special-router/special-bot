@@ -317,9 +317,11 @@ class SubscriptionEntrySelectionTests(TestCase):
     def test_excluded_entry_selects_the_next_matching_vless_line(self):
         first = ('vless://11111111-2222-3333-4444-555555555555@first.example:443'
                  '?security=reality#first')
+        legacy = ('vless://11111111-2222-3333-4444-555555555555@legacy.example:443'
+                  '?security=reality#legacy')
         second = ('vless://11111111-2222-3333-4444-555555555555@second.example:443'
                   '?security=reality#second')
-        payload = base64.b64encode(f'{first}\n{second}\n'.encode())
+        payload = base64.b64encode(f'{first}\n{legacy}\n{second}\n'.encode())
         with patch('apps.monitoring.probes._no_redirect_opener.open') as opened:
             opened.return_value.__enter__.return_value.status = 200
             opened.return_value.__enter__.return_value.read.return_value = payload
@@ -327,6 +329,7 @@ class SubscriptionEntrySelectionTests(TestCase):
                 'https://config.example/sub/x',
                 '11111111-2222-3333-4444-555555555555',
                 excluded=first,
+                excluded_hosts={'legacy.example'},
             )
 
         self.assertEqual(selected, second)
