@@ -1292,12 +1292,30 @@ def subscription_proxy(request, sub_id: str):
 
     params = _get_params(server.id, server.inbound_id)
 
+    # Fetch panel-managed own endpoints once: list and JSON output must use the
+    # same snapshot, especially while hosts are being changed in the panel.
+    panel_links = _panel_links(user_vpn)
+
     # Client endpoint hosts.
     # Direct = public NL sub domain on the inbound port.
     # Relay  = the client_vpn_host stored on the server (e.g. the RU relay front).
     relay_host, relay_port = _endpoint(server.client_vpn_host, params['port'])
-    sub_domain = settings_relays().SUBSCRIPTION_BASE_URL.split('/')[2].split(':')[0]  # hostname only
+    sub_domain = settings_relays().SUBSCRIPTION_BASE_URL.split('/')[2].split(':')[0]  # config-delivery hostname
     direct_host = sub_domain
+    # Panel-managed endpoint links are authoritative for the VPN data plane.
+    # Config delivery now lives on a separate CDN hostname, so using it to
+    # classify the panel's direct endpoint would mis-tag every own TCP link.
+    # Derive the direct VPN host from the first non-relay panel TCP line.
+    if panel_links:
+        for panel_link in panel_links:
+            try:
+                parts = urlsplit(panel_link)
+                query = {key: values[0] for key, values in parse_qs(parts.query).items()}
+            except ValueError:
+                continue
+            if query.get('type', 'tcp') == 'tcp' and parts.hostname and parts.hostname != relay_host:
+                direct_host = parts.hostname
+                break
     # Advertise the shared public listener when configured; xray may then bind
     # its inbound privately without changing what any client dials.
     direct_port = getattr(settings_relays(), 'SUBSCRIPTION_DIRECT_ADVERTISED_PORT', 0) or params['port']
@@ -1310,10 +1328,6 @@ def subscription_proxy(request, sub_id: str):
     flow = ''
 
     user_agent = request.META.get('HTTP_USER_AGENT', '')
-    # Один запрос на оба формата: список и профиль должны нести одни и те же
-    # точки, а два похода в панель разошлись бы ровно в тот момент, когда там
-    # правят хосты.
-    panel_links = _panel_links(user_vpn)
     if _wants_xray_json(user_agent, user_vpn.id) and (
             panel_links or _xray_json_ready(params, direct_host)):
         try:
