@@ -274,7 +274,8 @@ _no_redirect_opener = urllib.request.build_opener(NoRedirectHandler)
 
 
 def fetch_subscription_entry(url: str, expected_uuid: str, *, excluded: str = '',
-                             excluded_hosts: set[str] | None = None) -> str:
+                             excluded_hosts: set[str] | None = None,
+                             allowed_networks: set[str] | None = None) -> str:
     request = urllib.request.Request(url, headers={'User-Agent': 'SPECIAL-production-canary/1'})
     with _no_redirect_opener.open(request, timeout=20) as response:
         if response.status != 200:
@@ -295,6 +296,9 @@ def fetch_subscription_entry(url: str, expected_uuid: str, *, excluded: str = ''
             continue
         host = (parsed.hostname or '').lower()
         if host in {'127.0.0.1', 'localhost', '::1'} or host in (excluded_hosts or set()):
+            continue
+        network = urllib.parse.parse_qs(parsed.query).get('type', ['tcp'])[0]
+        if allowed_networks is not None and network not in allowed_networks:
             continue
         return link
     raise RuntimeError('subscription_client')
@@ -459,7 +463,8 @@ def run_protocol_canary() -> LayerResult:
         # monitoring to a retired legacy field.
         secondary_link = fetch_subscription_entry(
             subscription_url, str(user_vpn.vpn_uuid), excluded=subscription_link,
-            excluded_hosts={urllib.parse.urlsplit(user_vpn.vpn_key).hostname or ''})
+            excluded_hosts={urllib.parse.urlsplit(user_vpn.vpn_key).hostname or ''},
+            allowed_networks={'tcp', 'grpc'})
         direct_ok = any(run_vless(secondary_link, xray_path, expected_egress) for _ in range(3))
     except Exception:
         return LayerResult(layer='l2', ok=False, error_class='canary_protocol')

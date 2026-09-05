@@ -330,6 +330,7 @@ class SubscriptionEntrySelectionTests(TestCase):
                 '11111111-2222-3333-4444-555555555555',
                 excluded=first,
                 excluded_hosts={'legacy.example'},
+                allowed_networks={'tcp'},
             )
 
         self.assertEqual(selected, second)
