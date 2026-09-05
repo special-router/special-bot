@@ -85,6 +85,8 @@ Shipped-but-inert features are listed together in
 | `SUBSCRIPTION_XRAY_JSON_ENABLED` | bool | `False` | ? | Serves a raw Xray-core JSON config (routing.balancers `leastPing` + `burstObservatory` across Direct/Relay/XHTTP) instead of the base64 VLESS list, to requests whose User-Agent matches Happ or v2rayNG. Off keeps every User-Agent, including a matching one, on the base64 body. |
 | `SUBSCRIPTION_RELAY_HOST` | str | empty | — | **Dead setting.** Nothing outside `bot/settings.py` reads it; the Relay endpoint comes from `Server.client_vpn_host`. |
 | `SUBSCRIPTION_RELAY_PORT` | int | `443` | — | **Dead setting**, same as above. |
+| `SUBSCRIPTION_CANARY_RELAY_ENDPOINT` | json object | `{}` | `{host,port}` | Public endpoint metadata for the one-account RU relay canary. Empty or malformed emits no line. It never contains a UUID or subscription URL. |
+| `SUBSCRIPTION_CANARY_RELAY_TEST_USER_IDS` | json | `[]` | `[801]` | Canary audience. The renderer accepts exactly `[801]`; any broader, reordered or malformed value disables the relay for everyone. |
 
 ## Device binding
 

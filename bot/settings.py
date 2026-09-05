@@ -408,6 +408,15 @@ SUBSCRIPTION_GRPC_PUBLIC_KEY = env.str('SUBSCRIPTION_GRPC_PUBLIC_KEY', default='
 SUBSCRIPTION_GRPC_SERVER_NAME = env.str('SUBSCRIPTION_GRPC_SERVER_NAME', default='')
 SUBSCRIPTION_GRPC_SHORT_ID = env.str('SUBSCRIPTION_GRPC_SHORT_ID', default='')
 
+# One-account relay canary. The endpoint is public routing metadata; the
+# customer's UUID remains in the database and is inserted only while rendering
+# that customer's document. Any audience other than the deliberately fixed
+# UserVPN 801 disables the line.
+SUBSCRIPTION_CANARY_RELAY_ENDPOINT = env.json(
+    'SUBSCRIPTION_CANARY_RELAY_ENDPOINT', default={})
+SUBSCRIPTION_CANARY_RELAY_TEST_USER_IDS = env.json(
+    'SUBSCRIPTION_CANARY_RELAY_TEST_USER_IDS', default=[])
+
 # Raw Xray-core JSON (routing.balancers leastPing + burstObservatory across the
 # same Direct/Relay/XHTTP endpoints) for the two Xray-core mobile clients that
 # accept it as-is, selected by User-Agent. Off by default: every other client,

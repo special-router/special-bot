@@ -2,12 +2,13 @@
 import base64
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import unquote, urlsplit
 
 import httpx
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from apps.subscriptions.views import (
-    _configured_params, _panel_links, _panel_outbounds, _remnawave_proxy_enabled,
+    _canary_relay_link, _configured_params, _panel_links, _panel_outbounds, _remnawave_proxy_enabled,
     _remnawave_upstream, logger as views_logger)
 
 
@@ -286,3 +287,35 @@ class PanelOutboundTests(SimpleTestCase):
         self.assertEqual(len(outbounds), 1)
         self.assertEqual(outbounds[0]['streamSettings']['xhttpSettings']['path'],
                          '/assets/v1/x')
+
+
+class PerUserRelayCanaryTests(SimpleTestCase):
+    params = {'public_key': 'p' * 43, 'server_name': 'sni.test',
+              'short_ids': ['aabb'], 'network': 'tcp'}
+
+    @override_settings(
+        SUBSCRIPTION_CANARY_RELAY_ENDPOINT={'host': '201.34.132.118', 'port': 443},
+        SUBSCRIPTION_CANARY_RELAY_TEST_USER_IDS=[801],
+    )
+    def test_only_fixed_canary_receives_whitelist_relay(self):
+        canary = _canary_relay_link(_panel_user(801), self.params)
+        ordinary = _canary_relay_link(_panel_user(802), self.params)
+
+        self.assertEqual(urlsplit(canary).hostname, '201.34.132.118')
+        self.assertEqual(urlsplit(canary).port, 443)
+        self.assertIn('белые списки', unquote(urlsplit(canary).fragment))
+        self.assertIsNone(ordinary)
+
+    @override_settings(
+        SUBSCRIPTION_CANARY_RELAY_ENDPOINT={'host': '201.34.132.118', 'port': 443},
+        SUBSCRIPTION_CANARY_RELAY_TEST_USER_IDS=[801, 802],
+    )
+    def test_broadened_allowlist_disables_relay_for_everyone(self):
+        self.assertIsNone(_canary_relay_link(_panel_user(801), self.params))
+
+    @override_settings(
+        SUBSCRIPTION_CANARY_RELAY_ENDPOINT={'host': 'https://bad.test', 'port': 443},
+        SUBSCRIPTION_CANARY_RELAY_TEST_USER_IDS=[801],
+    )
+    def test_malformed_endpoint_fails_closed(self):
+        self.assertIsNone(_canary_relay_link(_panel_user(801), self.params))

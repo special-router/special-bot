@@ -1165,6 +1165,47 @@ def _panel_links(user_vpn) -> list[str] | None:
     return links or None
 
 
+def _canary_relay_endpoint(user_vpn_id: int) -> tuple[str, int] | None:
+    """Return the single-account relay endpoint, or fail closed."""
+    relays = settings_relays()
+    if getattr(relays, 'SUBSCRIPTION_CANARY_RELAY_TEST_USER_IDS', []) != [801]:
+        return None
+    if user_vpn_id != 801:
+        return None
+    endpoint = getattr(relays, 'SUBSCRIPTION_CANARY_RELAY_ENDPOINT', {})
+    if not isinstance(endpoint, dict) or set(endpoint) != {'host', 'port'}:
+        return None
+    host, port = endpoint.get('host'), endpoint.get('port')
+    if not isinstance(host, str) or not host or len(host) > 253:
+        return None
+    if any(character in host for character in ' /\\\r\n\t#?@'):
+        return None
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        labels = host.split('.')
+        if (host.startswith('.') or host.endswith('.') or '..' in host
+                or any(not label or len(label) > 63
+                       or label.startswith('-') or label.endswith('-')
+                       or any(not (character.isascii() and (character.isalnum() or character == '-'))
+                              for character in label)
+                       for label in labels)):
+            return None
+    if type(port) is not int or not 1 <= port <= 65535:
+        return None
+    return host, port
+
+
+def _canary_relay_link(user_vpn, params: dict) -> str | None:
+    endpoint = _canary_relay_endpoint(user_vpn.id)
+    if endpoint is None:
+        return None
+    host, port = endpoint
+    return _build_vless(
+        str(user_vpn.vpn_uuid), host, port,
+        _endpoint_label(_OWN_REGION_CODE, whitelisted=True), params, flow='')
+
+
 def _panel_outbound_tag(link: str, direct_host: str) -> str:
     """Ступень лестницы, которой соответствует строка панели.
 
@@ -1295,11 +1336,21 @@ def subscription_proxy(request, sub_id: str):
     # Fetch panel-managed own endpoints once: list and JSON output must use the
     # same snapshot, especially while hosts are being changed in the panel.
     panel_links = _panel_links(user_vpn)
+    canary_relay_link = _canary_relay_link(user_vpn, params)
+    own_links = list(panel_links or [])
+    if canary_relay_link and not any(
+            urlsplit(link).hostname == urlsplit(canary_relay_link).hostname
+            and urlsplit(link).port == urlsplit(canary_relay_link).port
+            for link in own_links):
+        own_links.append(canary_relay_link)
 
     # Client endpoint hosts.
     # Direct = public NL sub domain on the inbound port.
     # Relay  = the client_vpn_host stored on the server (e.g. the RU relay front).
     relay_host, relay_port = _endpoint(server.client_vpn_host, params['port'])
+    if canary_relay_link:
+        canary_parts = urlsplit(canary_relay_link)
+        relay_host, relay_port = canary_parts.hostname or '', canary_parts.port or params['port']
     # Config delivery and the VPN data plane deliberately use different hosts.
     # ``SUBSCRIPTION_BASE_URL`` is CDN-fronted and cannot terminate Reality,
     # XHTTP or gRPC. The VPN host comes from the server/control-plane record.
@@ -1348,7 +1399,7 @@ def subscription_proxy(request, sub_id: str):
             # за который отвечаем мы, а всё после него чужое.
             documents = [_build_xray_json(
                 uuid_str, params, direct_host, direct_port, relay_host, relay_port, flow,
-                own_outbounds=_panel_outbounds(panel_links, direct_host) if panel_links else None)]
+                own_outbounds=_panel_outbounds(own_links, direct_host) if panel_links else None)]
             if _is_backup_test_user(user_vpn.id):
                 native_profiles = _native_mirror_profiles() \
                     if _native_mirror_profiles_enabled(user_agent) else None
@@ -1412,6 +1463,8 @@ def subscription_proxy(request, sub_id: str):
         grpc_link = _grpc_link(uuid_str, direct_host)
         if grpc_link:
             links.append(grpc_link)
+    if canary_relay_link and canary_relay_link not in links:
+        links.append(canary_relay_link)
     # 4) Same-origin internal transport canary. Every candidate independently
     # stable-reads its own live inbound and silently omits on any uncertainty.
     if _is_internal_test_user(user_vpn.id):
