@@ -1440,7 +1440,7 @@ def subscription_proxy(request, sub_id: str):
     # заведённые там, где их правят. Настройки остаются запасным путём, а не
     # вторым источником — иначе правка хостов расходилась бы с выдачей молча.
     if panel_links:
-        links.extend(panel_links)
+        links.extend(own_links)
     else:
         # 2) Direct NL primary.
         links.append(_build_vless(uuid_str, direct_host, direct_port,
