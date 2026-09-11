@@ -239,6 +239,45 @@ class MirrorProfileTests(SimpleTestCase):
 
         self.assertEqual(profile['burstObservatory']['subjectSelector'], ['M0'])
 
+    def test_numbered_servers_become_one_country_profile_with_auto_selection(self):
+        links = [
+            'vless://' + _UUID + '@de-one.example:443?type=tcp&security=reality&pbk=KEY'
+            '&sni=one.example#%F0%9F%87%A9%F0%9F%87%AA%20Germany%20%231',
+            'vless://' + _UUID + '@de-two.example:443?type=tcp&security=reality&pbk=KEY'
+            '&sni=two.example#%F0%9F%87%A9%F0%9F%87%AA%20Germany%20%232',
+            'vless://' + _UUID + '@de-one.example:443?type=grpc&security=reality&pbk=KEY'
+            '&sni=one.example&serviceName=edge#%F0%9F%87%A9%F0%9F%87%AA%20Germany%20%231%20GRPC',
+            'vless://' + _UUID + '@nl-one.example:443?type=tcp&security=reality&pbk=KEY'
+            '&sni=nl.example#%F0%9F%87%B3%F0%9F%87%B1%20Netherlands%20%231',
+        ]
+
+        profiles = _mirror_xray_profiles(links, allow_hysteria=False)
+
+        self.assertEqual([profile['remarks'] for profile in profiles],
+                         ['🇩🇪 Германия', '🇳🇱 Нидерланды'])
+        german = profiles[0]
+        self.assertEqual(len(german['routing']['balancers']), 2)
+        self.assertEqual(german['routing']['balancers'][0]['selector'], ['M0-s0', 'M0-s1'])
+        self.assertEqual(german['routing']['balancers'][0]['fallbackTag'], 'LOOP-M0-L2')
+        self.assertEqual(german['routing']['balancers'][1]['selector'], ['M0-s2'])
+        self.assertNotIn('#1', json.dumps(profiles, ensure_ascii=False))
+        self.assertNotIn('#2', json.dumps(profiles, ensure_ascii=False))
+
+    def test_duplicate_dial_targets_with_different_labels_are_kept_once(self):
+        base = ('vless://' + _UUID + '@de-one.example:443?type=tcp&security=reality'
+                '&pbk=KEY&sni=one.example')
+        profiles = _mirror_xray_profiles([
+            base + '#%F0%9F%87%A9%F0%9F%87%AA%20Germany%20%231',
+            base + '#%F0%9F%87%A9%F0%9F%87%AA%20Germany%20%231%20iOS',
+        ], allow_hysteria=False)
+
+        proxy_outbounds = [
+            outbound for outbound in profiles[0]['outbounds']
+            if outbound['protocol'] == 'vless'
+        ]
+        self.assertEqual(len(proxy_outbounds), 1)
+        self.assertEqual(profiles[0]['routing']['balancers'], [])
+
 
 class NativeMirrorProfileTests(SimpleTestCase):
     def _profile(self):

@@ -135,7 +135,9 @@ The per-entry selector applies to the VLESS-line path. Native Happ preservation
 uses `SUBSCRIPTION_XRAY_JSON_NATIVE_MIRROR_USER_AGENT` for every enabled source
 and rejects the native set atomically when any source returns another format.
 Leave `SUBSCRIPTION_XRAY_JSON_NATIVE_MIRRORS_ENABLED=false` for a mixed-format
-provider set.
+provider set. In that mode Happ receives one reconstructed profile per country:
+numbered provider servers are hidden inside an automatic pool for their
+transport, and transport pools fall back in TCP → XHTTP → gRPC order.
 
 `x-hwid` must match `^[a-zA-Z0-9=-]{10,64}$`; anything else and the code sends no
 identity headers at all — silently, by design, because a malformed identity is

@@ -994,11 +994,11 @@ def _xray_outbound_from_link(link: str, tag: str) -> dict | None:
 
 
 def _mirror_xray_profiles(links: list[str], allow_hysteria: bool) -> list[dict]:
-    """Профиль на страну: её точки лестницей в том порядке, в каком они выданы.
+    """Профиль на страну: автопул серверов внутри транспортной лестницы.
 
-    Порядок строк в списке — это и есть порядок попыток: прямая точка страны
-    идёт первой, её запасной транспорт следом. Здесь он только переносится в
-    ``fallbackTag``, чтобы перебирал клиент, а не человек.
+    Нумерованные серверы провайдера не становятся отдельными профилями. Точки
+    одного транспорта входят в общий балансировщик страны, а между транспортами
+    сохраняется порядок TCP -> XHTTP -> gRPC -> остальные -> Hysteria.
 
     Страна, у которой осталась одна точка, профилем тоже становится: лестница
     из одной ступени — это обычный outbound, и отказывать ей значило бы терять
@@ -1007,14 +1007,15 @@ def _mirror_xray_profiles(links: list[str], allow_hysteria: bool) -> list[dict]:
     grouped: dict[str, list[str]] = {}
     for link in links:
         label = unquote(link.partition('#')[2])
-        country = label.removesuffix(_ALT_TRANSPORT_LABEL_SUFFIX).strip()
-        if not country:
-            continue
-        grouped.setdefault(country, []).append(link)
+        region_code = _mirror_region_code(label)
+        grouped.setdefault(region_code, []).append(link)
     profiles = []
-    for index, (country, country_links) in enumerate(grouped.items()):
+    stage_priority = {'tcp': 0, 'xhttp': 1, 'grpc': 2, 'ws': 3, 'hysteria': 5}
+    for index, (region_code, country_links) in enumerate(grouped.items()):
         prefix = f'M{index}'
-        outbounds, stages = [], []
+        outbounds = []
+        stage_members: dict[str, list[str]] = {}
+        outbound_fingerprints = set()
         for position, link in enumerate(country_links):
             tag = f'{prefix}-s{position}'
             outbound = _xray_outbound_from_link(link, tag)
@@ -1022,13 +1023,27 @@ def _mirror_xray_profiles(links: list[str], allow_hysteria: bool) -> list[dict]:
                 continue
             if outbound['protocol'] == 'hysteria' and not allow_hysteria:
                 continue
+            fingerprint = json.dumps(
+                {key: value for key, value in outbound.items() if key != 'tag'},
+                sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+            if fingerprint in outbound_fingerprints:
+                continue
+            outbound_fingerprints.add(fingerprint)
             outbounds.append(outbound)
-            stages.append((f'{prefix}-b{position}', [tag]))
+            network = outbound.get('streamSettings', {}).get('network', '')
+            stage_key = 'hysteria' if outbound['protocol'] == 'hysteria' else network or 'other'
+            stage_members.setdefault(stage_key, []).append(tag)
         if not outbounds:
             continue
+        ordered_stages = sorted(
+            stage_members.items(), key=lambda item: stage_priority.get(item[0], 4))
+        stages = [
+            (f'{prefix}-b{position}', members)
+            for position, (_stage_key, members) in enumerate(ordered_stages)
+        ]
         loops, balancers, loop_rules, entry = _cascade(stages, prefix)
         profile = {
-            'remarks': country,
+            'remarks': _endpoint_label(region_code),
             'log': {'loglevel': 'warning'},
             'inbounds': _xray_json_inbounds(),
             'dns': _xray_json_dns(),
