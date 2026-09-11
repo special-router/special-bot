@@ -1492,15 +1492,15 @@ def subscription_proxy(request, sub_id: str):
     if backup_links:
         links.extend(backup_links)
 
-    # Браузеру — страница, приложению — документ. Стоит после сборки links,
-    # поэтому страница показывает ровно тот список, который получит клиент:
-    # разойтись им нечем.
+    # Браузеру — страница, приложению — документ. Страница сворачивает профили
+    # того же документа в уникальные страны, как reconstructed Happ-профили:
+    # транспорт, номер сервера и маршрут человеку здесь выбирать не нужно.
     if page.wants_page(request):
         html = page.render(
             subscription_url=build_subscription_url(settings_relays().SUBSCRIPTION_BASE_URL, sub_id),
             days=days,
             status_label=status_label,
-            links=links,
+            countries=_country_labels_from_labels(page.endpoint_labels(links)),
             devices=bound_devices(user_vpn),
             device_limit=device_limit_for(user_vpn),
         )
@@ -3148,6 +3148,19 @@ def _endpoint_label(code: str, *, whitelisted: bool = False) -> str:
     region = f'{_region_flag(code)} {_MIRROR_REGION_NAMES.get(code, code)}' if code \
         else _MIRROR_UNKNOWN_REGION
     return f'{region} {_WHITELIST_LABEL_SUFFIX}' if whitelisted else region
+
+
+def _country_labels_from_labels(labels: list[str]) -> list[str]:
+    """Collapse endpoint/profile labels to unique canonical country names."""
+    countries = []
+    for label in labels:
+        region_code = _mirror_region_code(label)
+        if not region_code:
+            continue
+        country = _endpoint_label(region_code)
+        if country not in countries:
+            countries.append(country)
+    return countries
 
 
 def _whitelist_capable(server_name: str) -> bool:

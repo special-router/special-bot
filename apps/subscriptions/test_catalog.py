@@ -48,6 +48,22 @@ class SubscriptionCatalogTests(SimpleTestCase):
 
     @override_settings(**ROLLED_OUT)
     @patch('apps.subscriptions.catalog._backup_links')
+    def test_provider_profiles_collapse_to_the_same_country_list_as_happ(self, backup_links):
+        backup_links.return_value = [
+            _line('🇳🇱 1 direct'),
+            _line('🇩🇪 Германия #1'),
+            _line('🇩🇪 Германия #1 через 🇷🇺'),
+            _line('🇩🇪 Германия #1 GRPC'),
+            _line('🇩🇪 Германия #1 (для iOS 🍎)'),
+            _line('🇩🇪 Германия #2'),
+        ]
+
+        catalog = subscription_catalog(self.connection)
+
+        self.assertEqual(catalog.countries, ('🇳🇱 Нидерланды', '🇩🇪 Германия'))
+
+    @override_settings(**ROLLED_OUT)
+    @patch('apps.subscriptions.catalog._backup_links')
     def test_a_whitelist_line_marks_its_country_without_becoming_a_second_one(self, backup_links):
         backup_links.return_value = []
 
@@ -103,8 +119,7 @@ class SubscriptionCatalogTests(SimpleTestCase):
 
     @override_settings(**ROLLED_OUT)
     @patch('apps.subscriptions.catalog._backup_links')
-    def test_an_unlabelled_provider_endpoint_is_shown_as_the_client_sees_it(self, backup_links):
-        """Клиент читает «🌐 Резерв» в своём приложении — экран не вправе звать её иначе."""
+    def test_an_unlabelled_provider_endpoint_is_not_claimed_as_a_country(self, backup_links):
         backup_links.return_value = [_line('🌐 Резерв')]
 
-        self.assertIn('🌐 Резерв', subscription_catalog(self.connection).countries)
+        self.assertEqual(subscription_catalog(self.connection).countries, ('🇳🇱 Нидерланды',))

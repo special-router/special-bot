@@ -18,27 +18,21 @@
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
 from urllib.parse import unquote
 
 from apps.subscriptions.views import (
-    _ALT_TRANSPORT_LABEL_SUFFIX,
-    _GRPC_LABEL_SUFFIX,
     _OWN_REGION_CODE,
     _WHITELIST_LABEL_SUFFIX,
     _backup_links,
+    _country_labels_from_labels,
     _endpoint_label,
     _is_backup_test_user,
+    _mirror_region_code,
 )
 
 
 logger = logging.getLogger(__name__)
-
-# Номер-различитель, который рендерер приписывает второй одинаковой подписи:
-# «🇳🇱 Нидерланды 2» — та же страна, что и «🇳🇱 Нидерланды», а не ещё одна.
-_TRAILING_NUMBER = re.compile(r'\s+\d+$')
-
 
 @dataclass(frozen=True)
 class SubscriptionCatalog:
@@ -82,23 +76,16 @@ def _catalog_from_labels(labels: list[str]) -> SubscriptionCatalog:
     клиент их и увидит; алфавит здесь был бы третьим порядком, не совпадающим
     ни с одним настоящим.
     """
-    countries: list[str] = []
+    countries = _country_labels_from_labels(labels)
     whitelisted: list[str] = []
     for label in labels:
-        bare = _TRAILING_NUMBER.sub('', label).strip()
-        # Транспортный суффикс срезается до сравнения стран: «запасной путь» и
-        # «обходной путь» — это вторая и третья линии той же страны, а не ещё
-        # две страны. Обещать их отдельными строками на экране было бы
-        # неправдой о географии.
-        for suffix in (_ALT_TRANSPORT_LABEL_SUFFIX, _GRPC_LABEL_SUFFIX):
-            bare = bare.removesuffix(suffix).strip()
-        country = bare.removesuffix(_WHITELIST_LABEL_SUFFIX).strip()
-        if not country:
+        if not label.strip().endswith(_WHITELIST_LABEL_SUFFIX):
             continue
-        if country not in countries:
-            countries.append(country)
-        # Суффикс отделился — значит эта строка и есть обход белых списков.
-        if bare != country and country not in whitelisted:
+        region_code = _mirror_region_code(label)
+        if not region_code:
+            continue
+        country = _endpoint_label(region_code)
+        if country not in whitelisted:
             whitelisted.append(country)
     return SubscriptionCatalog(tuple(countries), tuple(whitelisted))
 

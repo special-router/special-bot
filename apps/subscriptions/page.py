@@ -68,10 +68,10 @@ def app_links(subscription_url: str) -> list[tuple[str, str, str]]:
 
 
 def endpoint_labels(links: list[str]) -> list[str]:
-    """Названия точек ровно в том виде, в каком их увидит приложение.
+    """Извлечь подписи точек для последующей группировки по странам.
 
-    Читается тот же список, который уходит клиенту, поэтому страница не может
-    разойтись с подпиской: разойтись было бы нечему.
+    Страница не показывает транспорт, номер сервера или маршрут: эти подписи
+    нужны только как исходные сигналы для того же списка стран, что строит Happ.
     """
     labels = []
     for link in links:
@@ -89,7 +89,7 @@ def _device_line(device) -> str:
 
 
 def render(*, subscription_url: str, days: int, status_label: str,
-           links: list[str], devices: list, device_limit: int) -> str:
+           countries: list[str], devices: list, device_limit: int) -> str:
     """Собрать страницу. Ничего не читает из сети и ничего не пишет."""
     title = escape(str(getattr(settings, 'SUBSCRIPTION_PROFILE_TITLE', 'VPN'))[:64])
     support = str(getattr(settings, 'SUBSCRIPTION_SUPPORT_URL', ''))[:200]
@@ -100,7 +100,7 @@ def render(*, subscription_url: str, days: int, status_label: str,
         f'<b>{escape(name)}</b><span>{escape(platforms)}</span></a>'
         for name, target, platforms in app_links(subscription_url)
     )
-    countries = '\n'.join(f'<li>{escape(label)}</li>' for label in endpoint_labels(links))
+    country_html = '\n'.join(f'<li>{escape(label)}</li>' for label in countries)
     device_html = '\n'.join(f'<li>{_device_line(device)}</li>' for device in devices)
     if not device_html:
         device_html = '<li class="muted">пока ни одного</li>'
@@ -113,7 +113,7 @@ def render(*, subscription_url: str, days: int, status_label: str,
     return _TEMPLATE.format(
         title=title, term=term, announce=announce_html,
         url=escape(subscription_url), url_attr=escape(subscription_url, quote=True),
-        buttons=buttons, countries=countries, devices=device_html,
+        buttons=buttons, countries=country_html, devices=device_html,
         device_used=len(devices), device_limit=device_limit, support=support_html,
     )
 

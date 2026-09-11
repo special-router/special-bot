@@ -97,7 +97,7 @@ class RenderTests(SimpleTestCase):
             subscription_url=_URL,
             days=5,
             status_label='осталось 5 дней',
-            links=['vless://u@a.test:443?x=1#' + quote('🇳🇱 Нидерланды')],
+            countries=['🇳🇱 Нидерланды'],
             devices=[SimpleNamespace(device_model='iPhone 17 Pro Max', device_os='ios')],
             device_limit=2,
         )
@@ -110,6 +110,13 @@ class RenderTests(SimpleTestCase):
         self.assertIn('🇳🇱 Нидерланды', html)
         self.assertIn('iPhone 17 Pro Max', html)
         self.assertIn('Устройства (1 из 2)', html)
+
+    def test_page_receives_only_country_names(self):
+        html = self.render(countries=['🇩🇪 Германия', '🇳🇱 Нидерланды'])
+
+        self.assertIn('<li>🇩🇪 Германия</li>', html)
+        self.assertNotIn('GRPC', html)
+        self.assertNotIn('через', html)
 
     def test_expired_subscription_reads_the_status_words_not_a_negative_term(self):
         html = self.render(days=0, status_label='подписка окончена')
