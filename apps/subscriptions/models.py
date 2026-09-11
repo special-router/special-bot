@@ -1,5 +1,12 @@
+from django.core.validators import RegexValidator
 from django.db import models
 from django.utils import timezone
+
+
+TOKEN_SHA256_VALIDATOR = RegexValidator(
+    r'^[0-9a-f]{64}$',
+    'Expected a lowercase SHA-256 digest.',
+)
 
 
 class Subscription(models.Model):
@@ -240,3 +247,64 @@ class SubscriptionDeviceRegistrationRate(models.Model):
 
     def __str__(self):
         return f"{self.subscription_id} {self.registrations}"
+
+
+class SubscriptionAccessToken(models.Model):
+    subscription = models.ForeignKey(
+        'vpn.UserVPN',
+        on_delete=models.CASCADE,
+        related_name='access_tokens',
+    )
+
+    token_hash = models.CharField(
+        'SHA-256 access-token digest',
+        max_length=64,
+        unique=True,
+        validators=(TOKEN_SHA256_VALIDATOR,),
+    )
+
+    token_hint = models.CharField(
+        'Non-secret digest prefix',
+        max_length=12,
+        db_index=True,
+    )
+
+    active_from = models.DateTimeField(
+        'Active from',
+        default=timezone.now,
+    )
+
+    expires_at = models.DateTimeField(
+        'Expires at',
+        null=True,
+        blank=True,
+    )
+
+    revoked_at = models.DateTimeField(
+        'Revoked at',
+        null=True,
+        blank=True,
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(
+        'Last successful use',
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        ordering = ('subscription_id', '-created_at')
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(expires_at__isnull=True) | models.Q(expires_at__gt=models.F('active_from')),
+                name='subscription_token_expiry_after_start',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(token_hash__regex=r'^[0-9a-f]{64}$'),
+                name='subscription_token_hash_is_sha256',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.subscription_id}:{self.token_hint}'

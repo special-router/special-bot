@@ -14,6 +14,7 @@ from .probes import (
     run_checkout_probe,
     run_control_plane_probe,
     run_host_capacity_probe,
+    run_provider_inventory_probe,
     run_protocol_canary,
     run_regional_probe,
 )
@@ -92,6 +93,13 @@ def run_protocol_monitor() -> dict[str, object]:
 @shared_task(name='apps.monitoring.tasks.run_host_capacity_monitor')
 def run_host_capacity_monitor() -> dict[str, object]:
     return _run('host', run_host_capacity_probe)
+
+
+@shared_task(name='apps.monitoring.tasks.run_provider_inventory_monitor')
+def run_provider_inventory_monitor() -> dict[str, object]:
+    if not settings.SPECIAL_MONITOR_PROVIDER_ENABLED:
+        return {'layer': 'provider', 'ok': True, 'error_class': None, 'skipped': True}
+    return _run('provider', run_provider_inventory_probe)
 
 
 @shared_task(name='apps.monitoring.tasks.run_checkout_monitor')

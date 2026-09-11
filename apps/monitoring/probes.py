@@ -7,12 +7,14 @@ import base64
 import ipaddress
 import json
 import os
+import shutil
 import socket
 import subprocess
 import time
 import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
+from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
@@ -25,6 +27,14 @@ from apps.servers.models import Server, TariffServer
 from apps.servers.remnawave import RemnawaveAPI
 from apps.servers.remnawave_client import panel_identity
 from apps.servers.subscription_connector import build_subscription_url
+from apps.monitoring.models import MonitorState
+from apps.subscriptions.views import (
+    _backup_source_set_digest,
+    _bounded_number,
+    _canary_relay_link,
+    _get_params,
+    _valid_upstream_url,
+)
 from apps.vpn.management.commands.audit_legacy_vpn import get_server_entitlement
 from apps.vpn.models import UserVPN
 
@@ -91,6 +101,8 @@ def run_host_capacity_probe() -> LayerResult:
         load1 = os.getloadavg()[0]
         cpus = os.cpu_count() or 1
         oom_kills = _read_oom_kill_count()
+        disk = shutil.disk_usage('/')
+        root_disk_percent = round((disk.used / disk.total) * 100, 1) if disk.total else 100.0
     except (OSError, KeyError, ValueError):
         return LayerResult(layer='host', ok=False, error_class='host_metrics')
 
@@ -103,6 +115,8 @@ def run_host_capacity_probe() -> LayerResult:
         reasons.append('load_high')
     if oom_kills > settings.SPECIAL_MONITOR_MAX_OOM_KILLS:
         reasons.append('oom_kill')
+    if root_disk_percent >= settings.SPECIAL_MONITOR_MAX_ROOT_DISK_PERCENT:
+        reasons.append('disk_high')
     return LayerResult(
         layer='host',
         ok=not reasons,
@@ -114,6 +128,7 @@ def run_host_capacity_probe() -> LayerResult:
             'swap_used_mb': swap_used_mb,
             'load1_per_cpu': round(load1 / cpus, 2),
             'oom_kills': oom_kills,
+            'root_disk_percent': root_disk_percent,
         },
     )
 
@@ -144,6 +159,70 @@ def run_regional_probe() -> LayerResult:
             'endpoints': [asdict(item) for item in results],
         },
     )
+
+
+def run_provider_inventory_probe() -> LayerResult:
+    if not getattr(settings, 'SPECIAL_MONITOR_PROVIDER_ENABLED', False):
+        return LayerResult(
+            layer='provider', ok=True, error_class=None, details={'status': 'disabled'})
+    urls = getattr(settings, 'SUBSCRIPTION_BACKUP_UPSTREAM_URLS', [])
+    configured = [url for url in urls if isinstance(url, str) and url.strip()] \
+        if isinstance(urls, list) else []
+    valid = [url for url in configured if _valid_upstream_url(url)]
+    details = {
+        'configured_sources': len(configured),
+        'valid_sources': len(valid),
+        'fresh_endpoints': 0,
+        'fresh_alive': 0,
+    }
+    if not configured:
+        return LayerResult(
+            layer='provider', ok=False, error_class='provider_sources_empty',
+            immediate=True, details=details)
+    if len(valid) != len(configured):
+        return LayerResult(
+            layer='provider', ok=False, error_class='provider_source_invalid',
+            immediate=True, details=details)
+    if not getattr(settings, 'SUBSCRIPTION_BACKUP_LIVENESS_ENABLED', False):
+        return LayerResult(
+            layer='provider', ok=False, error_class='provider_liveness_disabled',
+            immediate=True, details=details)
+    max_age = _bounded_number(
+        getattr(settings, 'SUBSCRIPTION_BACKUP_LIVENESS_MAX_AGE_SECONDS', 3600),
+        default=3600, lower=60, upper=86400)
+    source_state = MonitorState.objects.filter(layer='provsrc').first()
+    if (source_state is None
+            or timezone.now() - source_state.checked_at > timedelta(seconds=max_age)):
+        return LayerResult(
+            layer='provider', ok=False, error_class='provider_inventory_stale',
+            immediate=True, details=details)
+    source_details = source_state.details if isinstance(source_state.details, dict) else {}
+    if source_details.get('source_set_sha256') != _backup_source_set_digest(valid):
+        return LayerResult(
+            layer='provider', ok=False, error_class='provider_inventory_changed',
+            immediate=True, details=details)
+    probed = source_details.get('probed', 0)
+    alive = source_details.get('alive', 0)
+    loaded_sources = source_details.get('loaded_sources', 0)
+    ready_sources = source_details.get('ready_sources', 0)
+    unprobeable_sources = source_details.get('unprobeable_sources', 0)
+    details['fresh_endpoints'] = probed if type(probed) is int and probed >= 0 else 0
+    details['fresh_alive'] = alive if type(alive) is int and alive >= 0 else 0
+    details['loaded_sources'] = (
+        loaded_sources if type(loaded_sources) is int and loaded_sources >= 0 else 0)
+    details['ready_sources'] = (
+        ready_sources if type(ready_sources) is int and ready_sources >= 0 else 0)
+    details['unprobeable_sources'] = (
+        unprobeable_sources if type(unprobeable_sources) is int and unprobeable_sources >= 0 else 0)
+    if (source_details.get('status') != 'ready' or not details['fresh_alive']
+            or details['fresh_endpoints'] != source_details.get('targets')
+            or details['loaded_sources'] != len(valid)
+            or details['ready_sources'] != len(valid)
+            or details['unprobeable_sources']):
+        return LayerResult(
+            layer='provider', ok=False, error_class='provider_inventory_unavailable',
+            immediate=True, details=details)
+    return LayerResult(layer='provider', ok=True, error_class=None, details=details)
 
 
 def run_control_plane_probe() -> LayerResult:
@@ -273,9 +352,7 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 _no_redirect_opener = urllib.request.build_opener(NoRedirectHandler)
 
 
-def fetch_subscription_entry(url: str, expected_uuid: str, *, excluded: str = '',
-                             excluded_hosts: set[str] | None = None,
-                             allowed_networks: set[str] | None = None) -> str:
+def fetch_subscription_entries(url: str, expected_uuid: str) -> list[str]:
     request = urllib.request.Request(url, headers={'User-Agent': 'SPECIAL-production-canary/1'})
     with _no_redirect_opener.open(request, timeout=20) as response:
         if response.status != 200:
@@ -285,17 +362,34 @@ def fetch_subscription_entry(url: str, expected_uuid: str, *, excluded: str = ''
     links = [line.strip() for line in decoded.splitlines() if line.strip()]
     if not links:
         raise RuntimeError('subscription_payload')
-    # A subscription may expose several endpoints (status, direct, relay); pick
-    # the first working VLESS entry whose client UUID matches the canary and
-    # whose host is not a loopback info-only endpoint.
+    accepted = []
     for link in links:
-        if link == excluded or not link.startswith('vless://'):
+        if not link.startswith('vless://'):
             continue
         parsed = urllib.parse.urlsplit(link)
         if urllib.parse.unquote(parsed.username or '') != expected_uuid:
             continue
         host = (parsed.hostname or '').lower()
-        if host in {'127.0.0.1', 'localhost', '::1'} or host in (excluded_hosts or set()):
+        if host in {'127.0.0.1', 'localhost', '::1'}:
+            continue
+        accepted.append(link)
+    if not accepted:
+        raise RuntimeError('subscription_client')
+    return accepted
+
+
+def fetch_subscription_entry(url: str, expected_uuid: str, *, excluded: str = '',
+                             excluded_hosts: set[str] | None = None,
+                             allowed_networks: set[str] | None = None) -> str:
+    # A subscription may expose several endpoints (status, direct, relay); pick
+    # the first requested VLESS entry whose client UUID matches the canary and
+    # whose host is not a loopback info-only endpoint.
+    for link in fetch_subscription_entries(url, expected_uuid):
+        if link == excluded:
+            continue
+        parsed = urllib.parse.urlsplit(link)
+        host = (parsed.hostname or '').lower()
+        if host in (excluded_hosts or set()):
             continue
         network = urllib.parse.parse_qs(parsed.query).get('type', ['tcp'])[0]
         if allowed_networks is not None and network not in allowed_networks:
@@ -343,6 +437,12 @@ def build_xray_config(link: str, port: int) -> dict[str, object]:
         stream['wsSettings'] = {
             'path': query_value(query, 'path', '/'),
             'headers': {'Host': query_value(query, 'host')} if query_value(query, 'host') else {},
+        }
+    elif stream['network'] == 'xhttp':
+        stream['xhttpSettings'] = {
+            'path': query_value(query, 'path', '/'),
+            'host': query_value(query, 'host', parsed.hostname or ''),
+            'mode': query_value(query, 'mode', 'auto'),
         }
     return {
         'log': {'loglevel': 'warning'},
@@ -449,30 +549,49 @@ def run_protocol_canary() -> LayerResult:
     xray_path = Path(settings.SPECIAL_MONITOR_XRAY_PATH)
     if not xray_path.is_file() or not os.access(xray_path, os.X_OK):
         return LayerResult(layer='l2', ok=False, error_class='xray_not_configured')
+    required = getattr(settings, 'SPECIAL_MONITOR_REQUIRED_TRANSPORTS', ['tcp', 'xhttp', 'grpc'])
+    if (not isinstance(required, list) or not required
+            or any(item not in {'tcp', 'xhttp', 'grpc', 'ws'} for item in required)
+            or len(set(required)) != len(required)):
+        return LayerResult(
+            layer='l2', ok=False, error_class='not_configured',
+            details={'status': 'invalid_required_transports'})
     try:
         user_vpn = UserVPN.objects.select_related('server').get(pk=settings.SPECIAL_MONITOR_CANARY_USER_VPN_ID)
         subscription_url = asyncio.run(get_canary_subscription(user_vpn))
-        subscription_link = fetch_subscription_entry(subscription_url, str(user_vpn.vpn_uuid))
-        # Reality anti-replay can cause flakes on low-latency paths; retry up to 3 times.
-        subscription_ok = any(run_vless(subscription_link, xray_path, expected_egress) for _ in range(3))
-        # The historical ``vpn_key`` is the RU relay link for every record. That
-        # path is intentionally no longer mandatory, so using it as the second
-        # half of L2 kept the whole product red after the CDN split. Verify a
-        # different current VLESS line from the same rendered subscription
-        # instead: this still proves two real data-plane paths without pinning
-        # monitoring to a retired legacy field.
-        secondary_link = fetch_subscription_entry(
-            subscription_url, str(user_vpn.vpn_uuid), excluded=subscription_link,
-            excluded_hosts={urllib.parse.urlsplit(user_vpn.vpn_key).hostname or ''},
-            allowed_networks={'tcp', 'grpc'})
-        direct_ok = any(run_vless(secondary_link, xray_path, expected_egress) for _ in range(3))
+        entries = fetch_subscription_entries(subscription_url, str(user_vpn.vpn_uuid))
+        by_network = {}
+        for link in entries:
+            network = query_value(urllib.parse.parse_qs(urllib.parse.urlsplit(link).query), 'type', 'tcp')
+            by_network.setdefault(network, link)
+        if any(network not in by_network for network in required):
+            return LayerResult(
+                layer='l2', ok=False, error_class='canary_transport_missing',
+                details={'transports': {network: network in by_network for network in required}})
+        transport_results = {
+            network: any(run_vless(by_network[network], xray_path, expected_egress) for _ in range(3))
+            for network in required
+        }
+        relay_ok = None
+        if getattr(settings, 'SPECIAL_MONITOR_RELAY_ENABLED', False):
+            relay_ids = getattr(settings, 'SUBSCRIPTION_CANARY_RELAY_TEST_USER_IDS', [])
+            if relay_ids != [801]:
+                return LayerResult(
+                    layer='l2', ok=False, error_class='relay_not_configured', immediate=True,
+                    details={'transports': transport_results, 'relay_e2e': False})
+            relay_user = UserVPN.objects.select_related('server').get(pk=relay_ids[0])
+            params = _get_params(relay_user.server.id, relay_user.server.inbound_id)
+            relay_link = _canary_relay_link(relay_user, params)
+            relay_ok = bool(relay_link) and any(
+                run_vless(relay_link, xray_path, expected_egress) for _ in range(3))
     except Exception:
         return LayerResult(layer='l2', ok=False, error_class='canary_protocol')
+    ok = all(transport_results.values()) and relay_ok is not False
     return LayerResult(
         layer='l2',
-        ok=subscription_ok and direct_ok,
-        error_class=None if subscription_ok and direct_ok else 'canary_protocol',
-        details={'subscription_e2e': subscription_ok, 'direct_legacy_e2e': direct_ok},
+        ok=ok,
+        error_class=None if ok else 'canary_protocol',
+        details={'transports': transport_results, 'relay_e2e': relay_ok},
     )
 
 

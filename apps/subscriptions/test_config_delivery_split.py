@@ -129,4 +129,29 @@ class PerUserRelayDocumentTests(TestCase):
         self.assertFalse(any(urlsplit(link).hostname == '201.34.132.118'
                              for link in ordinary_links))
         self.assertFalse(any('белые списки' in unquote(urlsplit(link).fragment)
-                             for link in ordinary_links))
+                            for link in ordinary_links))
+
+    @patch('apps.subscriptions.views._get_params', return_value={
+        'port': 8443, 'public_key': 'key', 'server_name': 'example.test',
+        'short_ids': ['aabb'], 'network': 'tcp', 'security': 'reality',
+        'fingerprint': 'chrome', 'service_name': '', 'path': '', 'host': '',
+    })
+    @patch('apps.subscriptions.views.httpx.get')
+    def test_panel_relay_is_not_duplicated_for_canary(self, get, _params):
+        get.return_value = httpx.Response(
+            200,
+            content=base64.b64encode(
+                ('\n'.join((_DIRECT, _RELAY, _XHTTP, _GRPC)) + '\n').encode()
+            ),
+            request=httpx.Request('GET', 'https://panel.test'),
+        )
+
+        response = subscription_proxy(
+            RequestFactory().get('/sub/canary'), self.canary.sub_id
+        )
+        links = base64.b64decode(response.content).decode().splitlines()
+
+        self.assertEqual(
+            sum(urlsplit(link).hostname == '201.34.132.118' for link in links),
+            1,
+        )

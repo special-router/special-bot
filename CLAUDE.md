@@ -95,6 +95,7 @@ caught a failure that the local run could not — see
 | A user cannot connect | [`docs/INBOUND-DIAGNOSTICS-SPEC.md`](docs/INBOUND-DIAGNOSTICS-SPEC.md) (design only, not built) |
 | How do I add another provider's endpoints to a subscription? | [`docs/MIRROR-INBOUNDS-RUNBOOK.md`](docs/MIRROR-INBOUNDS-RUNBOOK.md) |
 | What does a provider's document actually contain, and how much of it works? | [`docs/MIRROR-PROVIDER-AUDIT.md`](docs/MIRROR-PROVIDER-AUDIT.md) |
+| What is the provider-aggregator target architecture? | [`docs/PROVIDER-AGGREGATOR-ARCHITECTURE.md`](docs/PROVIDER-AGGREGATOR-ARCHITECTURE.md) |
 
 ## What this repository cannot tell you
 

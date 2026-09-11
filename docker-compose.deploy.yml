@@ -51,6 +51,9 @@ services:
       DJANGO_SETTINGS_MODULE: bot.settings
       RUN_MIGRATIONS: "false"
       SPECIAL_MONITOR_XRAY_PATH: /usr/local/bin/xray
+      SUBSCRIPTION_BACKUP_SECRET_FILE: /run/secrets/subscription-backup.json
+    volumes:
+      - ${SUBSCRIPTION_BACKUP_SECRET_HOST_PATH:-/dev/null}:/run/secrets/subscription-backup.json:ro
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true

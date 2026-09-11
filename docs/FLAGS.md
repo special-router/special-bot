@@ -112,12 +112,13 @@ environment; they come from a mode-0600 JSON file on the host.
 | `SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED` | bool | `False` | **`true`** | Master gate for third-party endpoints in a subscription. |
 | `SUBSCRIPTION_BACKUP_TEST_USER_IDS` | json | `[]` | `[801]`, inert | Allowlist of `UserVPN.id` during rollout. |
 | `SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED` | bool | `False` | **`true`** | Every subscription receives third-party endpoints, and `SUBSCRIPTION_BACKUP_TEST_USER_IDS` stops mattering. Full rollout is its own state because an allowlist listing today's customers silently excludes tomorrow's — the day nobody remembers to extend it, a new customer gets a shorter subscription than the person beside them and nothing reports it. |
-| `SUBSCRIPTION_BACKUP_SECRET_FILE` | str | empty | container path | Path to the JSON secret inside the container. Compose binds `/dev/null` when the host path is unset, and settings rejects that non-regular file. Only a regular mode-0600 file is accepted. |
+| `SUBSCRIPTION_BACKUP_SECRET_FILE` | str | empty | container path | Path to the legacy request-path mirror secret. Compose binds `/dev/null` when unset. It accepts `upstream_urls` or its older `adapter=subscription` manifest, never the separate `PROVIDER_SOURCE_SECRET_FILE` schema. |
 | `SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS` | json | `None` | one provider host | Exact DNS hostname allowlist. Absent permits a controlled rollout; present but malformed denies everything. |
 | `SUBSCRIPTION_BACKUP_CONNECT_TIMEOUT_SECONDS` | float | `3` | ? | Per-source connect timeout. |
 | `SUBSCRIPTION_BACKUP_READ_TIMEOUT_SECONDS` | float | `5` | ? | Per-source read timeout. |
 | `SUBSCRIPTION_BACKUP_RESPONSE_MAX_BYTES` | int | `262144` | ? | Per-source response cap. |
 | `SUBSCRIPTION_BACKUP_CACHE_TTL_SECONDS` | int | `300` | ? | Upstream cache TTL. |
+| `SUBSCRIPTION_BACKUP_STALE_IF_ERROR_SECONDS` | int | `0` | ? | Optional bounded in-memory last-known-good window after the fresh TTL expires, clamped to 0…86400. Used only when a refresh raises or returns an identity placeholder; an explicit empty/invalid document is never replaced with stale data. `0` preserves fail-closed behavior. The cache is process-local and disappears on restart. |
 | `SUBSCRIPTION_BACKUP_MAX_SOURCES` | int | `8` | ? | Maximum configured sources. |
 | `SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES` | int | `256` | ? | Cap across all sources. Raised from 128 because one real multi-region provider document carries roughly 80 servers, so two sources would have been truncated silently. |
 | `SUBSCRIPTION_BACKUP_AGGREGATE_MAX_BYTES` | int | `262144` | ? | Cap across all sources. |
@@ -139,6 +140,22 @@ environment; they come from a mode-0600 JSON file on the host.
 | `SUBSCRIPTION_BACKUP_LIVENESS_PRUNE_AFTER_SECONDS` | int | `86400` | ? | How long a `MirrorEndpointLiveness` row may go unrefreshed before `probe_mirror_liveness` deletes it, clamped to 7200…2592000. No separate "last seen in the document" field exists or is needed: `checked_at` is only ever set alongside a host being present in the provider's current document, so its age already answers that question. The probe runs every 30 minutes, so 24 hours is ~48 consecutive misses before a row disappears — long enough that a host rotated out of the document (not a transient source outage) is the only realistic cause. |
 | `SUBSCRIPTION_BACKUP_WHITELIST_SNI_SUFFIXES` | json | `[]` | **`[]`** | Reality SNIs an operator declares as whitelist camouflage, matched on domain labels (`x5.ru` accepts `id.x5.ru`, refuses `notx5.ru`). A matching endpoint renders as its own `<флаг> <страна> белые списки` line, outside `SUBSCRIPTION_BACKUP_MAX_ENTRIES_PER_REGION` and inside `SUBSCRIPTION_BACKUP_MAX_MIRROR_ENTRIES`, so it never displaces the region's ordinary server. **Never inferred from a tag** — `BRIDGE_*` outbounds are byte-identical twins of their plain counterparts, same address and same exit. The country stays the *exit* country: these are Russian ingress that exit in Russia. |
 
+## Provider aggregator ingestion
+
+This is the new out-of-band A-Service/VPNStar path. It writes quarantined
+canonical inventory and never fetches an upstream inside a customer request.
+
+| Setting | Type | Default | Prod | What it does |
+|---|---|---|---|---|
+| `PROVIDER_SOURCE_SECRET_FILE` | str | empty | disabled | Absolute path to the separate mode-0600 source manifest. Only the dedicated `provider_ingest` worker may receive it. |
+| `PROVIDER_FETCH_CONNECT_TIMEOUT_SECONDS` | float | `3` | ? | Per-address TCP/TLS connect ceiling inside the global fetch deadline. |
+| `PROVIDER_FETCH_READ_TIMEOUT_SECONDS` | float | `5` | ? | Maximum idle wait for each bounded response read. |
+| `PROVIDER_FETCH_DEADLINE_SECONDS` | float | `10` | ? | Absolute ceiling for DNS, TLS and the complete provider response. Clamped to 60 seconds. |
+| `PROVIDER_FETCH_MAX_BYTES` | int | `1048576` | ? | Maximum API or subscription response size; values above 1 MiB fail closed. |
+
+Both seeded providers remain disabled by default. See
+`docs/PROVIDER-INTEGRATION.md` before enabling ingestion or canary promotion.
+
 ## Internal same-origin transport canary
 
 Not a redundant mirror: every candidate is on the same NL origin.
@@ -152,14 +169,17 @@ Not a redundant mirror: every candidate is on the same NL origin.
 
 ## Monitoring
 
-`SPECIAL_MONITOR_ENABLED`, `SPECIAL_MONITOR_L2_ENABLED` and
-`SPECIAL_MONITOR_CHECKOUT_ENABLED` are read at import time to build
+`SPECIAL_MONITOR_ENABLED`, `SPECIAL_MONITOR_L2_ENABLED`,
+`SPECIAL_MONITOR_PROVIDER_ENABLED` and `SPECIAL_MONITOR_CHECKOUT_ENABLED` are read at import time to build
 `CELERY_BEAT_SCHEDULE`, so changing any of them needs a beat restart.
 
 | Setting | Type | Default | Prod | What it does |
 |---|---|---|---|---|
 | `SPECIAL_MONITOR_ENABLED` | bool | `False` | `true` | Schedules L0 (5 min), L1 (1 min) and Host capacity (5 min). |
-| `SPECIAL_MONITOR_L2_ENABLED` | bool | `False` | `true` | Additionally schedules the protected L2 protocol probe. Requires `SPECIAL_MONITOR_ENABLED`. |
+| `SPECIAL_MONITOR_L2_ENABLED` | bool | `False` | `true` | Additionally schedules the protected L2 protocol probe. It performs complete Xray handshakes and verifies egress for every transport in `SPECIAL_MONITOR_REQUIRED_TRANSPORTS`, rather than treating an open TCP port as healthy. Requires `SPECIAL_MONITOR_ENABLED`. |
+| `SPECIAL_MONITOR_REQUIRED_TRANSPORTS` | json | `["tcp","xhttp","grpc"]` | ? | Exact user-facing transports L2 must find and pass. Supported values are `tcp`, `xhttp`, `grpc`, `ws`; malformed, empty or duplicate lists fail closed. |
+| `SPECIAL_MONITOR_RELAY_ENABLED` | bool | `False` | `false` | Adds the strictly allowlisted relay canary to L2. Keep off for a retired relay; when enabled, missing canary metadata or a failed full tunnel makes L2 red. |
+| `SPECIAL_MONITOR_PROVIDER_ENABLED` | bool | `False` | `false` | Schedules a provider-inventory layer every five minutes and makes it mandatory for scale readiness. External endpoint delivery also requires this flag, so a forgotten monitor cannot reuse an old green state. It fails when any source is absent/rejected/unavailable, a run misses its deadline, a served transport is not probeable, liveness filtering is off, the source-set digest is stale, or any configured source has no fully tunnelled public egress. |
 | `SPECIAL_MONITOR_CHECKOUT_ENABLED` | bool | `False` | `false` | Additionally schedules the checkout layer every 15 min. Three verdicts, all kept in `details`: the tariff lookup the top-up handler makes before it can bill anyone (`tariff_missing`, `tariff_ambiguous`), one `create_invoice_link` against the live provider token, and the days-since-cash-in gap. Ours is blamed before the provider's. Requires `SPECIAL_MONITOR_ENABLED`. Off means the task records nothing at all, so no stale green state is left behind. |
 | `SPECIAL_MONITOR_CHECKOUT_TIMEOUT` | int | `15` | ? | Per-phase Bot API timeout in seconds; the probe's own deadline is twice this, because the per-phase timeouts cannot bound a call that stalls between phases and workers run `--pool=solo`. |
 | `SPECIAL_MONITOR_CHECKOUT_AMOUNT` | int | `10000` | ? | Face value of the probe invoice, in kopecks. Nobody pays the link, but the provider validates the amount when issuing it. Too small and the layer opens with `invoice_amount_rejected`, which means raise this number — not `provider_token_rejected`, which means the token on BOT is wrong. |
@@ -174,6 +194,7 @@ Not a redundant mirror: every candidate is on the same NL origin.
 | `SPECIAL_MONITOR_MIN_SWAP_MB` | int | `512` | ? | Expected swap. BOT has a persistent 1 GiB swapfile. |
 | `SPECIAL_MONITOR_MAX_LOAD_PER_CPU` | float | `4.0` | ? | Load ceiling per CPU. |
 | `SPECIAL_MONITOR_MAX_OOM_KILLS` | int | `0` | ? | Any kernel OOM kill is a failure. |
+| `SPECIAL_MONITOR_MAX_ROOT_DISK_PERCENT` | float | `85` | ? | Root filesystem usage at or above this percent makes the host layer red. BOT was already near 77% during the 2026-09-08 audit, so provider caches/probes must not grow without a disk guard. |
 | `SPECIAL_MONITOR_ENDPOINTS` | json | `[]` | set | L1 endpoint matrix — non-secret labels only. |
 | `SPECIAL_MONITOR_EXPECTED_INBOUNDS` | json | `[]` | set | L0 expected inbound properties. |
 | `SPECIAL_MONITOR_CANARY_USER_VPN_ID` | int | `0` | set | The single `UserVPN` used for L2. Zero fails L2 closed as `not_configured`. |

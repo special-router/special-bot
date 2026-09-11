@@ -34,12 +34,19 @@ from apps.monitoring.probes import (
     run_checkout_probe,
     run_control_plane_probe,
     run_host_capacity_probe,
+    run_provider_inventory_probe,
     run_protocol_canary,
     run_regional_probe,
 )
-from apps.monitoring.tasks import _run, _notify_transition, run_checkout_monitor
+from apps.monitoring.tasks import (
+    _notify_transition,
+    _run,
+    run_checkout_monitor,
+    run_provider_inventory_monitor,
+)
 from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
 from apps.servers.models import TariffServer
+from apps.subscriptions.views import _backup_source_set_digest
 from apps.users.models import TelegramUser
 
 
@@ -86,11 +93,13 @@ _BASE_SCHEDULE = {
 class BeatScheduleTests(TestCase):
     project_root = Path(__file__).resolve().parents[2]
 
-    def _schedule_keys(self, *, monitor_enabled: bool, l2_enabled: bool, checkout_enabled: bool = False) -> set[str]:
+    def _schedule_keys(self, *, monitor_enabled: bool, l2_enabled: bool,
+                       checkout_enabled: bool = False, provider_enabled: bool = False) -> set[str]:
         environment = os.environ | {
             'SPECIAL_MONITOR_ENABLED': str(monitor_enabled).lower(),
             'SPECIAL_MONITOR_L2_ENABLED': str(l2_enabled).lower(),
             'SPECIAL_MONITOR_CHECKOUT_ENABLED': str(checkout_enabled).lower(),
+            'SPECIAL_MONITOR_PROVIDER_ENABLED': str(provider_enabled).lower(),
         }
         result = subprocess.run(
             [
@@ -156,6 +165,19 @@ class BeatScheduleTests(TestCase):
             self._schedule_keys(monitor_enabled=True, l2_enabled=False) | {'special_monitor_checkout'},
         )
 
+    def test_provider_schedule_requires_both_monitoring_flags(self):
+        monitoring_off = self._schedule_keys(
+            monitor_enabled=False, l2_enabled=False, provider_enabled=True)
+        monitoring_on = self._schedule_keys(
+            monitor_enabled=True, l2_enabled=False, provider_enabled=True)
+
+        self.assertNotIn('special_monitor_provider', monitoring_off)
+        self.assertEqual(
+            monitoring_on,
+            self._schedule_keys(monitor_enabled=True, l2_enabled=False)
+            | {'special_monitor_provider'},
+        )
+
 
 class ControlPlaneProbeTests(TestCase):
     @override_settings(
@@ -214,7 +236,10 @@ class HostCapacityProbeTests(TestCase):
         SPECIAL_MONITOR_MIN_SWAP_MB=512,
         SPECIAL_MONITOR_MAX_LOAD_PER_CPU=4.0,
         SPECIAL_MONITOR_MAX_OOM_KILLS=0,
+        SPECIAL_MONITOR_MAX_ROOT_DISK_PERCENT=85,
     )
+    @patch('apps.monitoring.probes.shutil.disk_usage',
+           return_value=SimpleNamespace(total=100, used=40))
     @patch('apps.monitoring.probes._read_oom_kill_count', return_value=0)
     @patch('apps.monitoring.probes.os.cpu_count', return_value=1)
     @patch('apps.monitoring.probes.os.getloadavg', return_value=(0.5, 0.5, 0.5))
@@ -235,7 +260,10 @@ class HostCapacityProbeTests(TestCase):
         SPECIAL_MONITOR_MIN_SWAP_MB=512,
         SPECIAL_MONITOR_MAX_LOAD_PER_CPU=4.0,
         SPECIAL_MONITOR_MAX_OOM_KILLS=0,
+        SPECIAL_MONITOR_MAX_ROOT_DISK_PERCENT=85,
     )
+    @patch('apps.monitoring.probes.shutil.disk_usage',
+           return_value=SimpleNamespace(total=100, used=40))
     @patch('apps.monitoring.probes._read_oom_kill_count', return_value=1)
     @patch('apps.monitoring.probes.os.cpu_count', return_value=1)
     @patch('apps.monitoring.probes.os.getloadavg', return_value=(0.5, 0.5, 0.5))
@@ -249,6 +277,30 @@ class HostCapacityProbeTests(TestCase):
         self.assertFalse(result.ok)
         self.assertTrue(result.immediate)
         self.assertEqual(result.error_class, 'oom_kill')
+
+    @override_settings(
+        SPECIAL_MONITOR_MIN_AVAILABLE_MB=128,
+        SPECIAL_MONITOR_MIN_SWAP_MB=512,
+        SPECIAL_MONITOR_MAX_LOAD_PER_CPU=4.0,
+        SPECIAL_MONITOR_MAX_OOM_KILLS=0,
+        SPECIAL_MONITOR_MAX_ROOT_DISK_PERCENT=85,
+    )
+    @patch('apps.monitoring.probes.shutil.disk_usage',
+           return_value=SimpleNamespace(total=100, used=90))
+    @patch('apps.monitoring.probes._read_oom_kill_count', return_value=0)
+    @patch('apps.monitoring.probes.os.cpu_count', return_value=1)
+    @patch('apps.monitoring.probes.os.getloadavg', return_value=(0.5, 0.5, 0.5))
+    @patch(
+        'apps.monitoring.probes._read_meminfo',
+        return_value={'MemAvailable': 256 * 1024, 'SwapTotal': 1024 * 1024,
+                      'SwapFree': 900 * 1024},
+    )
+    def test_high_root_disk_usage_is_reported(self, *_mocks):
+        result = run_host_capacity_probe()
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_class, 'disk_high')
+        self.assertEqual(result.details['root_disk_percent'], 90.0)
 
 
 class XrayConfigTests(TestCase):
@@ -277,6 +329,133 @@ class XrayConfigTests(TestCase):
             stream['tlsSettings'],
             {'serverName': 'tls.invalid', 'fingerprint': 'chrome', 'allowInsecure': False},
         )
+
+    def test_xhttp_link_preserves_path_host_and_mode(self):
+        config = build_xray_config(
+            'vless://fixture@example.invalid:443?type=xhttp&security=tls&'
+            'sni=tls.invalid&path=%2Fassets&host=edge.invalid&mode=auto',
+            32001,
+        )
+
+        self.assertEqual(
+            config['outbounds'][0]['streamSettings']['xhttpSettings'],
+            {'path': '/assets', 'host': 'edge.invalid', 'mode': 'auto'},
+        )
+
+
+class ProviderInventoryProbeTests(TestCase):
+    @override_settings(SPECIAL_MONITOR_PROVIDER_ENABLED=False)
+    def test_disabled_provider_monitor_reads_no_inventory(self):
+        result = run_provider_inventory_probe()
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.details, {'status': 'disabled'})
+
+    @override_settings(
+        SPECIAL_MONITOR_PROVIDER_ENABLED=True,
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://provider.example/sub/token'],
+        SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS=[],
+        SUBSCRIPTION_BACKUP_LIVENESS_ENABLED=True,
+    )
+    def test_empty_allowlist_is_immediate_not_ready(self):
+        result = run_provider_inventory_probe()
+
+        self.assertFalse(result.ok)
+        self.assertTrue(result.immediate)
+        self.assertEqual(result.error_class, 'provider_source_invalid')
+
+    @override_settings(
+        SPECIAL_MONITOR_PROVIDER_ENABLED=True,
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://provider.example/sub/token'],
+        SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS=['provider.example'],
+        SUBSCRIPTION_BACKUP_LIVENESS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_LIVENESS_MAX_AGE_SECONDS=3600,
+    )
+    def test_stale_inventory_is_immediate_not_ready(self):
+        state = MonitorState.objects.create(
+            layer='provsrc', last_ok=True,
+            details={
+                'status': 'ready',
+                'source_set_sha256': _backup_source_set_digest(
+                    ['https://provider.example/sub/token']),
+                'probed': 1,
+                'alive': 1,
+            },
+        )
+        MonitorState.objects.filter(pk=state.pk).update(
+            checked_at=timezone.now() - timedelta(hours=2))
+
+        result = run_provider_inventory_probe()
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_class, 'provider_inventory_stale')
+
+    @override_settings(
+        SPECIAL_MONITOR_PROVIDER_ENABLED=True,
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://provider.example/sub/token'],
+        SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS=['provider.example'],
+        SUBSCRIPTION_BACKUP_LIVENESS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_LIVENESS_MAX_AGE_SECONDS=3600,
+    )
+    def test_fresh_live_inventory_is_ready(self):
+        MonitorState.objects.create(
+            layer='provsrc', last_ok=True,
+            details={
+                'status': 'ready',
+                'source_set_sha256': _backup_source_set_digest(
+                    ['https://provider.example/sub/token']),
+                'targets': 2,
+                'probed': 2,
+                'alive': 1,
+                'loaded_sources': 1,
+                'ready_sources': 1,
+                'unprobeable_sources': 0,
+            },
+        )
+
+        result = run_provider_inventory_probe()
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.details['fresh_alive'], 1)
+
+    @override_settings(
+        SPECIAL_MONITOR_PROVIDER_ENABLED=True,
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://provider.example/sub/token'],
+        SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS=['provider.example'],
+        SUBSCRIPTION_BACKUP_LIVENESS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_LIVENESS_MAX_AGE_SECONDS=3600,
+    )
+    def test_partial_probe_run_is_not_ready(self):
+        MonitorState.objects.create(
+            layer='provsrc', last_ok=True,
+            details={
+                'status': 'ready',
+                'source_set_sha256': _backup_source_set_digest(
+                    ['https://provider.example/sub/token']),
+                'targets': 2,
+                'probed': 1,
+                'alive': 1,
+                'loaded_sources': 1,
+                'ready_sources': 1,
+                'unprobeable_sources': 0,
+            },
+        )
+
+        result = run_provider_inventory_probe()
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_class, 'provider_inventory_unavailable')
+
+
+class ProviderInventoryMonitorTaskTests(TestCase):
+    @override_settings(SPECIAL_MONITOR_PROVIDER_ENABLED=False)
+    @patch('apps.monitoring.tasks.run_provider_inventory_probe')
+    def test_disabled_flag_records_no_stale_green_state(self, probe):
+        result = run_provider_inventory_monitor()
+
+        probe.assert_not_called()
+        self.assertTrue(result['skipped'])
+        self.assertFalse(MonitorState.objects.filter(layer='provider').exists())
 
 
 class ProtocolCanaryConfigurationTests(TestCase):
@@ -311,6 +490,40 @@ class ProtocolCanaryConfigurationTests(TestCase):
 
         self.assertEqual(result.error_class, 'not_configured')
         self.assertEqual(result.details, {'status': 'invalid_health_url'})
+
+    @override_settings(
+        SPECIAL_MONITOR_L2_ENABLED=True,
+        SPECIAL_MONITOR_EXPECTED_EGRESS='192.0.2.1',
+        SPECIAL_MONITOR_HEALTH_URL='https://api.ipify.org',
+        SPECIAL_MONITOR_XRAY_PATH='/usr/local/bin/xray',
+        SPECIAL_MONITOR_REQUIRED_TRANSPORTS=['tcp', 'xhttp', 'grpc'],
+        SPECIAL_MONITOR_RELAY_ENABLED=False,
+        SPECIAL_MONITOR_CANARY_USER_VPN_ID=42,
+    )
+    @patch('apps.monitoring.probes.run_vless', return_value=True)
+    @patch(
+        'apps.monitoring.probes.fetch_subscription_entries',
+        return_value=[
+            'vless://fixture@node.example:443?type=tcp&security=reality',
+            'vless://fixture@node.example:443?type=xhttp&security=tls',
+            'vless://fixture@node.example:80?type=grpc&security=reality',
+        ],
+    )
+    @patch('apps.monitoring.probes.get_canary_subscription', new_callable=AsyncMock,
+           return_value='https://config.example/sub/canary')
+    @patch('apps.monitoring.probes.UserVPN.objects.select_related')
+    @patch('apps.monitoring.probes.os.access', return_value=True)
+    @patch('apps.monitoring.probes.Path.is_file', return_value=True)
+    def test_every_required_transport_gets_a_full_tunnel_probe(
+            self, _is_file, _access, select_related, _subscription, _entries, run_vless_mock):
+        select_related.return_value.get.return_value = SimpleNamespace(vpn_uuid='fixture')
+
+        result = run_protocol_canary()
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.details['transports'], {'tcp': True, 'xhttp': True, 'grpc': True})
+        self.assertIsNone(result.details['relay_e2e'])
+        self.assertEqual(run_vless_mock.call_count, 3)
 
 
 class SubscriptionEntrySelectionTests(TestCase):

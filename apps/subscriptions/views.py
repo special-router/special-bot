@@ -27,7 +27,7 @@ import subprocess
 import threading
 import time
 from functools import lru_cache
-from urllib.parse import parse_qs, quote, unquote, unquote_to_bytes, urlencode, urlsplit
+from urllib.parse import parse_qs, parse_qsl, quote, unquote, unquote_to_bytes, urlencode, urlsplit
 
 import httpx
 from django.http import HttpResponse, HttpResponseNotFound
@@ -1463,7 +1463,10 @@ def subscription_proxy(request, sub_id: str):
         grpc_link = _grpc_link(uuid_str, direct_host)
         if grpc_link:
             links.append(grpc_link)
-    if canary_relay_link and canary_relay_link not in links:
+    if canary_relay_link and not any(
+            urlsplit(link).hostname == urlsplit(canary_relay_link).hostname
+            and urlsplit(link).port == urlsplit(canary_relay_link).port
+            for link in links):
         links.append(canary_relay_link)
     # 4) Same-origin internal transport canary. Every candidate independently
     # stable-reads its own live inbound and silently omits on any uncertainty.
@@ -1638,7 +1641,7 @@ def _is_backup_test_user(user_vpn_id: int) -> bool:
 # subscription refresh without bound. Cache keys are digests, never bearer URLs.
 _BACKUP_RESPONSE_HARD_MAX_BYTES = 1024 * 1024
 _BACKUP_CACHE_HARD_MAX_ENTRIES = 32
-_BACKUP_CACHE: dict[str, tuple[float, list[str]]] = {}
+_BACKUP_CACHE: dict[str, tuple[float, float, list[str]]] = {}
 _BACKUP_CACHE_LOCK = threading.RLock()
 _BACKUP_FETCHING: dict[str, threading.Event] = {}
 _BACKUP_CACHE_GENERATION = 0
@@ -1711,6 +1714,12 @@ def _backup_cache_key(url: str) -> str:
     return hashlib.sha256(url.encode('utf-8')).hexdigest()
 
 
+def _backup_source_set_digest(urls: list[str]) -> str:
+    """Identify one ordered source set without storing or logging bearer URLs."""
+    return hashlib.sha256(
+        '\x00'.join(_backup_cache_key(url) for url in urls).encode('ascii')).hexdigest()
+
+
 def _clear_backup_cache() -> None:
     global _BACKUP_CACHE_GENERATION
     with _BACKUP_CACHE_LOCK:
@@ -1722,8 +1731,8 @@ def _clear_backup_cache() -> None:
 def _evict_backup_cache(active_keys: set[str]) -> None:
     now = time.monotonic()
     with _BACKUP_CACHE_LOCK:
-        for key, (expiry, _links) in list(_BACKUP_CACHE.items()):
-            if expiry <= now or key not in active_keys:
+        for key, (_fresh_until, stale_until, _links) in list(_BACKUP_CACHE.items()):
+            if stale_until <= now or key not in active_keys:
                 _BACKUP_CACHE.pop(key, None)
         while len(_BACKUP_CACHE) > _BACKUP_CACHE_HARD_MAX_ENTRIES:
             _BACKUP_CACHE.pop(next(iter(_BACKUP_CACHE)), None)
@@ -1737,16 +1746,17 @@ def _evict_backup_cache(active_keys: set[str]) -> None:
 
 
 def _cached_upstream_links(url: str) -> list[str]:
-    """Fetch one upstream and cache only a current, validated result."""
+    """Fetch one upstream and retain a bounded in-memory last-known-good."""
     from django.conf import settings
     key = _backup_cache_key(url)
     now = time.monotonic()
     with _BACKUP_CACHE_LOCK:
         cached = _BACKUP_CACHE.get(key)
         if cached and cached[0] > now:
-            return cached[1]
-        if cached:
+            return cached[2]
+        if cached and cached[1] <= now:
             _BACKUP_CACHE.pop(key, None)
+            cached = None
         in_flight = _BACKUP_FETCHING.get(key)
         if in_flight is None:
             in_flight = threading.Event()
@@ -1760,20 +1770,27 @@ def _cached_upstream_links(url: str) -> list[str]:
         in_flight.wait()
         with _BACKUP_CACHE_LOCK:
             cached = _BACKUP_CACHE.get(key)
-            return cached[1] if cached and cached[0] > time.monotonic() else []
+            now = time.monotonic()
+            return cached[2] if cached and cached[1] > now else []
 
     try:
         response_headers, payload = _fetch_upstream_payload(url)
         links = _sanitize_upstream_payload(payload, response_headers)
         if not links:
+            with _BACKUP_CACHE_LOCK:
+                _BACKUP_CACHE.pop(key, None)
             return []
         ttl = _bounded_number(getattr(settings, 'SUBSCRIPTION_BACKUP_CACHE_TTL_SECONDS', 300),
                               default=300, lower=1, upper=3600)
+        stale_if_error = _bounded_number(
+            getattr(settings, 'SUBSCRIPTION_BACKUP_STALE_IF_ERROR_SECONDS', 0),
+            default=0, lower=0, upper=86400)
         # Start TTL only after all network and payload validation has succeeded.
         with _BACKUP_CACHE_LOCK:
             if generation != _BACKUP_CACHE_GENERATION:
                 return []
-            _BACKUP_CACHE[key] = (time.monotonic() + ttl, links)
+            fresh_until = time.monotonic() + ttl
+            _BACKUP_CACHE[key] = (fresh_until, fresh_until + stale_if_error, links)
             active_keys = set(_BACKUP_CACHE)
         _evict_backup_cache(active_keys)
         return links
@@ -1784,9 +1801,13 @@ def _cached_upstream_links(url: str) -> list[str]:
             'subscription backup source %s served a client-identification placeholder '
             'instead of a configuration; check the configured client identity',
             key[:12])
-        return []
+        with _BACKUP_CACHE_LOCK:
+            cached = _BACKUP_CACHE.get(key)
+            return cached[2] if cached and cached[1] > time.monotonic() else []
     except (ValueError, UnicodeError, OSError):
-        return []
+        with _BACKUP_CACHE_LOCK:
+            cached = _BACKUP_CACHE.get(key)
+            return cached[2] if cached and cached[1] > time.monotonic() else []
     finally:
         with _BACKUP_CACHE_LOCK:
             _BACKUP_FETCHING.pop(key, None)
@@ -2468,7 +2489,7 @@ def _sanitize_upstream_payload(payload: bytes, headers: dict[str, str] | None = 
     links = []
     for raw_line in decoded.splitlines():
         if raw_line.startswith(b'vless://'):
-            if not _is_sentinel_vless_line(raw_line):
+            if _valid_raw_vless_line(raw_line) and not _is_sentinel_vless_line(raw_line):
                 links.append(raw_line.decode('utf-8'))
             continue
         if raw_line.startswith((b'hy2://', b'hysteria2://')) and _valid_raw_hysteria_line(raw_line):
@@ -2476,20 +2497,77 @@ def _sanitize_upstream_payload(payload: bytes, headers: dict[str, str] | None = 
     return links
 
 
+def _valid_raw_vless_line(raw_line: bytes) -> bool:
+    """Validate core VLESS fields without rewriting provider-owned bytes."""
+    if len(raw_line) > 4096:
+        return False
+    try:
+        line = raw_line.decode('utf-8')
+        if any(character in line for character in '\r\n\t '):
+            return False
+        parts = urlsplit(line)
+        query = _strict_raw_uri_query(parts.query)
+        if query is None:
+            return False
+        port = parts.port
+    except (UnicodeDecodeError, ValueError):
+        return False
+    if (parts.scheme != 'vless' or not parts.username or parts.password is not None
+            or not parts.hostname or port is None or not _safe_endpoint_host(parts.hostname)):
+        return False
+    if any(key in query for key in {
+            'allowinsecure', 'allow_insecure', 'insecure', 'skip-cert-verify', 'tlsinsecure'}):
+        return False
+    security = query.get('security', 'none').casefold()
+    if security not in _MIRROR_SECURE_TRANSPORTS and not (
+            security == 'none' and _plaintext_endpoints_allowed()):
+        return False
+    network = query.get('type', 'tcp').casefold()
+    if network not in {'tcp', 'grpc', 'ws', 'xhttp'}:
+        return False
+    if query.get('encryption', 'none').casefold() != 'none':
+        return False
+    if network == 'grpc' and query.get('mode', '').casefold() not in {'', 'gun', 'multi'}:
+        return False
+    if security == 'reality' and (not query.get('pbk') or not query.get('sni')):
+        return False
+    if security == 'tls' and not query.get('sni'):
+        return False
+    protected_values = (parts.username, parts.hostname, query.get('sni', ''), query.get('pbk', ''))
+    return not any(character in value for value in protected_values for character in '\r\n\t #?/@')
+
+
 def _valid_raw_hysteria_line(raw_line: bytes) -> bool:
     """Accept one complete Hysteria2 URI without normalising bearer bytes."""
     try:
         line = raw_line.decode('utf-8')
         parts = urlsplit(line)
-        query = {key: values[0] for key, values in parse_qs(parts.query).items()}
+        query = _strict_raw_uri_query(parts.query)
+        if query is None:
+            return False
     except (UnicodeDecodeError, ValueError):
         return False
     if parts.scheme not in ('hy2', 'hysteria2'):
         return False
-    if not parts.username or not parts.hostname or parts.port is None or not query.get('sni'):
+    if (not parts.username or not parts.hostname or parts.port is None or not query.get('sni')
+            or not _safe_endpoint_host(parts.hostname)):
+        return False
+    if any(key in query for key in {
+            'allowinsecure', 'allow_insecure', 'insecure', 'skip-cert-verify', 'tlsinsecure'}):
         return False
     return not any(character in value for value in (parts.username, parts.hostname, query['sni'])
                    for character in ' \r\n\t#?/@')
+
+
+def _strict_raw_uri_query(raw_query: str) -> dict[str, str] | None:
+    """Return a case-insensitive single-value query, rejecting parser ambiguity."""
+    query = {}
+    for key, value in parse_qsl(raw_query, keep_blank_values=True):
+        normalized = key.casefold()
+        if not normalized or normalized in query:
+            return None
+        query[normalized] = value
+    return query
 
 
 def _decode_subscription_payload(payload: bytes) -> bytes:

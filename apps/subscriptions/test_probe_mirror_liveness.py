@@ -7,7 +7,10 @@ from django.core.management.base import CommandError
 from django.test import override_settings, TestCase
 from django.utils import timezone
 
-from apps.subscriptions.management.commands.probe_mirror_liveness import Command
+from apps.monitoring.models import MonitorState
+from apps.subscriptions.management.commands.probe_mirror_liveness import (
+    Command, _fetch_through_socks, _xray_config,
+)
 from apps.subscriptions.models import MirrorEndpointLiveness
 
 
@@ -61,6 +64,16 @@ class ProbeMirrorLivenessTests(TestCase):
         self.assertEqual(MirrorEndpointLiveness.objects.count(), 2)
         self.assertTrue(MirrorEndpointLiveness.objects.get(host='ru-2.example', port=443).alive)
 
+    def test_shared_address_is_dead_when_any_distinct_configuration_fails(self):
+        self.run_command([
+            ('shared.example', 443, True, ''),
+            ('shared.example', 443, False, 'socks_connect'),
+        ])
+
+        verdict = MirrorEndpointLiveness.objects.get(host='shared.example', port=443)
+        self.assertFalse(verdict.alive)
+        self.assertEqual(verdict.error_class, 'socks_connect')
+
     def test_a_verdict_is_stamped_with_the_configured_probe_origin(self):
         with override_settings(SUBSCRIPTION_BACKUP_LIVENESS_PROBE_ORIGIN='nl-debug'):
             self.run_command([('ru-1.example', 443, True, '')])
@@ -96,6 +109,169 @@ class ProbeMirrorLivenessTests(TestCase):
 
         self.assertIn('no configured source', output.getvalue())
         self.assertEqual(MirrorEndpointLiveness.objects.count(), 0)
+
+    def test_required_empty_inventory_fails_instead_of_reporting_success(self):
+        with override_settings(
+                SUBSCRIPTION_BACKUP_UPSTREAM_URLS=[],
+                SPECIAL_MONITOR_PROVIDER_ENABLED=True):
+            with self.assertRaisesRegex(CommandError, 'inventory is required'):
+                call_command('probe_mirror_liveness', stdout=io.StringIO())
+
+        self.assertEqual(MirrorEndpointLiveness.objects.count(), 0)
+        source_state = MonitorState.objects.get(layer='provsrc')
+        self.assertEqual(source_state.details['status'], 'empty')
+        self.assertNotIn('https://', repr(source_state.details))
+
+    def test_required_inventory_with_no_live_endpoint_fails_without_writing(self):
+        with override_settings(
+                SPECIAL_MONITOR_PROVIDER_ENABLED=True,
+                SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://provider.example/sub/token'],
+                SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS=['provider.example']):
+            with self.assertRaisesRegex(CommandError, 'no live endpoint'):
+                self.run_command([('ru-1.example', 443, False, 'timeout')])
+
+        self.assertEqual(MirrorEndpointLiveness.objects.count(), 0)
+        self.assertEqual(MonitorState.objects.get(layer='provsrc').details['status'], 'unavailable')
+
+    def test_required_success_records_matching_run_state(self):
+        with override_settings(
+                SPECIAL_MONITOR_PROVIDER_ENABLED=True,
+                SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://provider.example/sub/token'],
+                SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS=['provider.example']):
+            self.run_command([('ru-1.example', 443, True, '')])
+
+        source_state = MonitorState.objects.get(layer='provsrc')
+        self.assertTrue(source_state.last_ok)
+        self.assertEqual(source_state.details['status'], 'ready')
+        self.assertEqual(source_state.details['alive'], 1)
+        self.assertEqual(source_state.details['loaded_sources'], 1)
+        self.assertEqual(source_state.details['ready_sources'], 1)
+        self.assertNotIn('provider.example', repr(source_state.details))
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://provider.example/sub/token'],
+        SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS=['provider.example'],
+    )
+    @patch('apps.subscriptions.management.commands.probe_mirror_liveness._fetch_upstream_payload')
+    def test_raw_vless_source_is_normalized_for_full_tunnel_probe(self, fetch):
+        fetch.return_value = ({}, (
+            b'vless://11111111-2222-3333-4444-555555555555@edge.example:443?'
+            b'type=xhttp&security=tls&sni=cover.example&path=%2Fapi&host=cdn.example'))
+
+        command = Command()
+        targets = command._targets()
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]['network'], 'xhttp')
+        self.assertEqual(targets[0]['xhttp_host'], 'cdn.example')
+        self.assertEqual(command._source_status, {'loaded': 1, 'unprobeable': 0})
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://provider.example/sub/token'],
+        SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS=['provider.example'],
+    )
+    @patch('apps.subscriptions.management.commands.probe_mirror_liveness._fetch_upstream_payload')
+    def test_served_raw_hysteria_marks_source_unprobeable(self, fetch):
+        fetch.return_value = ({}, (
+            b'vless://11111111-2222-3333-4444-555555555555@edge.example:443?'
+            b'type=tcp&security=tls&sni=cover.example\n'
+            b'hy2://secret@edge.example:443/?sni=cover.example'))
+
+        command = Command()
+        self.assertEqual(len(command._targets()), 1)
+        self.assertEqual(command._source_status, {'loaded': 1, 'unprobeable': 1})
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://provider.example/sub/token'],
+        SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS=['provider.example'],
+    )
+    @patch('apps.subscriptions.management.commands.probe_mirror_liveness._fetch_upstream_payload')
+    def test_opaque_raw_parameter_is_served_but_not_claimed_probeable(self, fetch):
+        fetch.return_value = ({}, (
+            b'vless://11111111-2222-3333-4444-555555555555@edge.example:443?'
+            b'type=tcp&security=tls&sni=cover.example&provider-extension=value'))
+
+        command = Command()
+        self.assertEqual(command._targets(), [])
+        self.assertEqual(command._source_status, {'loaded': 0, 'unprobeable': 1})
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=[
+            'https://one.example/sub/token', 'https://two.example/sub/token'],
+        SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS=['one.example', 'two.example'],
+    )
+    @patch('apps.subscriptions.management.commands.probe_mirror_liveness._fetch_upstream_payload')
+    def test_partial_source_fetch_is_visible_to_readiness(self, fetch):
+        fetch.side_effect = [
+            ({}, b'vless://11111111-2222-3333-4444-555555555555@edge.example:443?'
+                  b'type=tcp&security=tls&sni=cover.example'),
+            OSError('source unavailable'),
+        ]
+
+        command = Command()
+        self.assertEqual(len(command._targets()), 1)
+        self.assertEqual(command._source_status, {'loaded': 1, 'unprobeable': 0})
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=[
+            'https://one.example/sub/token', 'https://two.example/sub/token'],
+        SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS=['one.example', 'two.example'],
+    )
+    @patch('apps.subscriptions.management.commands.probe_mirror_liveness._fetch_upstream_payload')
+    def test_same_address_with_different_credentials_is_probed_twice(self, fetch):
+        fetch.side_effect = [
+            ({}, b'vless://11111111-2222-3333-4444-555555555555@edge.example:443?'
+                  b'type=tcp&security=tls&sni=cover.example'),
+            ({}, b'vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@edge.example:443?'
+                  b'type=grpc&security=tls&sni=cover.example&alpn=h2&'
+                  b'serviceName=provider-two&authority=grpc.example&mode=multi'),
+        ]
+
+        targets = Command()._targets()
+
+        self.assertEqual(len(targets), 2)
+        self.assertNotEqual(targets[0]['uuid'], targets[1]['uuid'])
+        grpc = next(target for target in targets if target['network'] == 'grpc')
+        stream = _xray_config(grpc, 1080)['outbounds'][0]['streamSettings']
+        self.assertEqual(stream['tlsSettings']['alpn'], ['h2'])
+        self.assertEqual(stream['grpcSettings'], {
+            'serviceName': 'provider-two',
+            'authority': 'grpc.example',
+            'multiMode': True,
+        })
+
+    def test_egress_probe_requires_http_200_with_public_ip_body(self):
+        class FakeTunnel:
+            def __init__(self, response):
+                self.responses = iter((
+                    b'\x05\x00', b'\x05\x00\x00\x01', b'\x00' * 6, response, b''))
+
+            def settimeout(self, _timeout):
+                pass
+
+            def sendall(self, _payload):
+                pass
+
+            def recv(self, _size):
+                return next(self.responses)
+
+            def close(self):
+                pass
+
+        with patch('socket.create_connection', return_value=FakeTunnel(
+                b'HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n203.0.113.8')):
+            body, error = _fetch_through_socks(1080, 1)
+        self.assertEqual((body, error), ('', 'invalid_egress'))
+
+        with patch('socket.create_connection', return_value=FakeTunnel(
+                b'HTTP/1.1 403 Forbidden\r\nContent-Length: 7\r\n\r\n1.1.1.1')):
+            body, error = _fetch_through_socks(1080, 1)
+        self.assertEqual((body, error), ('', 'http_status'))
+
+        with patch('socket.create_connection', return_value=FakeTunnel(
+                b'HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\n1.1.1.1')):
+            body, error = _fetch_through_socks(1080, 1)
+        self.assertEqual((body, error), ('1.1.1.1', ''))
 
     def test_an_endpoint_reached_after_the_deadline_is_skipped_not_failed(self):
         """Out of time is not evidence of a dead server, so it produces no verdict."""

@@ -87,6 +87,39 @@ class ScaleReadinessCommandTests(TestCase):
         self.assertNotIn('l1', report['healthy_monitor_layers'])
         self.assertFalse(report['monitoring_complete'])
 
+    @override_settings(SPECIAL_MONITOR_PROVIDER_ENABLED=True)
+    def test_enabled_provider_layer_is_required_for_monitoring_completeness(self):
+        for layer in ('l0', 'l1', 'l2', 'host'):
+            MonitorState.objects.create(layer=layer, last_ok=True, alert=False)
+        output = StringIO()
+
+        call_command('validate_scale_readiness', '--json', stdout=output)
+        without_provider = json.loads(output.getvalue())
+        self.assertFalse(without_provider['monitoring_complete'])
+
+        MonitorState.objects.create(layer='provider', last_ok=True, alert=False)
+        output = StringIO()
+        call_command('validate_scale_readiness', '--json', stdout=output)
+        with_provider = json.loads(output.getvalue())
+
+        self.assertTrue(with_provider['monitoring_complete'])
+
+    @override_settings(
+        SPECIAL_MONITOR_PROVIDER_ENABLED=False,
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+    )
+    def test_external_delivery_cannot_be_ready_without_provider_monitor(self):
+        for layer in ('l0', 'l1', 'l2', 'host', 'provider'):
+            MonitorState.objects.create(layer=layer, last_ok=True, alert=False)
+        output = StringIO()
+
+        call_command('validate_scale_readiness', '--json', stdout=output)
+        report = json.loads(output.getvalue())
+
+        self.assertTrue(report['provider_monitor_required'])
+        self.assertFalse(report['provider_monitor_configured'])
+        self.assertFalse(report['monitoring_complete'])
+
     @override_settings(
         SPECIAL_MONITOR_PAGING_ENABLED=True,
         SPECIAL_MONITOR_PAGING_WEBHOOK_URL='https://paging.example.invalid/hook',

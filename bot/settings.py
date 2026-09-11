@@ -12,9 +12,10 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 import json
 import os
+import re
 import stat
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import environ
 from celery.schedules import crontab
@@ -70,6 +71,7 @@ INSTALLED_APPS = [
     'apps.analytics.apps.AnalyticsConfig',
     'apps.payments.apps.PaymentsConfig',
     'apps.monitoring.apps.MonitoringConfig',
+    'apps.providers.apps.ProvidersConfig',
     'apps.servers',
     'apps.subscriptions',
     'apps.telegram_bot',
@@ -233,7 +235,9 @@ CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
 CELERY_TASK_ROUTES = {
     'apps.monitoring.tasks.run_protocol_monitor': {'queue': 'monitoring'},
     'apps.monitoring.tasks.run_host_capacity_monitor': {'queue': 'monitoring'},
+    'apps.monitoring.tasks.run_provider_inventory_monitor': {'queue': 'monitoring'},
     'apps.monitoring.tasks.run_checkout_monitor': {'queue': 'monitoring'},
+    'apps.providers.tasks.refresh_provider_inventory': {'queue': 'provider_ingest'},
     'apps.telegram_bot.tasks.safe_broadcast_v1': {'queue': 'safe_broadcast_v1'},
 }
 
@@ -260,6 +264,10 @@ CELERY_BEAT_SCHEDULE['poll_cryptobot_invoices'] = {
 SPECIAL_MONITOR_ENABLED = env.bool('SPECIAL_MONITOR_ENABLED', False)
 SPECIAL_MONITOR_L2_ENABLED = env.bool('SPECIAL_MONITOR_L2_ENABLED', False)
 SPECIAL_MONITOR_CHECKOUT_ENABLED = env.bool('SPECIAL_MONITOR_CHECKOUT_ENABLED', False)
+SPECIAL_MONITOR_PROVIDER_ENABLED = env.bool('SPECIAL_MONITOR_PROVIDER_ENABLED', False)
+SPECIAL_MONITOR_RELAY_ENABLED = env.bool('SPECIAL_MONITOR_RELAY_ENABLED', False)
+SPECIAL_MONITOR_REQUIRED_TRANSPORTS = env.json(
+    'SPECIAL_MONITOR_REQUIRED_TRANSPORTS', default=['tcp', 'xhttp', 'grpc'])
 if SPECIAL_MONITOR_ENABLED:
     CELERY_BEAT_SCHEDULE.update(
         {
@@ -281,6 +289,11 @@ if SPECIAL_MONITOR_ENABLED and SPECIAL_MONITOR_L2_ENABLED:
     CELERY_BEAT_SCHEDULE['special_monitor_l2'] = {
         'task': 'apps.monitoring.tasks.run_protocol_monitor',
         'schedule': crontab(minute='2-59/5'),
+    }
+if SPECIAL_MONITOR_ENABLED and SPECIAL_MONITOR_PROVIDER_ENABLED:
+    CELERY_BEAT_SCHEDULE['special_monitor_provider'] = {
+        'task': 'apps.monitoring.tasks.run_provider_inventory_monitor',
+        'schedule': crontab(minute='4-59/5'),
     }
 if SPECIAL_MONITOR_ENABLED and SPECIAL_MONITOR_CHECKOUT_ENABLED:
     CELERY_BEAT_SCHEDULE['special_monitor_checkout'] = {
@@ -541,24 +554,85 @@ SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED = env.bool(
 # Bearer URLs may be supplied only through an owner-readable JSON mount in the
 # web service. A missing, malformed, symlinked, or overly-permissive file fails
 # open without ever logging its contents.
-def _backup_secret_from_secret_file():
+_PROVIDER_ID_RE = re.compile(r'^[a-z][a-z0-9_-]{0,31}$')
+_PROVIDER_HOST_RE = re.compile(
+    r'^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$')
+
+
+def _normalized_provider_manifest(value):
+    if not isinstance(value, list) or len(value) > 32:
+        return None
+    normalized = []
+    seen_ids = set()
+    seen_urls = set()
+    for item in value:
+        if not isinstance(item, dict) or set(item) - {'id', 'adapter', 'url', 'host', 'enabled'}:
+            return None
+        provider_id = item.get('id')
+        adapter = item.get('adapter', 'subscription')
+        url = item.get('url')
+        host = item.get('host')
+        enabled = item.get('enabled', True)
+        if (not isinstance(provider_id, str) or not _PROVIDER_ID_RE.fullmatch(provider_id)
+                or provider_id in seen_ids or adapter != 'subscription'
+                or not isinstance(url, str) or url in seen_urls
+                or not isinstance(host, str) or not _PROVIDER_HOST_RE.fullmatch(host)
+                or type(enabled) is not bool):
+            return None
+        try:
+            parsed = urlsplit(url)
+            port = parsed.port
+        except ValueError:
+            return None
+        if (parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password
+                or parsed.fragment or parsed.hostname.casefold() != host.casefold()
+                or (port is not None and not 0 < port < 65536)):
+            return None
+        seen_ids.add(provider_id)
+        seen_urls.add(url)
+        normalized.append({
+            'id': provider_id,
+            'adapter': adapter,
+            'url': url,
+            'host': host.casefold(),
+            'enabled': enabled,
+        })
+    return normalized
+
+
+def _backup_secret_bundle_from_secret_file():
     path = env.str('SUBSCRIPTION_BACKUP_SECRET_FILE', '')
     if not path:
-        return [], None
+        return [], None, []
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
         with os.fdopen(descriptor, encoding='utf-8') as secret_file:
             metadata = os.fstat(secret_file.fileno())
             if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o600:
-                return [], None
+                return [], None, []
             document = json.load(secret_file)
         if not isinstance(document, dict):
-            return [], None
-        urls = document.get('upstream_urls', [])
-        if not isinstance(urls, list) or not all(isinstance(url, str) for url in urls):
-            return [], None
+            return [], None, []
+        if set(document) - {'providers', 'upstream_urls', 'allowed_line_sha256'}:
+            return [], None, []
+        providers = []
+        if 'providers' in document:
+            if 'upstream_urls' in document:
+                return [], None, []
+            providers = _normalized_provider_manifest(document['providers'])
+            if providers is None:
+                return [], None, []
+            urls = [provider['url'] for provider in providers if provider['enabled']]
+        else:
+            urls = document.get('upstream_urls', [])
+            if not isinstance(urls, list) or not all(isinstance(url, str) for url in urls):
+                return [], None, []
+        safe_manifest = [
+            {key: provider[key] for key in ('id', 'adapter', 'host', 'enabled')}
+            for provider in providers
+        ]
         if 'allowed_line_sha256' not in document:
-            return urls, None
+            return urls, None, safe_manifest
         allowed_line_sha256 = document['allowed_line_sha256']
         if not isinstance(allowed_line_sha256, list) or not all(
             isinstance(digest, str)
@@ -567,10 +641,16 @@ def _backup_secret_from_secret_file():
             for digest in allowed_line_sha256
         ):
             # A present but malformed allowlist must never expose provider URLs or lines.
-            return [], []
-        return urls, allowed_line_sha256
+            return [], [], []
+        return urls, allowed_line_sha256, safe_manifest
     except (OSError, ValueError, json.JSONDecodeError):
-        return [], None
+        return [], None, []
+
+
+def _backup_secret_from_secret_file():
+    """Compatibility pair for callers that predate provider manifests."""
+    urls, allowed_line_sha256, _providers = _backup_secret_bundle_from_secret_file()
+    return urls, allowed_line_sha256
 
 
 def _backup_urls_from_secret_file():
@@ -579,7 +659,8 @@ def _backup_urls_from_secret_file():
 
 
 (SUBSCRIPTION_BACKUP_UPSTREAM_URLS,
- SUBSCRIPTION_BACKUP_ALLOWED_LINE_SHA256) = _backup_secret_from_secret_file()
+ SUBSCRIPTION_BACKUP_ALLOWED_LINE_SHA256,
+ SUBSCRIPTION_BACKUP_PROVIDER_MANIFEST) = _backup_secret_bundle_from_secret_file()
 # Optional JSON allowlist of exact DNS hostnames for backup URL sources.
 # An absent setting permits a controlled rollout; a present malformed list denies all.
 SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS = env.json(
@@ -592,6 +673,8 @@ SUBSCRIPTION_BACKUP_RESPONSE_MAX_BYTES = env.int(
     'SUBSCRIPTION_BACKUP_RESPONSE_MAX_BYTES', 262144)
 SUBSCRIPTION_BACKUP_CACHE_TTL_SECONDS = env.int(
     'SUBSCRIPTION_BACKUP_CACHE_TTL_SECONDS', 300)
+SUBSCRIPTION_BACKUP_STALE_IF_ERROR_SECONDS = env.int(
+    'SUBSCRIPTION_BACKUP_STALE_IF_ERROR_SECONDS', 0)
 SUBSCRIPTION_BACKUP_MAX_SOURCES = env.int('SUBSCRIPTION_BACKUP_MAX_SOURCES', 8)
 # One real multi-region provider document carries roughly 80 servers, so a
 # 128-line aggregate would silently truncate a second source.
@@ -634,6 +717,14 @@ SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_MODEL = env.str('SUBSCRIPTION_BACKUP_UPSTREA
 # stay out of subscriptions until an operator accepts that specific trade-off.
 SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS = env.bool(
     'SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS', False)
+
+# Out-of-band provider ingestion. The mode-0600 file contains upstream bearer
+# URLs/API tokens and is never read by the public subscription request path.
+PROVIDER_SOURCE_SECRET_FILE = env.str('PROVIDER_SOURCE_SECRET_FILE', '')
+PROVIDER_FETCH_CONNECT_TIMEOUT_SECONDS = env.float('PROVIDER_FETCH_CONNECT_TIMEOUT_SECONDS', 3)
+PROVIDER_FETCH_READ_TIMEOUT_SECONDS = env.float('PROVIDER_FETCH_READ_TIMEOUT_SECONDS', 5)
+PROVIDER_FETCH_DEADLINE_SECONDS = env.float('PROVIDER_FETCH_DEADLINE_SECONDS', 10)
+PROVIDER_FETCH_MAX_BYTES = env.int('PROVIDER_FETCH_MAX_BYTES', 1048576)
 
 # Whether selection consults the verdicts ``probe_mirror_liveness`` writes.
 # Off, and with no verdicts, selection is the blind per-region pick this
@@ -723,6 +814,8 @@ SPECIAL_MONITOR_MIN_AVAILABLE_MB = env.int('SPECIAL_MONITOR_MIN_AVAILABLE_MB', 1
 SPECIAL_MONITOR_MIN_SWAP_MB = env.int('SPECIAL_MONITOR_MIN_SWAP_MB', 512)
 SPECIAL_MONITOR_MAX_LOAD_PER_CPU = env.float('SPECIAL_MONITOR_MAX_LOAD_PER_CPU', 4.0)
 SPECIAL_MONITOR_MAX_OOM_KILLS = env.int('SPECIAL_MONITOR_MAX_OOM_KILLS', 0)
+SPECIAL_MONITOR_MAX_ROOT_DISK_PERCENT = env.float(
+    'SPECIAL_MONITOR_MAX_ROOT_DISK_PERCENT', 85.0)
 SPECIAL_MONITOR_ENDPOINTS = env.json(
     'SPECIAL_MONITOR_ENDPOINTS',
     default=[],

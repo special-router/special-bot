@@ -53,15 +53,26 @@ class Command(BaseCommand):
 
         now = timezone.now()
         states = {row.layer: row for row in MonitorState.objects.all()}
+        required_layers = dict(LAYER_MAX_AGE)
+        provider_monitor_configured = bool(
+            getattr(settings, 'SPECIAL_MONITOR_PROVIDER_ENABLED', False))
+        provider_monitor_required = bool(
+            provider_monitor_configured
+            or getattr(settings, 'SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED', False))
+        if provider_monitor_required:
+            required_layers['provider'] = timedelta(minutes=11)
         healthy_layers = sorted(
             layer
-            for layer, max_age in LAYER_MAX_AGE.items()
+            for layer, max_age in required_layers.items()
             if (state := states.get(layer))
             and state.last_ok
             and not state.alert
             and now - state.checked_at <= max_age
         )
-        monitoring_complete = set(LAYER_MAX_AGE).issubset(healthy_layers)
+        monitoring_complete = (
+            set(required_layers).issubset(healthy_layers)
+            and (not provider_monitor_required or provider_monitor_configured)
+        )
 
         paging_configured = bool(
             settings.SPECIAL_MONITOR_PAGING_ENABLED
@@ -97,6 +108,8 @@ class Command(BaseCommand):
             'subscription_coverage_complete': entitled_missing_sub_id == 0 and duplicate_sub_ids == 0,
             'healthy_monitor_layers': healthy_layers,
             'monitoring_complete': monitoring_complete,
+            'provider_monitor_required': provider_monitor_required,
+            'provider_monitor_configured': provider_monitor_configured,
             'paging_configured': paging_configured,
             'paging_delivery_verified': paging_delivery_verified,
             'enabled_origins': origins_enabled,

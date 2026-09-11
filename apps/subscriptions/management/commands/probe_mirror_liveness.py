@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import datetime
+import ipaddress
 import json
 import logging
 import os
@@ -31,17 +32,24 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
+from apps.monitoring.models import MonitorState
 from apps.subscriptions.models import MirrorEndpointLiveness
 from apps.subscriptions.views import (
+    _backup_cache_key,
+    _backup_source_set_digest,
     _bounded_number,
+    _decode_subscription_payload,
     _fetch_upstream_payload,
     _parse_upstream_endpoints,
+    _strict_raw_uri_query,
+    _valid_raw_hysteria_line,
+    _valid_raw_vless_line,
     _valid_upstream_url,
 )
 
@@ -74,8 +82,20 @@ class Command(BaseCommand):
                             help='Probe and report without writing a single verdict.')
 
     def handle(self, *args, **options):
+        required = bool(
+            getattr(settings, 'SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED', False)
+            or getattr(settings, 'SPECIAL_MONITOR_PROVIDER_ENABLED', False))
+        configured, valid = self._source_urls()
+        if required and not configured:
+            self._record_source_state('empty', configured, valid)
+            raise CommandError('provider inventory is required but no source is configured')
+        if required and len(valid) != len(configured):
+            self._record_source_state('invalid', configured, valid)
+            raise CommandError('provider inventory contains a source rejected by the allowlist')
         xray = getattr(settings, 'SPECIAL_MONITOR_XRAY_PATH', '/usr/local/bin/xray')
         if not os.access(xray, os.X_OK):
+            if required:
+                self._record_source_state('probe_not_configured', configured, valid)
             raise CommandError(f'xray is not executable at {xray}; no verdict can be measured')
 
         concurrency = int(_bounded_number(
@@ -92,7 +112,19 @@ class Command(BaseCommand):
             default=12, lower=1, upper=60)
 
         targets = self._targets()
+        source_status = getattr(self, '_source_status', None) or {
+            'loaded': len(valid), 'unprobeable': 0,
+        }
+        if required and (
+                source_status['loaded'] != len(valid) or source_status['unprobeable']):
+            self._record_source_state(
+                'source_unavailable', configured, valid, targets=len(targets),
+                loaded=source_status['loaded'], unprobeable=source_status['unprobeable'])
+            raise CommandError('provider inventory could not load every configured source safely')
         if not targets:
+            if required:
+                self._record_source_state('empty', configured, valid)
+                raise CommandError('provider inventory is required but no endpoint is probeable')
             self.stdout.write('no configured source offered an endpoint to probe')
             return
 
@@ -100,6 +132,18 @@ class Command(BaseCommand):
         results = self._probe_all(targets, xray, concurrency, deadline, timeout)
         probed = [result for result in results if result is not None]
         alive = [result for result in probed if result[2]]
+        if required and len(probed) != len(targets):
+            self._record_source_state(
+                'incomplete', configured, valid, targets=len(targets), probed=len(probed),
+                alive=len(alive), loaded=source_status['loaded'])
+            raise CommandError('provider inventory probe did not reach every endpoint before deadline')
+
+        valid_source_keys = {_backup_cache_key(url) for url in valid}
+        alive_source_keys = set()
+        for target, result in zip(targets, results):
+            if result is not None and result[2]:
+                alive_source_keys.update(set(target.get('source_keys') or valid_source_keys))
+        sources_ready = len(alive_source_keys & valid_source_keys)
 
         for host, port, endpoint_alive, error_class in probed:
             self.stdout.write(f'{"OK  " if endpoint_alive else "DEAD"} {host}:{port} {error_class}')
@@ -111,14 +155,33 @@ class Command(BaseCommand):
             self.stdout.write('no endpoint answered; writing nothing and leaving selection as it was')
             logger.warning('mirror liveness probe recorded no live endpoint out of %s; '
                            'verdicts withheld', len(probed))
+            if required:
+                self._record_source_state(
+                    'unavailable', configured, valid, targets=len(targets),
+                    probed=len(probed), alive=0, loaded=source_status['loaded'],
+                    sources_ready=sources_ready)
+                raise CommandError('provider inventory probe found no live endpoint')
             return
+        if required and sources_ready != len(valid_source_keys):
+            self._record_source_state(
+                'partial', configured, valid, targets=len(targets), probed=len(probed),
+                alive=len(alive), loaded=source_status['loaded'], sources_ready=sources_ready)
+            raise CommandError('provider inventory has no live endpoint for every configured source')
         if options['dry_run']:
             self.stdout.write('dry run: no verdict written')
             return
 
         now = timezone.now()
         origin = getattr(settings, 'SUBSCRIPTION_BACKUP_LIVENESS_PROBE_ORIGIN', 'bot')
+        host_verdicts = {}
         for host, port, endpoint_alive, error_class in probed:
+            key = (host, port)
+            previous = host_verdicts.get(key)
+            if previous is None:
+                host_verdicts[key] = (endpoint_alive, error_class)
+            elif not endpoint_alive:
+                host_verdicts[key] = (False, error_class or previous[1])
+        for (host, port), (endpoint_alive, error_class) in host_verdicts.items():
             MirrorEndpointLiveness.objects.update_or_create(
                 host=host, port=port,
                 defaults={'alive': endpoint_alive, 'error_class': error_class, 'checked_at': now,
@@ -135,6 +198,43 @@ class Command(BaseCommand):
         current = MirrorEndpointLiveness.objects.count()
         alive_now = MirrorEndpointLiveness.objects.filter(alive=True).count()
         self.stdout.write(f'current={current} alive={alive_now}')
+        if required:
+            self._record_source_state(
+                'ready', configured, valid, targets=len(targets),
+                probed=len(probed), alive=len(alive), loaded=source_status['loaded'],
+                sources_ready=sources_ready)
+
+    def _source_urls(self) -> tuple[list[str], list[str]]:
+        urls = getattr(settings, 'SUBSCRIPTION_BACKUP_UPSTREAM_URLS', [])
+        configured = [url for url in urls if isinstance(url, str) and url.strip()] \
+            if isinstance(urls, list) else []
+        return configured, [url for url in configured if _valid_upstream_url(url)]
+
+    def _record_source_state(self, status: str, configured: list[str], valid: list[str],
+                             *, targets: int = 0, probed: int = 0, alive: int = 0,
+                             loaded: int = 0, sources_ready: int = 0,
+                             unprobeable: int = 0) -> None:
+        MonitorState.objects.update_or_create(
+            layer='provsrc',
+            defaults={
+                'last_ok': status == 'ready',
+                'consecutive_failures': 0 if status == 'ready' else 1,
+                'alert': False,
+                'error_class': '' if status == 'ready' else f'provider_{status}',
+                'details': {
+                    'status': status,
+                    'source_set_sha256': _backup_source_set_digest(valid),
+                    'configured_sources': len(configured),
+                    'valid_sources': len(valid),
+                    'loaded_sources': loaded,
+                    'ready_sources': sources_ready,
+                    'unprobeable_sources': unprobeable,
+                    'targets': targets,
+                    'probed': probed,
+                    'alive': alive,
+                },
+            },
+        )
 
     def _targets(self) -> list[dict]:
         """Every distinct endpoint the configured sources offer, deduplicated.
@@ -150,17 +250,37 @@ class Command(BaseCommand):
             return []
         source_limit = int(_bounded_number(
             getattr(settings, 'SUBSCRIPTION_BACKUP_MAX_SOURCES', 8), default=8, lower=1, upper=32))
-        targets: dict[tuple[str, int], dict] = {}
-        for url in [url for url in urls if isinstance(url, str) and _valid_upstream_url(url)][:source_limit]:
+        targets: dict[tuple, dict] = {}
+        valid_urls = [
+            url for url in urls if isinstance(url, str) and _valid_upstream_url(url)
+        ][:source_limit]
+        loaded_sources = 0
+        unprobeable_sources = 0
+        for url in valid_urls:
+            source_key = _backup_cache_key(url)
             try:
                 headers, payload = _fetch_upstream_payload(url)
                 endpoints = _parse_upstream_endpoints(payload, headers)
+                if endpoints is None:
+                    endpoints, unprobeable = _raw_vless_endpoints(payload)
+                    unprobeable_sources += int(unprobeable)
             except (ValueError, UnicodeError, OSError) as error:
                 logger.warning('mirror liveness probe could not read a source: %s',
                                type(error).__name__)
                 continue
+            if not endpoints:
+                continue
+            loaded_sources += 1
             for endpoint in endpoints or []:
-                targets.setdefault((endpoint['host'], endpoint['port']), endpoint)
+                key = _endpoint_probe_identity(endpoint)
+                if key not in targets:
+                    targets[key] = dict(endpoint, source_keys={source_key})
+                else:
+                    targets[key]['source_keys'].add(source_key)
+        self._source_status = {
+            'loaded': loaded_sources,
+            'unprobeable': unprobeable_sources,
+        }
         return list(targets.values())
 
     def _probe_all(self, targets: list[dict], xray: str, concurrency: int,
@@ -216,6 +336,14 @@ def _free_port() -> int:
         return probe.getsockname()[1]
 
 
+def _endpoint_probe_identity(endpoint: dict) -> tuple:
+    """Deduplicate only byte-equivalent tunnel credentials, never host:port alone."""
+    return tuple(endpoint.get(field, '') for field in (
+        'host', 'port', 'uuid', 'security', 'public_key', 'short_id', 'server_name',
+        'fingerprint', 'alpn', 'spider_x', 'network', 'service_name', 'grpc_authority',
+        'grpc_multi_mode', 'path', 'flow', 'ws_host', 'xhttp_host', 'xhttp_mode'))
+
+
 def _xray_config(endpoint: dict, local_port: int) -> dict:
     """Build the smallest client that can prove this endpoint carries traffic.
 
@@ -232,7 +360,7 @@ def _xray_config(endpoint: dict, local_port: int) -> dict:
             'serverName': endpoint['server_name'],
             'publicKey': endpoint['public_key'],
             'fingerprint': endpoint['fingerprint'] or 'chrome',
-            'spiderX': '/',
+            'spiderX': endpoint.get('spider_x') or '/',
         }
         if endpoint['short_id']:
             reality['shortId'] = endpoint['short_id']
@@ -240,10 +368,24 @@ def _xray_config(endpoint: dict, local_port: int) -> dict:
     elif endpoint['security'] == 'tls':
         stream['tlsSettings'] = {'serverName': endpoint['server_name'],
                                  'fingerprint': endpoint['fingerprint'] or 'chrome'}
-    if endpoint['network'] == 'grpc' and endpoint['service_name']:
-        stream['grpcSettings'] = {'serviceName': endpoint['service_name']}
-    if endpoint['network'] == 'ws' and endpoint['path']:
-        stream['wsSettings'] = {'path': endpoint['path']}
+        if endpoint.get('alpn'):
+            stream['tlsSettings']['alpn'] = endpoint['alpn'].split(',')
+    if endpoint['network'] == 'grpc':
+        stream['grpcSettings'] = {
+            'serviceName': endpoint['service_name'],
+            'authority': endpoint.get('grpc_authority', ''),
+            'multiMode': bool(endpoint.get('grpc_multi_mode')),
+        }
+    if endpoint['network'] == 'ws':
+        stream['wsSettings'] = {'path': endpoint['path'] or '/'}
+        if endpoint.get('ws_host'):
+            stream['wsSettings']['headers'] = {'Host': endpoint['ws_host']}
+    if endpoint['network'] == 'xhttp':
+        stream['xhttpSettings'] = {
+            'path': endpoint['path'] or '/',
+            'host': endpoint.get('xhttp_host') or endpoint['server_name'] or endpoint['host'],
+            'mode': endpoint.get('xhttp_mode') or 'auto',
+        }
     return {
         'log': {'loglevel': 'error'},
         'inbounds': [{'port': local_port, 'listen': '127.0.0.1', 'protocol': 'socks',
@@ -291,8 +433,76 @@ def _fetch_through_socks(local_port: int, timeout: float) -> tuple[str, str]:
         parts = received.split(b'\r\n\r\n', 1)
         if len(parts) < 2:
             return '', 'no_body'
-        return parts[1].decode('utf-8', 'replace').strip(), ''
+        status_line = parts[0].split(b'\r\n', 1)[0]
+        if not status_line.startswith((b'HTTP/1.0 200 ', b'HTTP/1.1 200 ')):
+            return '', 'http_status'
+        body = parts[1].decode('ascii', 'strict').strip()
+        try:
+            egress = ipaddress.ip_address(body)
+        except ValueError:
+            return '', 'invalid_egress'
+        if not egress.is_global:
+            return '', 'invalid_egress'
+        return str(egress), ''
     except OSError as error:
         return '', type(error).__name__
+    except UnicodeError:
+        return '', 'invalid_egress'
     finally:
         tunnel.close()
+
+
+def _raw_vless_endpoints(payload: bytes) -> tuple[list[dict], bool]:
+    """Normalize probeable raw VLESS URIs and flag any served Hysteria URI."""
+    endpoints = []
+    unprobeable = False
+    for raw_line in _decode_subscription_payload(payload).splitlines():
+        if raw_line.startswith((b'hy2://', b'hysteria2://')):
+            unprobeable = unprobeable or _valid_raw_hysteria_line(raw_line)
+            continue
+        if not raw_line.startswith(b'vless://') or not _valid_raw_vless_line(raw_line):
+            continue
+        parts = urlsplit(raw_line.decode('utf-8'))
+        query = _strict_raw_uri_query(parts.query)
+        if query is None:
+            continue
+        security = query.get('security', 'none').casefold()
+        network = query.get('type', 'tcp').casefold()
+        modeled_fields = {'type', 'security', 'encryption', 'flow'}
+        if security in {'tls', 'reality'}:
+            modeled_fields.update({'sni', 'fp'})
+        if security == 'reality':
+            modeled_fields.update({'pbk', 'sid', 'spx'})
+        elif security == 'tls':
+            modeled_fields.add('alpn')
+        modeled_fields.update({
+            'tcp': set(),
+            'grpc': {'servicename', 'authority', 'mode'},
+            'ws': {'path', 'host'},
+            'xhttp': {'path', 'host', 'mode'},
+        }[network])
+        if set(query) - modeled_fields:
+            unprobeable = True
+            continue
+        endpoints.append({
+            'host': parts.hostname,
+            'port': parts.port,
+            'uuid': parts.username,
+            'security': security,
+            'public_key': query.get('pbk', ''),
+            'short_id': query.get('sid', ''),
+            'server_name': query.get('sni', ''),
+            'fingerprint': query.get('fp', ''),
+            'alpn': query.get('alpn', ''),
+            'spider_x': query.get('spx', ''),
+            'network': network,
+            'service_name': query.get('servicename', ''),
+            'grpc_authority': query.get('authority', ''),
+            'grpc_multi_mode': query.get('mode', '').casefold() == 'multi',
+            'path': query.get('path', ''),
+            'flow': query.get('flow', ''),
+            'ws_host': query.get('host', ''),
+            'xhttp_host': query.get('host', ''),
+            'xhttp_mode': query.get('mode', ''),
+        })
+    return endpoints, unprobeable

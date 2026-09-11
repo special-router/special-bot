@@ -1,0 +1,22 @@
+{
+  "providers": [
+    {
+      "id": "a-service",
+      "adapter": "a-service",
+      "kind": "subscription",
+      "url": "https://a-service.example/sub/replace-with-secret",
+      "enabled": false
+    },
+    {
+      "id": "vpnstar",
+      "adapter": "vpnstar",
+      "kind": "connection_link",
+      "url": "https://vpnstar.example/api/cabinet/subscription/connection-link",
+      "follow_hosts": [
+        "vpnstar-subscriptions.example"
+      ],
+      "authorization": "Bearer replace-with-secret",
+      "enabled": false
+    }
+  ]
+}

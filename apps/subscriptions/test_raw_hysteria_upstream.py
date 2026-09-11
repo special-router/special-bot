@@ -8,12 +8,14 @@ from apps.subscriptions.views import _sanitize_upstream_payload
 class RawHysteriaUpstreamTests(SimpleTestCase):
     def test_keeps_vless_and_hy2_lines_from_a_plain_subscription(self):
         payload = (
-            b'vless://11111111-2222-3333-4444-555555555555@example.com:443?security=reality#vless\n'
+            b'vless://11111111-2222-3333-4444-555555555555@example.com:443?'
+            b'security=reality&sni=cover.example&pbk=synthetic-public-key#vless\n'
             b'hy2://secret@example.com:443/?sni=example.com#hy2\n'
         )
 
         self.assertEqual(_sanitize_upstream_payload(payload), [
-            'vless://11111111-2222-3333-4444-555555555555@example.com:443?security=reality#vless',
+            'vless://11111111-2222-3333-4444-555555555555@example.com:443?'
+            'security=reality&sni=cover.example&pbk=synthetic-public-key#vless',
             'hy2://secret@example.com:443/?sni=example.com#hy2',
         ])
 
@@ -38,3 +40,11 @@ class RawHysteriaUpstreamTests(SimpleTestCase):
             _sanitize_upstream_payload(b'https://example.com\nss://secret@example.com:443'),
             [],
         )
+
+    def test_rejects_insecure_flags_and_duplicate_query_fields(self):
+        payload = b'\n'.join((
+            b'hy2://secret@example.com:443/?sni=example.com&insecure=1',
+            b'hy2://secret@example.com:443/?sni=example.com&SNI=other.example',
+        ))
+
+        self.assertEqual(_sanitize_upstream_payload(payload), [])

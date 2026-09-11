@@ -814,7 +814,8 @@ class ExternalSubscriptionTests(SimpleTestCase):
     opaque_link = (
         'vless://synthetic-provider-id@backup.example:443?'
         'type=tcp&security=reality&flow=xtls-rprx-vision&fp=firefox&'
-        'spx=%2Fedge&unknown-provider-param=a%2Bb#Synthetic%20Backup'
+        'sni=cover.example&pbk=synthetic-public-key&spx=%2Fedge&'
+        'unknown-provider-param=a%2Bb#Synthetic%20Backup'
     )
 
     def setUp(self):
@@ -843,6 +844,31 @@ class ExternalSubscriptionTests(SimpleTestCase):
         )).encode()
 
         self.assertEqual(views._sanitize_upstream_payload(payload), [usable])
+
+    def test_raw_vless_rejects_plaintext_and_incomplete_reality(self):
+        payload = '\n'.join((
+            'vless://fixture@public.example:443?type=tcp&security=none#Plaintext',
+            'vless://fixture@public.example:443?type=tcp&security=reality&sni=cover.example#NoKey',
+            'vless://fixture@127.0.0.1:443?type=tcp&security=tls&sni=cover.example#Loopback',
+        )).encode()
+
+        self.assertEqual(views._sanitize_upstream_payload(payload), [])
+
+    def test_raw_vless_rejects_insecure_flags_and_duplicate_query_fields(self):
+        payload = '\n'.join((
+            'vless://fixture@public.example:443?type=tcp&security=tls&'
+            'sni=cover.example&allowInsecure=1#Insecure',
+            'vless://fixture@public.example:443?type=tcp&security=tls&'
+            'sni=cover.example&SNI=other.example#Ambiguous',
+        )).encode()
+
+        self.assertEqual(views._sanitize_upstream_payload(payload), [])
+
+    @override_settings(SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS=True)
+    def test_raw_vless_plaintext_requires_explicit_flag(self):
+        link = 'vless://fixture@public.example:443?type=tcp&security=none#Plaintext'
+
+        self.assertEqual(views._sanitize_upstream_payload(link.encode()), [link])
 
     @override_settings(
         SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
@@ -878,12 +904,23 @@ class ExternalSubscriptionTests(SimpleTestCase):
         url = 'https://subscription.example/cache'
         key = views._backup_cache_key(url)
         with views._BACKUP_CACHE_LOCK:
-            views._BACKUP_CACHE[key] = (0, [self.opaque_link])
+            views._BACKUP_CACHE[key] = (0, 0, [self.opaque_link])
         fetch.side_effect = OSError()
 
         self.assertEqual(views._cached_upstream_links(url), [])
         with views._BACKUP_CACHE_LOCK:
             self.assertNotIn(key, views._BACKUP_CACHE)
+
+    @override_settings(SUBSCRIPTION_BACKUP_STALE_IF_ERROR_SECONDS=120)
+    @patch('apps.subscriptions.views._fetch_upstream_payload')
+    def test_bounded_stale_cache_survives_failed_refetch(self, fetch):
+        url = 'https://subscription.example/cache'
+        key = views._backup_cache_key(url)
+        with views._BACKUP_CACHE_LOCK:
+            views._BACKUP_CACHE[key] = (0, time.monotonic() + 60, [self.opaque_link])
+        fetch.side_effect = OSError()
+
+        self.assertEqual(views._cached_upstream_links(url), [self.opaque_link])
 
     @override_settings(
         SUBSCRIPTION_BACKUP_CONNECT_TIMEOUT_SECONDS=2,
@@ -1144,7 +1181,7 @@ class ExternalSubscriptionTests(SimpleTestCase):
         self.assertEqual(fetch.call_count, 1)
         self.assertEqual(results, [[self.opaque_link]] * 8)
         with views._BACKUP_CACHE_LOCK:
-            views._BACKUP_CACHE.update({str(index): (0, []) for index in range(64)})
+            views._BACKUP_CACHE.update({str(index): (0, 0, []) for index in range(64)})
         workers = [threading.Thread(target=views._evict_backup_cache, args=(set(),)) for _ in range(8)]
         for worker in workers:
             worker.start()
@@ -1363,7 +1400,8 @@ class MirrorIngestTests(SimpleTestCase):
         self.assertEqual(urlsplit(link).fragment, self.generic)
 
     def test_opaque_uri_list_sources_keep_their_byte_for_byte_contract(self):
-        link = 'vless://synthetic@backup.example:443?type=tcp#Other'
+        link = ('vless://synthetic@backup.example:443?type=tcp&security=reality&'
+                'sni=cover.example&pbk=synthetic-public-key#Other')
 
         self.assertEqual(views._sanitize_upstream_payload((link + '\n').encode()), [link])
         self.assertEqual(
@@ -2358,6 +2396,11 @@ class BackupSecretFileTests(SimpleTestCase):
         with patch.object(bot_settings.env, 'str', return_value=str(path)):
             return bot_settings._backup_secret_from_secret_file()
 
+    def _load_bundle(self, path):
+        from bot import settings as bot_settings
+        with patch.object(bot_settings.env, 'str', return_value=str(path)):
+            return bot_settings._backup_secret_bundle_from_secret_file()
+
     def _secret_file(self, contents, mode=0o600):
         handle = tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8')
         self.addCleanup(lambda: os.path.exists(handle.name) and os.unlink(handle.name))
@@ -2395,6 +2438,72 @@ class BackupSecretFileTests(SimpleTestCase):
                 '{"upstream_urls": ["https://synthetic.example/sub"], "allowed_line_sha256": ["A"]}')),
             ([], []),
         )
+
+    def test_provider_manifest_exposes_only_safe_metadata(self):
+        document = json.dumps({
+            'providers': [
+                {
+                    'id': 'primary_vendor',
+                    'adapter': 'subscription',
+                    'url': 'https://provider.example/sub/bearer-value',
+                    'host': 'provider.example',
+                    'enabled': True,
+                },
+                {
+                    'id': 'disabled_vendor',
+                    'adapter': 'subscription',
+                    'url': 'https://standby.example/sub/bearer-value',
+                    'host': 'standby.example',
+                    'enabled': False,
+                },
+            ],
+        })
+
+        urls, digests, manifest = self._load_bundle(self._secret_file(document))
+
+        self.assertEqual(urls, ['https://provider.example/sub/bearer-value'])
+        self.assertIsNone(digests)
+        self.assertEqual(
+            manifest,
+            [
+                {'id': 'primary_vendor', 'adapter': 'subscription',
+                 'host': 'provider.example', 'enabled': True},
+                {'id': 'disabled_vendor', 'adapter': 'subscription',
+                 'host': 'standby.example', 'enabled': False},
+            ],
+        )
+        self.assertNotIn('bearer-value', repr(manifest))
+
+    def test_provider_manifest_rejects_ambiguous_or_mismatched_sources(self):
+        invalid_documents = [
+            {
+                'upstream_urls': ['https://legacy.example/sub'],
+                'providers': [],
+            },
+            {
+                'providers': [
+                    {'id': 'vendor', 'adapter': 'subscription',
+                     'url': 'https://provider.example/sub', 'host': 'other.example'},
+                ],
+            },
+            {
+                'providers': [
+                    {'id': 'vendor', 'adapter': 'api',
+                     'url': 'https://provider.example/sub', 'host': 'provider.example'},
+                ],
+            },
+            {
+                'providers': [],
+                'allowed_line_sha265': ['0' * 64],
+            },
+        ]
+
+        for document in invalid_documents:
+            with self.subTest(document=document):
+                self.assertEqual(
+                    self._load_bundle(self._secret_file(json.dumps(document))),
+                    ([], None, []),
+                )
 
     def test_default_compose_device_fails_open(self):
         self.assertEqual(self._load('/dev/null'), [])
