@@ -566,18 +566,26 @@ def _normalized_provider_manifest(value):
     seen_ids = set()
     seen_urls = set()
     for item in value:
-        if not isinstance(item, dict) or set(item) - {'id', 'adapter', 'url', 'host', 'enabled'}:
+        if not isinstance(item, dict) or set(item) - {
+            'id', 'adapter', 'url', 'host', 'enabled', 'subscription_user_agent',
+        }:
             return None
         provider_id = item.get('id')
         adapter = item.get('adapter', 'subscription')
         url = item.get('url')
         host = item.get('host')
         enabled = item.get('enabled', True)
+        subscription_user_agent = item.get('subscription_user_agent', '')
         if (not isinstance(provider_id, str) or not _PROVIDER_ID_RE.fullmatch(provider_id)
                 or provider_id in seen_ids or adapter != 'subscription'
                 or not isinstance(url, str) or url in seen_urls
                 or not isinstance(host, str) or not _PROVIDER_HOST_RE.fullmatch(host)
-                or type(enabled) is not bool):
+                or type(enabled) is not bool
+                or not isinstance(subscription_user_agent, str)):
+            return None
+        subscription_user_agent = subscription_user_agent.strip()
+        if (len(subscription_user_agent) > 128
+                or any(not ' ' <= character <= '~' for character in subscription_user_agent)):
             return None
         try:
             parsed = urlsplit(url)
@@ -590,13 +598,16 @@ def _normalized_provider_manifest(value):
             return None
         seen_ids.add(provider_id)
         seen_urls.add(url)
-        normalized.append({
+        provider = {
             'id': provider_id,
             'adapter': adapter,
             'url': url,
             'host': host.casefold(),
             'enabled': enabled,
-        })
+        }
+        if subscription_user_agent:
+            provider['subscription_user_agent'] = subscription_user_agent
+        normalized.append(provider)
     return normalized
 
 
@@ -627,10 +638,14 @@ def _backup_secret_bundle_from_secret_file():
             urls = document.get('upstream_urls', [])
             if not isinstance(urls, list) or not all(isinstance(url, str) for url in urls):
                 return [], None, []
-        safe_manifest = [
-            {key: provider[key] for key in ('id', 'adapter', 'host', 'enabled')}
-            for provider in providers
-        ]
+        safe_manifest = []
+        for provider in providers:
+            safe_provider = {
+                key: provider[key] for key in ('id', 'adapter', 'host', 'enabled')
+            }
+            if 'subscription_user_agent' in provider:
+                safe_provider['subscription_user_agent'] = provider['subscription_user_agent']
+            safe_manifest.append(safe_provider)
         if 'allowed_line_sha256' not in document:
             return urls, None, safe_manifest
         allowed_line_sha256 = document['allowed_line_sha256']

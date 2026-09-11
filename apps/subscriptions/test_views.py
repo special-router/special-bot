@@ -15,7 +15,7 @@ import time
 from fnmatch import fnmatchcase
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
@@ -897,6 +897,55 @@ class ExternalSubscriptionTests(SimpleTestCase):
             ['vless://synthetic-one', 'vless://synthetic-two'],
         )
         self.assertEqual(cached_links.call_count, 2)
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=[
+            'https://first.example/one',
+            'https://second.example/two',
+        ],
+        SUBSCRIPTION_BACKUP_PROVIDER_MANIFEST=[
+            {
+                'id': 'first', 'adapter': 'subscription', 'host': 'first.example',
+                'enabled': True, 'subscription_user_agent': 'SFI/1.9',
+            },
+            {
+                'id': 'second', 'adapter': 'subscription', 'host': 'second.example',
+                'enabled': True, 'subscription_user_agent': 'ClashMeta/2.10',
+            },
+        ],
+    )
+    @patch('apps.subscriptions.views._cached_upstream_links')
+    def test_provider_manifest_selects_a_user_agent_per_source(self, cached_links):
+        cached_links.side_effect = [[self.opaque_link], []]
+
+        self.assertEqual(views._backup_links(), [self.opaque_link])
+        self.assertEqual(
+            cached_links.call_args_list,
+            [
+                call('https://first.example/one', user_agent='SFI/1.9'),
+                call('https://second.example/two', user_agent='ClashMeta/2.10'),
+            ],
+        )
+
+    @override_settings(SUBSCRIPTION_BACKUP_CACHE_TTL_SECONDS=60)
+    @patch('apps.subscriptions.views._fetch_upstream_payload')
+    def test_the_same_source_keeps_separate_caches_for_each_user_agent(self, fetch):
+        second_link = self.opaque_link.replace('Synthetic%20Backup', 'Second%20Format')
+        fetch.side_effect = [
+            ({}, (self.opaque_link + '\n').encode()),
+            ({}, (second_link + '\n').encode()),
+        ]
+        url = 'https://subscription.example/formats'
+
+        first = views._cached_upstream_links(url, user_agent='SFI/1.9')
+        second = views._cached_upstream_links(url, user_agent='ClashMeta/2.10')
+        cached_first = views._cached_upstream_links(url, user_agent='SFI/1.9')
+
+        self.assertEqual(first, [self.opaque_link])
+        self.assertEqual(second, [second_link])
+        self.assertEqual(cached_first, [self.opaque_link])
+        self.assertEqual(fetch.call_count, 2)
 
     @override_settings(SUBSCRIPTION_BACKUP_CACHE_TTL_SECONDS=60)
     @patch('apps.subscriptions.views._fetch_upstream_payload')
@@ -2448,6 +2497,7 @@ class BackupSecretFileTests(SimpleTestCase):
                     'url': 'https://provider.example/sub/bearer-value',
                     'host': 'provider.example',
                     'enabled': True,
+                    'subscription_user_agent': 'ClashMeta/2.10',
                 },
                 {
                     'id': 'disabled_vendor',
@@ -2467,7 +2517,8 @@ class BackupSecretFileTests(SimpleTestCase):
             manifest,
             [
                 {'id': 'primary_vendor', 'adapter': 'subscription',
-                 'host': 'provider.example', 'enabled': True},
+                 'host': 'provider.example', 'enabled': True,
+                 'subscription_user_agent': 'ClashMeta/2.10'},
                 {'id': 'disabled_vendor', 'adapter': 'subscription',
                  'host': 'standby.example', 'enabled': False},
             ],
@@ -2490,6 +2541,13 @@ class BackupSecretFileTests(SimpleTestCase):
                 'providers': [
                     {'id': 'vendor', 'adapter': 'api',
                      'url': 'https://provider.example/sub', 'host': 'provider.example'},
+                ],
+            },
+            {
+                'providers': [
+                    {'id': 'vendor', 'adapter': 'subscription',
+                     'url': 'https://provider.example/sub', 'host': 'provider.example',
+                     'subscription_user_agent': 'valid\r\nInjected: true'},
                 ],
             },
             {

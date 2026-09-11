@@ -299,6 +299,17 @@ class NativeMirrorProfileTests(SimpleTestCase):
         self.assertEqual(preserved['routing']['balancers'][0]['fallbackTag'], 'loop-next')
         self.assertIn('dns-out', {outbound['tag'] for outbound in preserved['outbounds']})
 
+    def test_balancer_and_observatory_are_optional_for_single_server_profiles(self):
+        profile = self._profile()
+        profile.pop('burstObservatory')
+        profile['routing'].pop('balancers')
+
+        preserved = _native_profile(profile)
+
+        self.assertIsNotNone(preserved)
+        self.assertNotIn('burstObservatory', preserved)
+        self.assertNotIn('balancers', preserved['routing'])
+
     def test_public_or_unknown_inbounds_are_rejected(self):
         for listen, protocol in (('0.0.0.0', 'socks'), (None, 'dokodemo-door')):
             profile = self._profile()

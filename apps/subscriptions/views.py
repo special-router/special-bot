@@ -1665,10 +1665,11 @@ def _backup_links() -> list[str] | None:
 
     source_limit = int(_bounded_number(
         getattr(settings, 'SUBSCRIPTION_BACKUP_MAX_SOURCES', 8), default=8, lower=1, upper=32))
-    valid_urls = [url for url in urls if isinstance(url, str) and _valid_upstream_url(url)][:source_limit]
-    if not valid_urls:
+    sources = _backup_sources(urls)[:source_limit]
+    if not sources:
         _clear_backup_cache()
         return None
+    valid_urls = [url for url, _user_agent in sources]
     _evict_backup_cache({_backup_cache_key(url) for url in valid_urls})
     line_limit = int(_bounded_number(
         getattr(settings, 'SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES', 256), default=256, lower=1, upper=2048))
@@ -1686,8 +1687,12 @@ def _backup_links() -> list[str] | None:
     if allowed_line_sha256 is not None and not _valid_line_sha256_allowlist(allowed_line_sha256):
         return None
     links, seen, total_bytes = [], set(), 0
-    for url in valid_urls:
-        for link in _cached_upstream_links(url):
+    for url, user_agent in sources:
+        upstream_links = (
+            _cached_upstream_links(url, user_agent=user_agent)
+            if user_agent else _cached_upstream_links(url)
+        )
+        for link in upstream_links:
             encoded = link.encode('utf-8')
             if (allowed_line_sha256 is not None
                     and hashlib.sha256(encoded).hexdigest() not in allowed_line_sha256):
@@ -1698,6 +1703,30 @@ def _backup_links() -> list[str] | None:
             links.append(link)
             total_bytes += len(encoded)
     return links or None
+
+
+def _backup_sources(urls: list[str]) -> list[tuple[str, str]]:
+    from django.conf import settings
+    manifest = getattr(settings, 'SUBSCRIPTION_BACKUP_PROVIDER_MANIFEST', [])
+    if manifest:
+        if not isinstance(manifest, list):
+            return []
+        enabled = [provider for provider in manifest
+                   if isinstance(provider, dict) and provider.get('enabled') is True]
+        if len(enabled) != len(urls):
+            return []
+        candidates = zip(urls, (
+            _validated_upstream_user_agent(provider['subscription_user_agent'])
+            if provider.get('subscription_user_agent') else ''
+            for provider in enabled
+        ))
+    else:
+        candidates = ((url, '') for url in urls)
+    return [
+        (url, user_agent)
+        for url, user_agent in candidates
+        if isinstance(url, str) and _valid_upstream_url(url)
+    ]
 
 
 def _valid_line_sha256_allowlist(value) -> bool:
@@ -1732,7 +1761,8 @@ def _evict_backup_cache(active_keys: set[str]) -> None:
     now = time.monotonic()
     with _BACKUP_CACHE_LOCK:
         for key, (_fresh_until, stale_until, _links) in list(_BACKUP_CACHE.items()):
-            if stale_until <= now or key not in active_keys:
+            source_key = key.partition('\x00')[0]
+            if stale_until <= now or source_key not in active_keys:
                 _BACKUP_CACHE.pop(key, None)
         while len(_BACKUP_CACHE) > _BACKUP_CACHE_HARD_MAX_ENTRIES:
             _BACKUP_CACHE.pop(next(iter(_BACKUP_CACHE)), None)
@@ -1745,10 +1775,13 @@ def _evict_backup_cache(active_keys: set[str]) -> None:
             _NATIVE_PROFILE_CACHE.pop(next(iter(_NATIVE_PROFILE_CACHE)), None)
 
 
-def _cached_upstream_links(url: str) -> list[str]:
+def _cached_upstream_links(url: str, *, user_agent: str = '') -> list[str]:
     """Fetch one upstream and retain a bounded in-memory last-known-good."""
     from django.conf import settings
-    key = _backup_cache_key(url)
+    source_key = _backup_cache_key(url)
+    key = source_key
+    if user_agent:
+        key = f'{source_key}\x00{hashlib.sha256(user_agent.encode("ascii")).hexdigest()}'
     now = time.monotonic()
     with _BACKUP_CACHE_LOCK:
         cached = _BACKUP_CACHE.get(key)
@@ -1774,7 +1807,10 @@ def _cached_upstream_links(url: str) -> list[str]:
             return cached[2] if cached and cached[1] > now else []
 
     try:
-        response_headers, payload = _fetch_upstream_payload(url)
+        if user_agent:
+            response_headers, payload = _fetch_upstream_payload(url, user_agent=user_agent)
+        else:
+            response_headers, payload = _fetch_upstream_payload(url)
         links = _sanitize_upstream_payload(payload, response_headers)
         if not links:
             with _BACKUP_CACHE_LOCK:
@@ -1791,7 +1827,7 @@ def _cached_upstream_links(url: str) -> list[str]:
                 return []
             fresh_until = time.monotonic() + ttl
             _BACKUP_CACHE[key] = (fresh_until, fresh_until + stale_if_error, links)
-            active_keys = set(_BACKUP_CACHE)
+            active_keys = {cache_key.partition('\x00')[0] for cache_key in _BACKUP_CACHE}
         _evict_backup_cache(active_keys)
         return links
     except _UpstreamPlaceholderDocument:
@@ -1800,7 +1836,7 @@ def _cached_upstream_links(url: str) -> list[str]:
         logger.warning(
             'subscription backup source %s served a client-identification placeholder '
             'instead of a configuration; check the configured client identity',
-            key[:12])
+            source_key[:12])
         with _BACKUP_CACHE_LOCK:
             cached = _BACKUP_CACHE.get(key)
             return cached[2] if cached and cached[1] > time.monotonic() else []

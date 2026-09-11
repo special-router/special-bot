@@ -33,8 +33,17 @@ never in `.environment`:
 ```bash
 # on BOT, as root
 install -m 600 /dev/null /etc/special-bot/subscription-backup.json
-# then write: {"upstream_urls": ["https://<provider>/<token>"]}
+# then write either the compatible URL list:
+# {"upstream_urls": ["https://<provider>/<token>"]}
+# or a provider manifest when sources require different formats:
+# {"providers":[{"id":"provider-a","adapter":"subscription",
+#   "url":"https://<provider>/<token>","host":"provider.example",
+#   "enabled":true,"subscription_user_agent":"ClashMeta/2.10"}]}
 ```
+
+Every enabled `host` must also be present verbatim in
+`SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS`. The manifest identifies and configures a
+source; it does not enlarge the network allowlist.
 
 Compose binds that path into `web`. **The path is read from
 `/root/special-bot/.env`, not from `.environment`.** Two different files with
@@ -116,6 +125,17 @@ SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT=SFI/1.9
 SUBSCRIPTION_BACKUP_UPSTREAM_HWID=<stable per-installation id>
 SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_OS=Android
 ```
+
+`SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT` remains the fallback for the legacy
+`upstream_urls` form. In a `providers` manifest, set
+`subscription_user_agent` per entry so adding one source cannot silently change
+the format requested from every other source.
+
+The per-entry selector applies to the VLESS-line path. Native Happ preservation
+uses `SUBSCRIPTION_XRAY_JSON_NATIVE_MIRROR_USER_AGENT` for every enabled source
+and rejects the native set atomically when any source returns another format.
+Leave `SUBSCRIPTION_XRAY_JSON_NATIVE_MIRRORS_ENABLED=false` for a mixed-format
+provider set.
 
 `x-hwid` must match `^[a-zA-Z0-9=-]{10,64}$`; anything else and the code sends no
 identity headers at all — silently, by design, because a malformed identity is
