@@ -1964,12 +1964,21 @@ def _native_profile(profile) -> dict | None:
     if not isinstance(routing, dict):
         return None
     balancers, rules = routing.get('balancers'), routing.get('rules')
-    if (not isinstance(balancers, list) or len(balancers) > _NATIVE_PROFILE_MAX_BALANCERS
-            or not all(isinstance(item, dict) for item in balancers)
+    # burstObservatory is optional: A-Service ships per-server profiles without
+    # it (only their balancer blocks carry it). Requiring the key rejected every
+    # single-server profile, and the atomic source check then served nothing.
+    burst = profile.get('burstObservatory')
+    if burst is not None and not isinstance(burst, dict):
+        return None
+    # Balancers are optional the same way: balancer-less per-server profiles
+    # route through explicit rules only.
+    if ((balancers is not None and (
+            not isinstance(balancers, list)
+            or len(balancers) > _NATIVE_PROFILE_MAX_BALANCERS
+            or not all(isinstance(item, dict) for item in balancers)))
             or not isinstance(rules, list) or len(rules) > _NATIVE_PROFILE_MAX_RULES
             or not all(isinstance(item, dict) for item in rules)
-            or not isinstance(profile.get('dns'), dict)
-            or not isinstance(profile.get('burstObservatory'), dict)):
+            or not isinstance(profile.get('dns'), dict)):
         return None
     preserved = copy.deepcopy(profile)
     # The provider omits ``listen``, which makes standalone Xray bind these
