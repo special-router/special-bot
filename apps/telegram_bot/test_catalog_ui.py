@@ -70,11 +70,15 @@ class CatalogScreenTests(IsolatedAsyncioTestCase):
     @patch('apps.telegram_bot.handlers.main_menu.get_reply_markup_main_menu', new_callable=AsyncMock)
     @patch('apps.telegram_bot.handlers.main_menu.acatalog', new_callable=AsyncMock)
     @patch('apps.telegram_bot.handlers.main_menu.UserVPN')
-    async def test_the_main_menu_names_every_country_before_a_purchase(
+    async def test_the_main_menu_names_every_country_in_the_active_subscription(
         self, user_vpn, catalog, get_markup
     ):
-        user_vpn.objects.filter_by_user.return_value.filter_by_enabled.return_value.acount = AsyncMock(
-            return_value=0)
+        active = (
+            user_vpn.objects.with_related_server.return_value
+            .filter_by_user.return_value.filter_by_enabled.return_value
+        )
+        active.acount = AsyncMock(return_value=1)
+        active.order_by.return_value.afirst = AsyncMock(return_value=self.connection)
         catalog.return_value = FULL
         get_markup.return_value = object()
 
@@ -83,8 +87,7 @@ class CatalogScreenTests(IsolatedAsyncioTestCase):
         self.assertIn('🇩🇪 Германия', message)
         self.assertIn('🇯🇵 Япония', message)
         self.assertNotIn('Белые списки:', message)
-        # Каталог витрины описывает подписку, которой ещё нет: она без id.
-        catalog.assert_awaited_once_with()
+        catalog.assert_awaited_once_with(self.connection)
 
     @patch('apps.telegram_bot.handlers.main_menu.get_reply_markup_main_menu', new_callable=AsyncMock)
     @patch('apps.telegram_bot.handlers.main_menu.acatalog', new_callable=AsyncMock)
@@ -92,8 +95,12 @@ class CatalogScreenTests(IsolatedAsyncioTestCase):
     async def test_the_main_menu_survives_a_catalog_that_knows_nothing(
         self, user_vpn, catalog, get_markup
     ):
-        user_vpn.objects.filter_by_user.return_value.filter_by_enabled.return_value.acount = AsyncMock(
-            return_value=0)
+        active = (
+            user_vpn.objects.with_related_server.return_value
+            .filter_by_user.return_value.filter_by_enabled.return_value
+        )
+        active.acount = AsyncMock(return_value=0)
+        active.order_by.return_value.afirst = AsyncMock(return_value=None)
         catalog.return_value = SubscriptionCatalog()
         get_markup.return_value = object()
 
@@ -101,6 +108,7 @@ class CatalogScreenTests(IsolatedAsyncioTestCase):
 
         self.assertIn('SPECIAL VPN', message)
         self.assertNotIn('Страны:', message)
+        catalog.assert_awaited_once_with(None)
 
     @patch('apps.telegram_bot.handlers.show_keys.get_reply_markup_manage_keys', new_callable=AsyncMock)
     @patch('apps.telegram_bot.handlers.show_keys.get_user_access_url', new_callable=AsyncMock)

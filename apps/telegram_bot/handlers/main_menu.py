@@ -22,13 +22,18 @@ async def build_main_menu_screen(user: TelegramUser, *, greeting: bool = False) 
     """Главный экран. Баланс и число подписок вынесены сюда, чтобы за ними не
     приходилось открывать профиль.
 
-    Страны показываются и без приветствия: это витрина, и на ней стоит цена, а
-    вопрос «за что» задаётся раньше, чем открывается «Оплата». Каталог здесь
-    описывает подписку, которой ещё нет, — на этом экране решают, покупать ли;
-    что уже куплено, показывает экран «Подписки».
+    Для действующей подписки показывается её фактический набор стран. Без неё
+    остаётся витринный каталог: экран не должен обещать канареечные профили
+    пользователю, которому они ещё не назначены.
     """
-    active_keys = await UserVPN.objects.filter_by_user(user_id=user.id).filter_by_enabled(True).acount()
-    catalog = await acatalog()
+    active_connections = (
+        UserVPN.objects.with_related_server()
+        .filter_by_user(user_id=user.id)
+        .filter_by_enabled(True)
+    )
+    active_keys = await active_connections.acount()
+    first_connection = await active_connections.order_by('created_at', 'id').afirst()
+    catalog = await acatalog(first_connection)
 
     text = screen(
         'SPECIAL VPN',

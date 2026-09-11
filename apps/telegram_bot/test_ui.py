@@ -111,9 +111,17 @@ class ScreenGuaranteesTests(IsolatedAsyncioTestCase):
 
             patched('apps.telegram_bot.utils.split_balance', return_value=self.split)
 
-            for module in ('main_menu', 'profile'):
-                objects = patched(f'apps.telegram_bot.handlers.{module}.UserVPN').objects
-                objects.filter_by_user.return_value.filter_by_enabled.return_value.acount = AsyncMock(return_value=1)
+            main_objects = patched('apps.telegram_bot.handlers.main_menu.UserVPN').objects
+            main_active = (
+                main_objects.with_related_server.return_value
+                .filter_by_user.return_value.filter_by_enabled.return_value
+            )
+            main_active.acount = AsyncMock(return_value=1)
+            main_active.order_by.return_value.afirst = AsyncMock(return_value=self.connection)
+
+            profile_objects = patched('apps.telegram_bot.handlers.profile.UserVPN').objects
+            profile_objects.filter_by_user.return_value.filter_by_enabled.return_value.acount = \
+                AsyncMock(return_value=1)
 
             telegram_users = patched('apps.telegram_bot.handlers.profile.TelegramUser').objects
             telegram_users.annotate_balance.return_value.aget = AsyncMock(return_value=self.user)
