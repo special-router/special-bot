@@ -1,4 +1,4 @@
-"""Абзац о содержимом подписки для экранов бота.
+"""Короткий список стран подписки для экранов бота.
 
 Список стран приходит из `apps.subscriptions.catalog`, где он считан из тех же
 строк, что уходят в приложение клиента. Здесь остаётся только текст — и он
@@ -20,7 +20,6 @@ from apps.telegram_bot.ui import bold
 
 
 COUNTRIES_LABEL: Final[str] = 'Страны:'
-WHITELIST_LABEL: Final[str] = 'Белые списки:'
 
 
 async def acatalog(user_vpn=None) -> SubscriptionCatalog:
@@ -29,11 +28,7 @@ async def acatalog(user_vpn=None) -> SubscriptionCatalog:
 
 
 def catalog_body(catalog: SubscriptionCatalog) -> list[str]:
-    """Один блок в две строки: страны и те из них, что держат белые списки.
-
-    Подпись выделена, дальше перечисление — экран перечисляет, а не объясняет.
-    Что даёт вторая строка, клиент видит по самой подписке; абзац про глушилки
-    здесь был текстом, который читают один раз и пролистывают всегда.
+    """Один короткий блок со странами без пояснений о профилях и обходах.
 
     Пустой каталог даёт пустой список блоков, а не оговорку: экран, которому
     нечего сказать, молчит — обещать «страны появятся позже» значит обещать
@@ -41,7 +36,4 @@ def catalog_body(catalog: SubscriptionCatalog) -> list[str]:
     """
     if not catalog:
         return []
-    lines = [f'{bold(COUNTRIES_LABEL)} ' + ', '.join(catalog.countries)]
-    if catalog.whitelisted:
-        lines.append(f'{bold(WHITELIST_LABEL)} ' + ', '.join(catalog.whitelisted))
-    return ['\n'.join(lines)]
+    return [f'{bold(COUNTRIES_LABEL)} ' + ', '.join(catalog.countries)]

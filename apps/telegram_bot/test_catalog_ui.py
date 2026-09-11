@@ -27,12 +27,11 @@ FULL = SubscriptionCatalog(
 
 
 class CatalogBodyTests(IsolatedAsyncioTestCase):
-    def test_one_block_of_two_labelled_lines(self):
+    def test_one_block_lists_only_countries(self):
         blocks = catalog_body(FULL)
 
         self.assertEqual(blocks, [
-            '<b>Страны:</b> 🇳🇱 Нидерланды, 🇩🇪 Германия, 🇯🇵 Япония\n'
-            '<b>Белые списки:</b> 🇳🇱 Нидерланды',
+            '<b>Страны:</b> 🇳🇱 Нидерланды, 🇩🇪 Германия, 🇯🇵 Япония',
         ])
 
     def test_a_catalog_without_a_bypass_line_says_nothing_about_one(self):
@@ -83,7 +82,7 @@ class CatalogScreenTests(IsolatedAsyncioTestCase):
 
         self.assertIn('🇩🇪 Германия', message)
         self.assertIn('🇯🇵 Япония', message)
-        self.assertIn('<b>Белые списки:</b> 🇳🇱 Нидерланды', message)
+        self.assertNotIn('Белые списки:', message)
         # Каталог витрины описывает подписку, которой ещё нет: она без id.
         catalog.assert_awaited_once_with()
 
