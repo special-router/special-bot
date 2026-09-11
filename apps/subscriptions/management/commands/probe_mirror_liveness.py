@@ -42,6 +42,7 @@ from apps.monitoring.models import MonitorState
 from apps.subscriptions.models import MirrorEndpointLiveness
 from apps.subscriptions.views import (
     _backup_cache_key,
+    _backup_sources,
     _backup_source_set_digest,
     _bounded_number,
     _decode_subscription_payload,
@@ -50,7 +51,6 @@ from apps.subscriptions.views import (
     _strict_raw_uri_query,
     _valid_raw_hysteria_line,
     _valid_raw_vless_line,
-    _valid_upstream_url,
 )
 
 
@@ -208,7 +208,7 @@ class Command(BaseCommand):
         urls = getattr(settings, 'SUBSCRIPTION_BACKUP_UPSTREAM_URLS', [])
         configured = [url for url in urls if isinstance(url, str) and url.strip()] \
             if isinstance(urls, list) else []
-        return configured, [url for url in configured if _valid_upstream_url(url)]
+        return configured, [url for url, _user_agent in _backup_sources(configured)]
 
     def _record_source_state(self, status: str, configured: list[str], valid: list[str],
                              *, targets: int = 0, probed: int = 0, alive: int = 0,
@@ -251,15 +251,17 @@ class Command(BaseCommand):
         source_limit = int(_bounded_number(
             getattr(settings, 'SUBSCRIPTION_BACKUP_MAX_SOURCES', 8), default=8, lower=1, upper=32))
         targets: dict[tuple, dict] = {}
-        valid_urls = [
-            url for url in urls if isinstance(url, str) and _valid_upstream_url(url)
-        ][:source_limit]
+        sources = _backup_sources(urls)[:source_limit]
+        valid_urls = [url for url, _user_agent in sources]
         loaded_sources = 0
         unprobeable_sources = 0
-        for url in valid_urls:
+        for url, user_agent in sources:
             source_key = _backup_cache_key(url)
             try:
-                headers, payload = _fetch_upstream_payload(url)
+                if user_agent:
+                    headers, payload = _fetch_upstream_payload(url, user_agent=user_agent)
+                else:
+                    headers, payload = _fetch_upstream_payload(url)
                 endpoints = _parse_upstream_endpoints(payload, headers)
                 if endpoints is None:
                     endpoints, unprobeable = _raw_vless_endpoints(payload)

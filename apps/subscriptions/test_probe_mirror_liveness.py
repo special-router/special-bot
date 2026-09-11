@@ -1,6 +1,6 @@
 import datetime
 import io
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
@@ -239,6 +239,30 @@ class ProbeMirrorLivenessTests(TestCase):
             'authority': 'grpc.example',
             'multiMode': True,
         })
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_UPSTREAM_URLS=[
+            'https://one.example/sub/token', 'https://two.example/sub/token'],
+        SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS=['one.example', 'two.example'],
+        SUBSCRIPTION_BACKUP_PROVIDER_MANIFEST=[
+            {'id': 'one', 'enabled': True, 'subscription_user_agent': 'SFI/1.9'},
+            {'id': 'two', 'enabled': True, 'subscription_user_agent': 'ClashMeta/2.10'},
+        ],
+    )
+    @patch('apps.subscriptions.management.commands.probe_mirror_liveness._fetch_upstream_payload')
+    def test_each_provider_is_probed_with_its_format_user_agent(self, fetch):
+        fetch.return_value = ({}, (
+            b'vless://11111111-2222-3333-4444-555555555555@edge.example:443?'
+            b'type=tcp&security=tls&sni=cover.example'))
+
+        command = Command()
+        command._targets()
+
+        self.assertEqual(fetch.call_args_list, [
+            call('https://one.example/sub/token', user_agent='SFI/1.9'),
+            call('https://two.example/sub/token', user_agent='ClashMeta/2.10'),
+        ])
+        self.assertEqual(command._source_status, {'loaded': 2, 'unprobeable': 0})
 
     def test_egress_probe_requires_http_200_with_public_ip_body(self):
         class FakeTunnel:
