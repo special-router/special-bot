@@ -2244,16 +2244,15 @@ def _fetch_upstream_payload(url: str, *, user_agent: str | None = None) -> tuple
             tls_socket, deadline, read_timeout, max_bytes)
         if status != 200:
             raise ValueError('upstream_http_status')
-        encoding = headers.get('content-encoding', '').strip().lower()
+        encoding = headers.get('content-encoding', '').casefold()
         if encoding not in ('', 'identity'):
             raise ValueError('upstream_compressed_response')
-        if headers.get('transfer-encoding', '').strip().lower() not in ('', 'identity'):
+        transfer_encoding = headers.get('transfer-encoding', '').casefold()
+        if transfer_encoding not in ('', 'identity', 'chunked'):
             raise ValueError('upstream_unsupported_transfer_encoding')
-        declared = headers.get('content-length')
-        try:
-            declared_size = int(declared) if declared is not None else None
-        except (TypeError, ValueError):
-            raise ValueError('upstream_response_too_large') from None
+        declared_size = _declared_content_length(headers)
+        if declared_size is not None and 'transfer-encoding' in headers:
+            raise ValueError('upstream_ambiguous_response_length')
         if declared_size is not None and (declared_size < 0 or declared_size > max_bytes):
             raise ValueError('upstream_response_too_large')
         if len(body) > max_bytes:
@@ -2289,21 +2288,40 @@ def _read_upstream_response(socket_, deadline: float, read_timeout: float,
     raw_headers, body = raw.split(b'\r\n\r\n', 1)
     try:
         lines = raw_headers.decode('iso-8859-1').split('\r\n')
-        _protocol, status, _reason = lines[0].split(' ', 2)
+        protocol, status, _reason = lines[0].split(' ', 2)
         headers = {}
+        ambiguous_framing = False
         for line in lines[1:]:
             name, value = line.split(':', 1)
-            headers[name.casefold()] = value.strip()
+            normalized_name = name.casefold()
+            if (not _valid_http_token(name.encode('iso-8859-1'))
+                    or any((ord(character) < 32 and character != '\t') or ord(character) == 127
+                           for character in value)):
+                raise ValueError
+            if (normalized_name in {'content-length', 'content-encoding', 'transfer-encoding'}
+                    and normalized_name in headers):
+                ambiguous_framing = True
+            headers[normalized_name] = value.strip(' \t')
     except (UnicodeDecodeError, ValueError):
         raise ValueError('upstream_invalid_response') from None
+    if ambiguous_framing:
+        raise ValueError('upstream_ambiguous_response_framing')
 
-    declared = headers.get('content-length')
-    try:
-        expected_size = int(declared) if declared is not None else None
-    except ValueError:
-        raise ValueError('upstream_response_too_large') from None
+    expected_size = _declared_content_length(headers)
     if expected_size is not None and (expected_size < 0 or expected_size > max_bytes):
         raise ValueError('upstream_response_too_large')
+    if expected_size is not None and 'transfer-encoding' in headers:
+        raise ValueError('upstream_ambiguous_response_length')
+    transfer_encoding = headers.get('transfer-encoding', '').casefold()
+    if transfer_encoding == 'chunked':
+        if protocol != 'HTTP/1.1':
+            raise ValueError('upstream_invalid_response')
+        if expected_size is not None:
+            raise ValueError('upstream_ambiguous_response_length')
+        return int(status), headers, _read_chunked_upstream_body(
+            socket_, body, deadline, read_timeout, max_bytes)
+    if transfer_encoding not in ('', 'identity'):
+        raise ValueError('upstream_unsupported_transfer_encoding')
     while expected_size is None or len(body) < expected_size:
         socket_.settimeout(_remaining_timeout(deadline, read_timeout))
         chunk = socket_.recv(min(8192, max_bytes - len(body) + 1))
@@ -2313,6 +2331,149 @@ def _read_upstream_response(socket_, deadline: float, read_timeout: float,
         if len(body) > max_bytes:
             raise ValueError('upstream_response_too_large')
     return int(status), headers, body
+
+
+def _declared_content_length(headers: dict[str, str]) -> int | None:
+    declared = headers.get('content-length')
+    if declared is None:
+        return None
+    if not declared or any(character not in '0123456789' for character in declared):
+        raise ValueError('upstream_invalid_response_length')
+    return int(declared)
+
+
+def _read_chunked_upstream_body(socket_, buffered: bytearray, deadline: float,
+                                read_timeout: float, max_bytes: int) -> bytearray:
+    """Decode one bounded HTTP/1.1 chunked body without relaxing the deadline."""
+    decoded = bytearray()
+    line_limit = 4096
+    trailer_limit = 64 * 1024
+    trailer_bytes = 0
+    wire_limit = max_bytes + trailer_limit
+    wire_bytes = len(buffered)
+    if wire_bytes > wire_limit:
+        raise ValueError('upstream_response_too_large')
+
+    def receive(maximum: int) -> None:
+        nonlocal wire_bytes
+        if wire_bytes >= wire_limit:
+            raise ValueError('upstream_response_too_large')
+        socket_.settimeout(_remaining_timeout(deadline, read_timeout))
+        chunk = socket_.recv(min(8192, maximum, wire_limit - wire_bytes))
+        if not chunk:
+            raise ValueError('upstream_incomplete_response')
+        buffered.extend(chunk)
+        wire_bytes += len(chunk)
+
+    def read_more(limit: int, error: str) -> None:
+        if len(buffered) >= limit:
+            raise ValueError(error)
+        receive(limit - len(buffered))
+
+    while True:
+        while b'\r\n' not in buffered:
+            read_more(line_limit, 'upstream_invalid_chunked_response')
+        raw_size, remainder = buffered.split(b'\r\n', 1)
+        buffered[:] = remainder
+        chunk_size = _chunk_size_from_line(raw_size)
+        if len(raw_size) > line_limit or chunk_size is None:
+            raise ValueError('upstream_invalid_chunked_response')
+        if chunk_size == 0:
+            while True:
+                while b'\r\n' not in buffered:
+                    read_more(trailer_limit, 'upstream_trailers_too_large')
+                trailer, remainder = buffered.split(b'\r\n', 1)
+                buffered[:] = remainder
+                trailer_bytes += len(trailer) + 2
+                if trailer_bytes > trailer_limit:
+                    raise ValueError('upstream_trailers_too_large')
+                if not trailer:
+                    return decoded
+                if not _valid_chunk_trailer(trailer):
+                    raise ValueError('upstream_invalid_chunked_response')
+        if chunk_size > max_bytes - len(decoded):
+            raise ValueError('upstream_response_too_large')
+        required = chunk_size + 2
+        while len(buffered) < required:
+            receive(required - len(buffered))
+        if buffered[chunk_size:required] != b'\r\n':
+            raise ValueError('upstream_invalid_chunked_response')
+        decoded.extend(buffered[:chunk_size])
+        del buffered[:required]
+
+
+_HTTP_TOKEN_BYTES = frozenset(
+    b"!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+
+def _valid_http_token(value: bytes) -> bool:
+    return bool(value) and all(character in _HTTP_TOKEN_BYTES for character in value)
+
+
+def _chunk_size_from_line(raw_size: bytes) -> int | None:
+    cursor = 0
+    while cursor < len(raw_size) and raw_size[cursor] in b'0123456789abcdefABCDEF':
+        cursor += 1
+    if cursor == 0 or cursor > 16:
+        return None
+    chunk_size = int(raw_size[:cursor], 16)
+    while cursor < len(raw_size):
+        while cursor < len(raw_size) and raw_size[cursor] in b' \t':
+            cursor += 1
+        if cursor >= len(raw_size) or raw_size[cursor] != ord(';'):
+            return None
+        cursor += 1
+        while cursor < len(raw_size) and raw_size[cursor] in b' \t':
+            cursor += 1
+        name_start = cursor
+        while cursor < len(raw_size) and raw_size[cursor] in _HTTP_TOKEN_BYTES:
+            cursor += 1
+        if cursor == name_start:
+            return None
+        while cursor < len(raw_size) and raw_size[cursor] in b' \t':
+            cursor += 1
+        if cursor < len(raw_size) and raw_size[cursor] == ord('='):
+            cursor += 1
+            while cursor < len(raw_size) and raw_size[cursor] in b' \t':
+                cursor += 1
+            if cursor < len(raw_size) and raw_size[cursor] == ord('"'):
+                cursor = _consume_http_quoted_value(raw_size, cursor)
+                if cursor is None:
+                    return None
+            else:
+                value_start = cursor
+                while cursor < len(raw_size) and raw_size[cursor] in _HTTP_TOKEN_BYTES:
+                    cursor += 1
+                if cursor == value_start:
+                    return None
+    return chunk_size
+
+
+def _consume_http_quoted_value(value: bytes, cursor: int) -> int | None:
+    cursor += 1
+    escaped = False
+    while cursor < len(value):
+        character = value[cursor]
+        if escaped:
+            if character != 9 and (character < 32 or character == 127):
+                return None
+            escaped = False
+        elif character == ord('\\'):
+            escaped = True
+        elif character == ord('"'):
+            return cursor + 1
+        elif character != 9 and (character < 32 or character == 127):
+            return None
+        cursor += 1
+    return None
+
+
+def _valid_chunk_trailer(trailer: bytes) -> bool:
+    name, separator, value = trailer.partition(b':')
+    if (not separator or not _valid_http_token(name)
+            or bytes(name).lower() in {b'content-length', b'content-encoding', b'transfer-encoding'}):
+        return False
+    return all(character == 9 or character >= 32 and character != 127 for character in value)
 
 
 _DEFAULT_UPSTREAM_USER_AGENT = 'SPECIAL-subscription-backup/1'

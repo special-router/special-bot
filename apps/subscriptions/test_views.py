@@ -1028,6 +1028,202 @@ class ExternalSubscriptionTests(SimpleTestCase):
 
         self.assertTrue(tls_socket.closed)
 
+    @override_settings(SUBSCRIPTION_BACKUP_RESPONSE_MAX_BYTES=6)
+    @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
+    @patch('apps.subscriptions.views.ssl.create_default_context')
+    @patch('apps.subscriptions.views.socket.create_connection')
+    def test_chunked_response_is_decoded_with_extensions_and_trailers(
+        self, create_connection, create_context, resolve,
+    ):
+        tls_socket = _FakeTLSSocket(
+            b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n'
+            b'3\r\nabc\r\n3 ; source = "test;a"\r\ndef\r\n0\r\nX-Test: ok\r\n\r\n')
+        create_connection.return_value = Mock()
+        create_context.return_value.wrap_socket.return_value = tls_socket
+
+        headers, payload = views._fetch_upstream_payload('https://subscription.example/chunked')
+
+        self.assertEqual(headers['transfer-encoding'], 'chunked')
+        self.assertEqual(payload, b'abcdef')
+        self.assertTrue(tls_socket.closed)
+
+    @override_settings(SUBSCRIPTION_BACKUP_RESPONSE_MAX_BYTES=5)
+    @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
+    @patch('apps.subscriptions.views.ssl.create_default_context')
+    @patch('apps.subscriptions.views.socket.create_connection')
+    def test_chunked_response_size_cap_applies_to_decoded_body(
+        self, create_connection, create_context, resolve,
+    ):
+        tls_socket = _FakeTLSSocket(
+            b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nabcdef\r\n0\r\n\r\n')
+        create_connection.return_value = Mock()
+        create_context.return_value.wrap_socket.return_value = tls_socket
+
+        with self.assertRaisesRegex(ValueError, 'too_large'):
+            views._fetch_upstream_payload('https://subscription.example/chunked')
+
+        self.assertTrue(tls_socket.closed)
+
+    @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
+    @patch('apps.subscriptions.views.ssl.create_default_context')
+    @patch('apps.subscriptions.views.socket.create_connection')
+    def test_malformed_chunked_response_is_rejected(
+        self, create_connection, create_context, resolve,
+    ):
+        tls_socket = _FakeTLSSocket(
+            b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nabcdef\r\n')
+        create_connection.return_value = Mock()
+        create_context.return_value.wrap_socket.return_value = tls_socket
+
+        with self.assertRaisesRegex(ValueError, 'invalid_chunked'):
+            views._fetch_upstream_payload('https://subscription.example/chunked')
+
+        self.assertTrue(tls_socket.closed)
+
+    @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
+    @patch('apps.subscriptions.views.ssl.create_default_context')
+    @patch('apps.subscriptions.views.socket.create_connection')
+    def test_chunked_response_with_content_length_is_rejected(
+        self, create_connection, create_context, resolve,
+    ):
+        tls_socket = _FakeTLSSocket(
+            b'HTTP/1.1 200 OK\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n'
+            b'3\r\nabc\r\n0\r\n\r\n')
+        create_connection.return_value = Mock()
+        create_context.return_value.wrap_socket.return_value = tls_socket
+
+        with self.assertRaisesRegex(ValueError, 'ambiguous'):
+            views._fetch_upstream_payload('https://subscription.example/chunked')
+
+        self.assertTrue(tls_socket.closed)
+
+    @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
+    @patch('apps.subscriptions.views.ssl.create_default_context')
+    @patch('apps.subscriptions.views.socket.create_connection')
+    def test_any_transfer_encoding_with_content_length_is_rejected(
+        self, create_connection, create_context, resolve,
+    ):
+        for transfer_encoding in ('identity', ''):
+            tls_socket = _FakeTLSSocket(
+                f'HTTP/1.1 200 OK\r\nContent-Length: 3\r\nTransfer-Encoding: {transfer_encoding}\r\n\r\nabc'.encode())
+            create_connection.return_value = Mock()
+            create_context.return_value.wrap_socket.return_value = tls_socket
+
+            with self.subTest(transfer_encoding=transfer_encoding), self.assertRaisesRegex(
+                ValueError, 'ambiguous',
+            ):
+                views._fetch_upstream_payload('https://subscription.example/framing')
+
+            self.assertTrue(tls_socket.closed)
+
+    @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
+    @patch('apps.subscriptions.views.ssl.create_default_context')
+    @patch('apps.subscriptions.views.socket.create_connection')
+    def test_content_length_requires_ascii_decimal_digits(
+        self, create_connection, create_context, resolve,
+    ):
+        for content_length in ('+3', '1_0'):
+            tls_socket = _FakeTLSSocket(
+                f'HTTP/1.1 200 OK\r\nContent-Length: {content_length}\r\n\r\nabc'.encode())
+            create_connection.return_value = Mock()
+            create_context.return_value.wrap_socket.return_value = tls_socket
+
+            with self.subTest(content_length=content_length), self.assertRaisesRegex(
+                ValueError, 'invalid_response_length',
+            ):
+                views._fetch_upstream_payload('https://subscription.example/framing')
+
+            self.assertTrue(tls_socket.closed)
+
+    @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
+    @patch('apps.subscriptions.views.ssl.create_default_context')
+    @patch('apps.subscriptions.views.socket.create_connection')
+    def test_duplicate_framing_headers_are_rejected(
+        self, create_connection, create_context, resolve,
+    ):
+        for header in ('Content-Length: 3', 'Transfer-Encoding: chunked'):
+            tls_socket = _FakeTLSSocket(
+                f'HTTP/1.1 200 OK\r\n{header}\r\n{header}\r\n\r\n'.encode())
+            create_connection.return_value = Mock()
+            create_context.return_value.wrap_socket.return_value = tls_socket
+
+            with self.subTest(header=header), self.assertRaisesRegex(ValueError, 'ambiguous'):
+                views._fetch_upstream_payload('https://subscription.example/framing')
+
+            self.assertTrue(tls_socket.closed)
+
+    @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
+    @patch('apps.subscriptions.views.ssl.create_default_context')
+    @patch('apps.subscriptions.views.socket.create_connection')
+    def test_non_ascii_header_whitespace_is_not_normalized(
+        self, create_connection, create_context, resolve,
+    ):
+        tls_socket = _FakeTLSSocket(
+            b'HTTP/1.1 200 OK\r\nTransfer-Encoding:\x85chunked\r\n\r\n0\r\n\r\n')
+        create_connection.return_value = Mock()
+        create_context.return_value.wrap_socket.return_value = tls_socket
+
+        with self.assertRaisesRegex(ValueError, 'unsupported_transfer'):
+            views._fetch_upstream_payload('https://subscription.example/chunked')
+
+        self.assertTrue(tls_socket.closed)
+
+    @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
+    @patch('apps.subscriptions.views.ssl.create_default_context')
+    @patch('apps.subscriptions.views.socket.create_connection')
+    def test_http_1_0_chunked_response_is_rejected(
+        self, create_connection, create_context, resolve,
+    ):
+        tls_socket = _FakeTLSSocket(
+            b'HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n')
+        create_connection.return_value = Mock()
+        create_context.return_value.wrap_socket.return_value = tls_socket
+
+        with self.assertRaisesRegex(ValueError, 'invalid_response'):
+            views._fetch_upstream_payload('https://subscription.example/chunked')
+
+        self.assertTrue(tls_socket.closed)
+
+    @override_settings(SUBSCRIPTION_BACKUP_RESPONSE_MAX_BYTES=64)
+    @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
+    @patch('apps.subscriptions.views.ssl.create_default_context')
+    @patch('apps.subscriptions.views.socket.create_connection')
+    def test_chunked_framing_overhead_is_bounded(
+        self, create_connection, create_context, resolve,
+    ):
+        extension = b';padding=' + b'a' * 4000
+        body = (b'1' + extension + b'\r\na\r\n') * 20 + b'0\r\n\r\n'
+        tls_socket = _FakeTLSSocket(
+            b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n' + body)
+        create_connection.return_value = Mock()
+        create_context.return_value.wrap_socket.return_value = tls_socket
+
+        with self.assertRaisesRegex(ValueError, 'too_large'):
+            views._fetch_upstream_payload('https://subscription.example/chunked')
+
+        self.assertTrue(tls_socket.closed)
+
+    @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
+    @patch('apps.subscriptions.views.ssl.create_default_context')
+    @patch('apps.subscriptions.views.socket.create_connection')
+    def test_invalid_chunk_extensions_and_trailers_are_rejected(
+        self, create_connection, create_context, resolve,
+    ):
+        responses = (
+            b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1;bad name=x\r\na\r\n0\r\n\r\n',
+            b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n0\r\nBad Trailer: x\r\n\r\n',
+            b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n0\r\nX-Test: bad\x01\r\n\r\n',
+        )
+        for response in responses:
+            tls_socket = _FakeTLSSocket(response)
+            create_connection.return_value = Mock()
+            create_context.return_value.wrap_socket.return_value = tls_socket
+
+            with self.subTest(response=response[-30:]), self.assertRaisesRegex(ValueError, 'invalid_chunked'):
+                views._fetch_upstream_payload('https://subscription.example/chunked')
+
+            self.assertTrue(tls_socket.closed)
+
     @override_settings(
         SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
         SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://bad.example:bad', 'https://subscription.example/valid'],
