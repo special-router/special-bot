@@ -146,6 +146,19 @@ class RenderTests(SimpleTestCase):
         with override_settings(SUBSCRIPTION_ANNOUNCE_TEXT='Профилактика в 03:00'):
             self.assertIn('Профилактика в 03:00', self.render())
 
+    def test_unavailable_page_shows_the_reason_without_the_bearer_url(self):
+        html = page.render_unavailable('⛔ Подписка закончилась — откройте бот')
+
+        self.assertIn('Подписка закончилась', html)
+        self.assertNotIn(_URL, html)
+        self.assertIn('https://t.me/support', html)
+
+    def test_unavailable_page_escapes_the_reason(self):
+        html = page.render_unavailable('<script>alert(1)</script>')
+
+        self.assertNotIn('<script>alert(1)</script>', html)
+        self.assertIn('&lt;script&gt;', html)
+
 
 
 @override_settings(
@@ -198,12 +211,22 @@ class EndpointAudienceTests(SimpleTestCase):
 
         self.assertEqual(response['Cache-Control'], 'private, no-store')
 
-    def test_a_disabled_subscription_gets_the_same_404_as_an_unknown_one(self, _params, _devices):
-        subscription = SimpleNamespace(id=1, enabled=False, sub_id='abcdef0123456789')
-        with patch('apps.subscriptions.views.UserVPN.objects') as user_vpn_objects:
+    @override_settings(SUBSCRIPTION_DENIAL_PLACEHOLDER_ENABLED=True)
+    def test_a_disabled_subscription_gets_a_reason_page_without_its_url(self, _params, _devices):
+        subscription = SimpleNamespace(
+            id=1, enabled=False, sub_id='abcdef0123456789', user_id=1,
+            server=SimpleNamespace(tariff=SimpleNamespace(price='7.00')),
+        )
+        with patch('apps.subscriptions.views.UserVPN.objects') as user_vpn_objects, \
+                patch('apps.subscriptions.views.TelegramUser.objects') as telegram_user_objects:
             user_vpn_objects.select_related.return_value.get.return_value = subscription
+            telegram_user_objects.annotate_balance.return_value.filter.return_value.first.return_value = (
+                SimpleNamespace(balance='0.00'))
             response = views.subscription_proxy(
                 RequestFactory().get('/sub/x', HTTP_ACCEPT='text/html'), 'x')
 
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.content, b'')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'text/html; charset=utf-8')
+        self.assertIn('Подписка закончилась', response.content.decode())
+        self.assertNotIn('abcdef0123456789', response.content.decode())
+        _params.assert_not_called()

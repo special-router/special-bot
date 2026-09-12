@@ -42,12 +42,19 @@ from apps.subscriptions.devices import (
     bound_devices, client_hwid, client_metadata, device_limit_for, hwid_strict,
     register_device, valid_hwid)
 from apps.subscriptions.models import MirrorEndpointLiveness
+from apps.subscriptions.pricing import daily_price as subscription_daily_price
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 from utils.py3xui.async_api import AsyncApi
 
 
 logger = logging.getLogger(__name__)
+
+_UNAVAILABLE_UUID = '00000000-0000-4000-8000-000000000001'
+_DEVICE_LIMIT_MESSAGE = '⚠️ Лимит устройств — освободите место в боте'
+_DEVICE_BINDING_MESSAGE = '⚠️ Устройство не привязано — откройте бот'
+_EXPIRED_MESSAGE = '⛔ Подписка закончилась — пополните баланс и нажмите «Подключить» в боте'
+_DISABLED_MESSAGE = '⛔ Подписка отключена — откройте бот'
 
 # In-process cache of inbound Reality params: (fetched_at, params).
 _PARAM_TTL_SECONDS = 300
@@ -1361,17 +1368,19 @@ def _remnawave_upstream(request, user_vpn) -> tuple[bytes, str, dict[str, str]] 
 @csrf_exempt
 @require_GET
 def subscription_proxy(request, sub_id: str):
+    denial_placeholders_enabled = bool(getattr(
+        settings_relays(), 'SUBSCRIPTION_DENIAL_PLACEHOLDER_ENABLED', False))
     try:
         user_vpn = UserVPN.objects.select_related('server', 'user').get(sub_id=sub_id)
     except UserVPN.DoesNotExist:
-        return _refused(request)
+        return _unknown(request) if denial_placeholders_enabled else _refused(request)
 
-    if not user_vpn.enabled:
-        return _refused(request)
-
-    served, hwid_headers = _device_gate(request, user_vpn)
-    if not served:
-        return _refused(request)
+    if not denial_placeholders_enabled:
+        if not user_vpn.enabled:
+            return _refused(request)
+        served, hwid_headers = _device_gate(request, user_vpn)
+        if not served:
+            return _refused(request)
 
     server = user_vpn.server
 
@@ -1383,6 +1392,34 @@ def subscription_proxy(request, sub_id: str):
     balance = float(getattr(user, 'balance', 0) or 0) if user else 0.0
     days = max(int(balance // price), 0) if price > 0 else 0
     status_label = f'осталось {days} дней' if days > 0 else 'подписка окончена'
+
+    if denial_placeholders_enabled:
+        if not user_vpn.enabled:
+            try:
+                required_balance = float(subscription_daily_price(user_vpn))
+            except (AttributeError, TypeError, ValueError):
+                required_balance = price
+            message = (_EXPIRED_MESSAGE
+                       if required_balance > 0 and balance < required_balance
+                       else _DISABLED_MESSAGE)
+            return _unavailable_response(
+                request, user_vpn, message, days, _request_hwid_headers(request))
+
+        served, hwid_headers = _device_gate(request, user_vpn)
+        if not served:
+            devices = bound_devices(user_vpn)
+            at_limit = bool(client_hwid(request)) and len(devices) >= device_limit_for(user_vpn)
+            if at_limit:
+                hwid_headers = dict(hwid_headers)
+                hwid_headers['x-hwid-max-devices-reached'] = 'true'
+                hwid_headers['x-hwid-limit'] = 'true'
+            return _unavailable_response(
+                request,
+                user_vpn,
+                _DEVICE_LIMIT_MESSAGE if at_limit else _DEVICE_BINDING_MESSAGE,
+                days,
+                hwid_headers,
+            )
 
     # Remnawave отдаёт документ, собранный под конкретное приложение, поэтому
     # весь разбор User-Agent ниже его не касается. Стоит до чтения параметров из
@@ -1666,8 +1703,62 @@ def _device_gate(request, user_vpn) -> tuple[bool, dict[str, str]]:
     return register_device(user_vpn, hwid, client_metadata(request)), headers
 
 
+def _request_hwid_headers(request) -> dict[str, str]:
+    headers = {'x-hwid-active': 'true'}
+    if not client_hwid(request):
+        headers['x-hwid-not-supported'] = 'true'
+    return headers
+
+
+def _unavailable_xray_profile(message: str) -> dict:
+    return {
+        'remarks': message,
+        'log': {'loglevel': 'warning'},
+        'inbounds': _xray_json_inbounds(),
+        'routing': {
+            'domainStrategy': 'AsIs',
+            'rules': [{
+                'type': 'field',
+                'network': 'tcp,udp',
+                'outboundTag': 'unavailable',
+            }],
+        },
+        'outbounds': [{'tag': 'unavailable', 'protocol': 'blackhole'}],
+    }
+
+
+def _unavailable_vless_link(message: str) -> str:
+    query = urlencode((('type', 'tcp'), ('security', 'none'), ('encryption', 'none')))
+    return f'vless://{_UNAVAILABLE_UUID}@127.0.0.1:1?{query}#{quote(message)}'
+
+
+def _unavailable_response(request, user_vpn, message: str, days: int,
+                          hwid_headers: dict[str, str]) -> HttpResponse:
+    """Return a parseable, deliberately non-working document for a known link."""
+    if page.wants_page(request):
+        response = HttpResponse(
+            page.render_unavailable(message), content_type='text/html; charset=utf-8')
+    elif _wants_xray_json(request.META.get('HTTP_USER_AGENT', ''), user_vpn.id):
+        response = HttpResponse(
+            json.dumps([_unavailable_xray_profile(message)]).encode('utf-8'),
+            content_type='application/json',
+        )
+        response['routing-enable'] = '0'
+    else:
+        payload = f'{_unavailable_vless_link(message)}\n'.encode('utf-8')
+        response = HttpResponse(base64.b64encode(payload), content_type='text/plain')
+    response['Profile-Update-Interval'] = '12'
+    _with_headers(response, _client_ui_headers(days))
+    return _no_cache_response(_with_headers(response, hwid_headers))
+
+
+def _unknown(request) -> HttpResponse:
+    """Return a generic 404 for a subscription id that does not exist."""
+    return _no_cache_response(_with_headers(HttpResponseNotFound(), _request_hwid_headers(request)))
+
+
 def _refused(request) -> HttpResponse:
-    """Return the one 404 this endpoint ever produces.
+    """Return the legacy indistinguishable 404 while placeholders are disabled.
 
     Status, body and headers are derived from the request alone, so an unknown
     sub_id, a disabled subscription and a device this subscription will not bind

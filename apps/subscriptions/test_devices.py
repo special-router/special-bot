@@ -1,12 +1,16 @@
 import base64
+import json
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
+from urllib.parse import unquote, urlsplit
 
 from django.test import RequestFactory, TestCase, override_settings
 from django.utils import timezone
 
+from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
+from apps.payments.models import Transaction
 from apps.servers.models import Server, TariffServer
 from apps.subscriptions import views
 from apps.subscriptions.devices import client_hwid, open_binding_window, reset_devices
@@ -41,6 +45,7 @@ PARAMS = {
     SUBSCRIPTION_INTERNAL_INBOUNDS_ENABLED=False,
     SUBSCRIPTION_DEVICE_LIMIT=2,
     SUBSCRIPTION_HWID_STRICT=False,
+    SUBSCRIPTION_DENIAL_PLACEHOLDER_ENABLED=False,
     SUBSCRIPTION_DEVICE_BINDING_WINDOW_MINUTES=15,
     SUBSCRIPTION_DEVICE_BINDING_WINDOW_REQUIRED=True,
     SUBSCRIPTION_DEVICE_REGISTRATIONS_PER_HOUR=5,
@@ -101,6 +106,119 @@ class DeviceBindingTests(TestCase):
         # The refusal must not disclose the fleet, the subscription, or a count.
         self.assertEqual(response.content, b'')
         self.assertEqual(SubscriptionDevice.objects.filter(subscription=self.user_vpn).count(), 2)
+
+    @override_settings(SUBSCRIPTION_DENIAL_PLACEHOLDER_ENABLED=True)
+    def test_device_limit_returns_one_safe_placeholder_profile(self, _params):
+        self._open_window()
+        self._request({'x-hwid': DEVICE_A})
+        self._request({'x-hwid': DEVICE_B})
+        _params.reset_mock()
+
+        response = self._request({'x-hwid': DEVICE_C})
+        lines = base64.b64decode(response.content).decode().splitlines()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'text/plain')
+        self.assertEqual(response['x-hwid-max-devices-reached'], 'true')
+        self.assertEqual(len(lines), 1)
+        placeholder = urlsplit(lines[0])
+        self.assertEqual(placeholder.hostname, '127.0.0.1')
+        self.assertEqual(placeholder.port, 1)
+        self.assertNotEqual(placeholder.username, str(self.user_vpn.vpn_uuid))
+        self.assertIn('Лимит устройств', unquote(placeholder.fragment))
+        _params.assert_not_called()
+
+    @override_settings(SUBSCRIPTION_DENIAL_PLACEHOLDER_ENABLED=True)
+    def test_binding_refusal_does_not_claim_the_device_limit(self, _params):
+        self._request({'x-hwid': DEVICE_A})
+        _params.reset_mock()
+
+        response = self._request({'x-hwid': DEVICE_B})
+        message = unquote(urlsplit(
+            base64.b64decode(response.content).decode().strip()).fragment)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('Устройство не привязано', message)
+        self.assertNotIn('Лимит устройств', message)
+        self.assertNotIn('x-hwid-max-devices-reached', response)
+        _params.assert_not_called()
+
+    @override_settings(
+        SUBSCRIPTION_DENIAL_PLACEHOLDER_ENABLED=True,
+        SUBSCRIPTION_XRAY_JSON_ENABLED=True,
+        SUBSCRIPTION_XRAY_JSON_ALL_USERS_ENABLED=True,
+    )
+    def test_happ_device_limit_returns_a_blackhole_only_json_profile(self, _params):
+        self._open_window()
+        self._request({'x-hwid': DEVICE_A})
+        self._request({'x-hwid': DEVICE_B})
+        _params.reset_mock()
+
+        response = self._request({'x-hwid': DEVICE_C, 'user-agent': 'Happ/2.0'})
+        documents = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/json')
+        self.assertEqual(len(documents), 1)
+        self.assertIn('Лимит устройств', documents[0]['remarks'])
+        self.assertEqual(
+            documents[0]['outbounds'],
+            [{'tag': 'unavailable', 'protocol': 'blackhole'}],
+        )
+        self.assertNotIn(str(self.user_vpn.vpn_uuid), response.content.decode())
+        self.assertNotIn('198.51.100.10', response.content.decode())
+        _params.assert_not_called()
+
+    @override_settings(
+        SUBSCRIPTION_DENIAL_PLACEHOLDER_ENABLED=True,
+        SUBSCRIPTION_FREE_DEVICE_SLOTS=2,
+    )
+    def test_expired_disabled_subscription_returns_a_placeholder(self, _params):
+        Transaction.objects.create(
+            user=self.user,
+            amount='7.00',
+            status=TransactionStatusChoices.SUCCESS,
+            source=TransactionSourceChoices.MANUAL,
+        )
+        UserVPN.objects.filter(pk=self.user_vpn.pk).update(enabled=False, device_limit=3)
+        _params.reset_mock()
+
+        response = self._request()
+        message = unquote(urlsplit(
+            base64.b64decode(response.content).decode().strip()).fragment)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('Подписка закончилась', message)
+        self.assertIn('Подключить', message)
+        _params.assert_not_called()
+
+    @override_settings(SUBSCRIPTION_DENIAL_PLACEHOLDER_ENABLED=True)
+    def test_manual_disable_with_balance_has_its_own_message(self, _params):
+        Transaction.objects.create(
+            user=self.user,
+            amount='70.00',
+            status=TransactionStatusChoices.SUCCESS,
+            source=TransactionSourceChoices.MANUAL,
+        )
+        UserVPN.objects.filter(pk=self.user_vpn.pk).update(enabled=False)
+        _params.reset_mock()
+
+        response = self._request()
+        message = unquote(urlsplit(
+            base64.b64decode(response.content).decode().strip()).fragment)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('Подписка отключена', message)
+        self.assertNotIn('закончилась', message)
+        _params.assert_not_called()
+
+    @override_settings(SUBSCRIPTION_DENIAL_PLACEHOLDER_ENABLED=True)
+    def test_unknown_subscription_remains_a_generic_404(self, _params):
+        response = self._request({'x-hwid': DEVICE_A}, sub_id='no-such-subscription')
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.content, b'')
+        self.assertNotIn('x-hwid-max-devices-reached', response)
 
     def test_known_device_is_still_served_at_the_limit(self, _params):
         self._open_window()

@@ -823,12 +823,13 @@ class XrayJsonDeviceGateTests(SimpleTestCase):
         SUBSCRIPTION_BASE_URL='https://direct.example/sub',
         SUBSCRIPTION_XRAY_JSON_ENABLED=True,
         SUBSCRIPTION_XRAY_JSON_TEST_USER_IDS=[1],
+        SUBSCRIPTION_DENIAL_PLACEHOLDER_ENABLED=False,
     )
     @patch('apps.subscriptions.views._device_gate',
           return_value=(False, {'x-hwid-not-supported': 'true'}))
     @patch('apps.subscriptions.views._get_params')
     @patch('apps.subscriptions.views.UserVPN.objects')
-    def test_a_refused_device_gets_404_even_with_a_matching_user_agent(
+    def test_flag_off_keeps_404_even_with_a_matching_user_agent(
         self, user_vpn_objects, get_params, device_gate,
     ):
         user_vpn_objects.select_related.return_value.get.return_value = SimpleNamespace(

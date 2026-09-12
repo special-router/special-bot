@@ -78,8 +78,11 @@ caught a failure that the local run could not — see
   request URLs at `INFO`. Never lower them.
 - **A subscription URL is bearer access data.** It never enters logs, docs,
   tickets, dashboards, or monitoring state. Neither do client UUIDs.
-- **`_refused()` is the only 404 the subscription endpoint produces.** Unknown
-  `sub_id`, disabled subscription and refused device must stay indistinguishable.
+- **Unknown `sub_id` always stays a generic 404.** With
+  `SUBSCRIPTION_DENIAL_PLACEHOLDER_ENABLED=true`, a known disabled or refused
+  subscription may return only a deliberately dead profile naming the reason;
+  it must never contain the real UUID, a VPN endpoint, or provider data. Turning
+  the flag off restores the legacy indistinguishable `_refused()` response.
 
 ## Where everything is
 

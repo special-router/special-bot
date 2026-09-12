@@ -118,6 +118,19 @@ def render(*, subscription_url: str, days: int, status_label: str,
     )
 
 
+def render_unavailable(message: str) -> str:
+    """Render a known subscription refusal without repeating its bearer URL."""
+    title = escape(str(getattr(settings, 'SUBSCRIPTION_PROFILE_TITLE', 'VPN'))[:64])
+    support = str(getattr(settings, 'SUBSCRIPTION_SUPPORT_URL', ''))[:200]
+    support_html = (f'<a class="support" href="{escape(support, quote=True)}">Поддержка</a>'
+                    if support else '')
+    return _UNAVAILABLE_TEMPLATE.format(
+        title=title,
+        message=escape(str(message)[:512]),
+        support=support_html,
+    )
+
+
 _TEMPLATE = """<!doctype html>
 <html lang="ru"><head>
 <meta charset="utf-8">
@@ -168,6 +181,31 @@ this.textContent='Скопировано'">Копировать</button>
 <ul>{countries}</ul>
 <h2>Устройства ({device_used} из {device_limit})</h2>
 <ul>{devices}</ul>
+{support}
+</main></body></html>
+"""
+
+
+_UNAVAILABLE_TEMPLATE = """<!doctype html>
+<html lang="ru"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<title>{title}</title>
+<style>
+:root{{color-scheme:dark}}
+*{{box-sizing:border-box}}
+body{{margin:0;padding:24px 16px;background:#0f1115;color:#e8eaed;
+font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}}
+main{{max-width:640px;margin:0 auto}}
+h1{{font-size:22px;margin:0 0 16px}}
+.notice{{background:#1c2333;border-left:3px solid #f0b429;padding:14px 16px;
+border-radius:6px;margin:0}}
+.support{{display:inline-block;margin-top:24px;color:#4c8dff}}
+</style></head><body><main>
+<h1>{title}</h1>
+<p class="notice">{message}</p>
 {support}
 </main></body></html>
 """

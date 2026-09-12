@@ -332,6 +332,11 @@ SUBSCRIPTION_FREE_DEVICE_SLOTS = env.int('SUBSCRIPTION_FREE_DEVICE_SLOTS', 2)
 # Clients that send no usable identifier are served until the fleet has caught
 # up; enabling strict mode refuses them like an unknown device.
 SUBSCRIPTION_HWID_STRICT = env.bool('SUBSCRIPTION_HWID_STRICT', False)
+# Known subscription links may return a parseable dead profile with a useful
+# reason instead of an opaque 404. Unknown ids remain 404. Default-off keeps a
+# one-variable rollback to the old indistinguishable refusal contract.
+SUBSCRIPTION_DENIAL_PLACEHOLDER_ENABLED = env.bool(
+    'SUBSCRIPTION_DENIAL_PLACEHOLDER_ENABLED', False)
 # The subscription endpoint is unauthenticated, so a *new* identifier is bound
 # only while the account holder has asked for it from the bot, where Telegram
 # signs who is asking. Outside that window an unknown identifier is refused even
