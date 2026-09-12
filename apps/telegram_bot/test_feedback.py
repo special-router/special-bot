@@ -246,18 +246,34 @@ class DeviceActionTests(TestCase):
         self.context = _context()
 
     async def test_the_keyboard_never_offers_binding_and_never_a_second_subscription(self):
-        connected = await get_reply_markup_manage_keys(connected=True)
+        connected = await get_reply_markup_manage_keys(
+            connected=True, subscription_url='https://sub.example.test/sub/stable',
+        )
         actions = {key.callback_data: key.text for row in connected.inline_keyboard for key in row}
 
         self.assertNotIn('bind_device', actions)
         # Пока подписка работает, покупать нечего: раньше на этом месте стояло
         # «Добавить», и каждое нажатие списывало сутки за ту же подписку.
-        self.assertNotIn('add_key', ' '.join(actions))
+        self.assertFalse(any(
+            action and action.startswith('add_key:') for action in actions
+        ))
         self.assertIn('Устройства', actions['show_devices'])
+        open_button = connected.inline_keyboard[0][0]
+        self.assertEqual(open_button.url, 'https://sub.example.test/sub/stable')
+        self.assertIn('Открыть подписку', open_button.text)
 
         idle = await get_reply_markup_manage_keys(connected=False)
         idle_actions = {key.callback_data for row in idle.inline_keyboard for key in row}
         self.assertTrue(any(action.startswith('add_key:') for action in idle_actions))
+
+    async def test_the_keyboard_refuses_non_https_subscription_buttons(self):
+        connected = await get_reply_markup_manage_keys(
+            connected=True, subscription_url='vless://secret@example.test:443',
+        )
+
+        self.assertFalse(any(
+            key.url for row in connected.inline_keyboard for key in row
+        ))
 
     async def test_unbinding_opens_the_binding_window(self):
         """Фаза 2 включит окно привязки: без него отвязка стала бы тупиком."""

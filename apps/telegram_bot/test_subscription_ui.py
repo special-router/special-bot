@@ -50,6 +50,10 @@ class SubscriptionUiTests(IsolatedAsyncioTestCase):
         self.assertIn('https://sub.example.test/sub/stable', message)
         self.assertNotIn('vless://legacy-rollback', message)
         get_access_url.assert_awaited_once_with(self.connection)
+        get_markup.assert_awaited_once_with(
+            connected=True, subscription_url='https://sub.example.test/sub/stable',
+        )
+        self.assertIn('Нажмите «Открыть подписку», затем выберите Happ.', message)
 
     @patch('apps.telegram_bot.utils.split_balance', return_value=BalanceSplit())
     @patch('apps.telegram_bot.handlers.profile.get_reply_markup_profile', new_callable=AsyncMock)

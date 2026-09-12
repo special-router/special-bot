@@ -1,4 +1,5 @@
 import random
+from urllib.parse import urlsplit
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -6,7 +7,9 @@ from apps.telegram_bot import icons
 from apps.telegram_bot.ui import back_button, button
 
 
-async def get_reply_markup_manage_keys(*, connected: bool = False) -> InlineKeyboardMarkup:
+async def get_reply_markup_manage_keys(
+    *, connected: bool = False, subscription_url: str | None = None,
+) -> InlineKeyboardMarkup:
     """Одноразовое число в `add_key` — защита от повторного нажатия, см. handlers/add_key.py.
 
     Числом подписок пользователь не управляет: она у аккаунта одна, и кнопка
@@ -22,6 +25,8 @@ async def get_reply_markup_manage_keys(*, connected: bool = False) -> InlineKeyb
 
     if not connected:
         buttons += [[button('Подключить', f'add_key:{random.randint(10000000, 999999999)}', icon=icons.KEY)]]
+    elif _is_https_url(subscription_url):
+        buttons += [[button('Открыть подписку', url=subscription_url, icon=icons.LINK)]]
 
     buttons += [
         [button('Устройства', 'show_devices', icon=icons.PROFILE)],
@@ -29,3 +34,13 @@ async def get_reply_markup_manage_keys(*, connected: bool = False) -> InlineKeyb
     ]
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def _is_https_url(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    return parsed.scheme == 'https' and bool(parsed.hostname)

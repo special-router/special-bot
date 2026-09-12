@@ -746,6 +746,41 @@ class XrayJsonSubscriptionTests(SimpleTestCase):
     @override_settings(
         SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
         SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED=True,
+        SUBSCRIPTION_XRAY_JSON_INCLUDE_OWN_PROFILE=False,
+    )
+    @patch('apps.subscriptions.views._mirror_xray_profiles',
+           return_value=[{'remarks': 'Provider country'}])
+    @patch('apps.subscriptions.views._backup_links', return_value=['vless://provider'])
+    def test_blocked_owned_profile_is_hidden_when_provider_profiles_exist(
+        self, backup_links, mirror_profiles, _params,
+    ):
+        documents = json.loads(self._response('Happ/2.0').content)
+
+        self.assertEqual(documents, [{'remarks': 'Provider country'}])
+        backup_links.assert_called_once_with()
+        mirror_profiles.assert_called_once()
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED=True,
+        SUBSCRIPTION_XRAY_JSON_INCLUDE_OWN_PROFILE=False,
+    )
+    @patch('apps.subscriptions.views._mirror_xray_profiles', return_value=[])
+    @patch('apps.subscriptions.views._backup_links', return_value=[])
+    def test_hidden_owned_profile_returns_as_fallback_when_provider_is_empty(
+        self, backup_links, mirror_profiles, _params,
+    ):
+        documents = json.loads(self._response('Happ/2.0').content)
+
+        self.assertEqual(len(documents), 1)
+        self.assertIn('routing', documents[0])
+        self.assertIn('outbounds', documents[0])
+        backup_links.assert_called_once_with()
+        mirror_profiles.assert_called_once()
+
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED=True,
         SUBSCRIPTION_XRAY_JSON_NATIVE_MIRRORS_ENABLED=True,
     )
     @patch('apps.subscriptions.views._native_mirror_profiles')

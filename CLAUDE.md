@@ -17,12 +17,13 @@ Read this file, then [`docs/CONTEXT-MAP.md`](docs/CONTEXT-MAP.md) for the task
 you were actually given. Together they are two minutes and replace an hour of
 searching.
 
-## Three hosts, routinely confused
+## Four hosts, routinely confused
 
 | Name here | Address | What runs there | Access |
 |---|---|---|---|
 | **BOT** | `72.56.23.226` | Django (`web`), celery, celery_beat, monitoring, broadcast; PostgreSQL 16 and Redis as separate shared containers | SSH `specialops` + `sudo -n` |
 | **NL** | `sub.special-wifi.ru` | the 3x-ui panel, xray and every inbound, nginx terminating TLS and SNI-routing `:443` | SSH `specialops`; **`root` is refused** |
+| **RU config edge** | `special-wifi.link` | DNS-only HTTPS config delivery; proxies `/sub/` and `/api/v1/vpn/box/` to BOT and carries no VPN traffic | SSH `admin-user` + `sudo -n` |
 | **RU relay** | `Server.client_vpn_host` in the DB | byte-transparent nginx stream relay in front of NL | separate legacy credential, see [`docs/RUNBOOK.md`](docs/RUNBOOK.md) |
 
 The NL host is the `Server` row named «Нидерланды». The relay is **not** the NL

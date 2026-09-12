@@ -9,17 +9,18 @@ Legacy VLESS client
   → xray inbound 5 on NL :8443 (VLESS/TCP/Reality)
 
 Subscription request
-  → https://sub.special-wifi.ru/sub/<subId>
-  → NL :443, SNI = sub.special-wifi.ru
+  → https://special-wifi.link/sub/<subId>
+  → RU config edge :443 (DNS-only, outside Cloudflare's data path)
   → nginx terminates TLS and proxies to BOT :8001
   → Django subscription_proxy (apps/subscriptions/views.py)
 ```
 
-Both paths enter NL on `:443`. nginx dispatches by SNI: a VLESS client presents
-the Reality SNI and is routed to xray; a subscription client presents
-`sub.special-wifi.ru` and is routed to the subscription site, which terminates
-TLS and proxies to Django on BOT `:8001`. That port is reachable only from the
-NL origin, by persistent host and `DOCKER-USER` policy.
+The customer config path is independent of the VPN data plane and Cloudflare.
+The RU edge carries HTTPS only and never appears as a VPN endpoint. The old
+`sub.special-wifi.ru` and Cloudflare-backed `cfg.special-wifi.ru` routes remain
+compatibility fallbacks, but newly issued links use the single root-domain URL.
+BOT `:8001` is reachable only from the NL origin, the RU config edge and
+localhost, by persistent host, UFW and `DOCKER-USER` policy.
 
 3x-ui's own subscription service is **not** on this path. It cannot be: its
 plain output emits the first client UUID of an inbound for every subscriber, and
@@ -40,6 +41,7 @@ internal canary, not of the customer path.
 | Remnawave panel on NL | Control plane since 2026-08-21. Users, squads, config profile, `shortUuid`, control-plane inventory. Reached over nginx `:8843`; the bot and the monitor read it through `vpn_client_for` / `control_plane.py`. |
 | xray data plane on NL | Run by the Remnawave node, not 3x-ui. Three listeners: `:8443` VLESS/TCP/Reality, `:8080` gRPC/Reality, `:20443` XHTTP behind nginx. Both Direct and Relay terminate on `:8443`. |
 | nginx on NL | TLS termination for the subscription hostname, SNI dispatch on `:443`, gRPC entry on `:80`. |
+| RU config edge | TLS termination for `special-wifi.link` and restricted reverse proxying of `/sub/` plus `/api/v1/vpn/box/` to BOT. It carries no VPN traffic and writes no bearer URL to access logs. |
 | RU relay host | Byte-transparent forwarding for the legacy entry path. Not an independent origin, and not redundancy. |
 | Redis | Coordination only. Never a source of entitlement truth. |
 | `docker-compose.infrastructure.yml` | Ownership definition for the shared PostgreSQL and Redis containers, their external network and data volumes. Ordinary app deployment never recreates them. |

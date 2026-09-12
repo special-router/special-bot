@@ -15,7 +15,8 @@ from apps.vpn.services.subscription_delivery import get_user_access_url
 
 
 COPY_HINT: Final[str] = (
-    'Нажмите на ссылку — она скопируется, — и вставьте её в приложение. '
+    'Нажмите «Открыть подписку», затем выберите Happ. Если в Happ остался старый профиль, '
+    'удалите его и добавьте подписку заново. '
     'Сколько устройств она обслуживает — на экране «Устройства».'
 )
 
@@ -38,6 +39,7 @@ async def build_keys_screen(user: TelegramUser, *, notice: str | None = None) ->
     entries: list[str] = []
     active_keys = 0
     first_connection = None
+    first_active_url = None
 
     async for vpn_connection in UserVPN.objects.with_related_server().filter(user=user):
         if vpn_connection.enabled:
@@ -47,6 +49,8 @@ async def build_keys_screen(user: TelegramUser, *, notice: str | None = None) ->
 
         marker = STATUS_ACTIVE if vpn_connection.enabled else STATUS_INACTIVE
         access_url = await get_user_access_url(vpn_connection)
+        if vpn_connection.enabled and first_active_url is None:
+            first_active_url = access_url
         # Имя сервера здесь стояло как название страны и называло одну — ту, где
         # стоит панель. Стран в подписке давно больше, и они перечислены ниже
         # одним списком: повторять в каждой строке нечего, а называть одну из
@@ -65,10 +69,12 @@ async def build_keys_screen(user: TelegramUser, *, notice: str | None = None) ->
             f'Баланс: {user.balance} руб.',
             'Подписка активна' if active_keys else 'Подписка не подключена',
         ],
-        body=[notice, *entries, *catalog_body(catalog), COPY_HINT if entries else EMPTY_HINT],
+        body=[notice, *entries, *catalog_body(catalog), COPY_HINT if active_keys else EMPTY_HINT],
     )
 
-    return text, await get_reply_markup_manage_keys(connected=bool(active_keys))
+    return text, await get_reply_markup_manage_keys(
+        connected=bool(active_keys), subscription_url=first_active_url,
+    )
 
 
 async def _devices_line(vpn_connection) -> str:

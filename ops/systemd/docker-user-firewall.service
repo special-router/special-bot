@@ -1,0 +1,20 @@
+[Unit]
+Description=Restore DOCKER-USER firewall rules for BOT gunicorn port 8001
+After=docker.service
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/iptables -A DOCKER-USER -p tcp --dport 8001 -s 195.66.213.74 -j ACCEPT
+ExecStart=/usr/sbin/iptables -A DOCKER-USER -p tcp --dport 8001 -s 127.0.0.1 -j ACCEPT
+ExecStart=/usr/sbin/iptables -A DOCKER-USER -p tcp --dport 8001 -s 158.160.187.90 -j ACCEPT
+ExecStart=/usr/sbin/iptables -A DOCKER-USER -p tcp --dport 8001 -j DROP
+ExecStop=/usr/sbin/iptables -D DOCKER-USER -p tcp --dport 8001 -s 195.66.213.74 -j ACCEPT
+ExecStop=/usr/sbin/iptables -D DOCKER-USER -p tcp --dport 8001 -s 127.0.0.1 -j ACCEPT
+ExecStop=/usr/sbin/iptables -D DOCKER-USER -p tcp --dport 8001 -s 158.160.187.90 -j ACCEPT
+ExecStop=/usr/sbin/iptables -D DOCKER-USER -p tcp --dport 8001 -j DROP
+
+[Install]
+WantedBy=multi-user.target

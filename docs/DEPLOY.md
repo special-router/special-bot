@@ -159,8 +159,9 @@ committing a running container.
 | `monitoring` | worker, `--pool=solo`, `no-new-privileges` | `monitoring` |
 
 Solo pools everywhere: the prefork children were the source of the earlier OOM
-pressure. The published port is pinned to the BOT public IPv4, and a persistent
-`DOCKER-USER` policy permits `:8001` only from the NL nginx origin.
+pressure. The published port is pinned to the BOT public IPv4, and persistent
+UFW plus `DOCKER-USER` policy permits `:8001` only from the NL nginx origin,
+the RU config-delivery edge and localhost.
 
 Beat runs two jobs unconditionally — `update_user_vpn` at 00:00 UTC and
 `sync_expiry_times` at 00:05 UTC — plus the monitoring layers when their flags

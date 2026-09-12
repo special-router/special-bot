@@ -1409,22 +1409,28 @@ def subscription_proxy(request, sub_id: str):
     if _wants_xray_json(user_agent, user_vpn.id) and (
             panel_links or _xray_json_ready(params, direct_host)):
         try:
-            # Массив, а не один объект: клиент рисует по профилю на элемент и
-            # берёт имя из ``remarks``. Наш узел идёт первым — он единственный,
-            # за который отвечаем мы, а всё после него чужое.
-            documents = [_build_xray_json(
+            own_document = _build_xray_json(
                 uuid_str, params, direct_host, direct_port, relay_host, relay_port, flow,
-                own_outbounds=_panel_outbounds(own_links, direct_host) if panel_links else None)]
+                own_outbounds=_panel_outbounds(own_links, direct_host) if panel_links else None)
+            provider_documents = []
             if _is_backup_test_user(user_vpn.id):
                 native_profiles = _native_mirror_profiles() \
                     if _native_mirror_profiles_enabled(user_agent) else None
                 if native_profiles:
-                    documents.extend(native_profiles)
+                    provider_documents.extend(native_profiles)
                 else:
                     # Native failure costs only fidelity, never availability:
                     # retain the already-shipped bounded endpoint profiles.
-                    documents.extend(_mirror_xray_profiles(
+                    provider_documents.extend(_mirror_xray_profiles(
                         _backup_links() or [], _wants_hysteria_outbound(user_agent)))
+            # The owned NL origin may be hidden from Happ while it is blocked,
+            # but only when external profiles were actually built. A provider
+            # outage must never turn the subscription into an empty document.
+            include_own = getattr(settings_relays(), 'SUBSCRIPTION_XRAY_JSON_INCLUDE_OWN_PROFILE', True)
+            documents = []
+            if include_own or not provider_documents:
+                documents.append(own_document)
+            documents.extend(provider_documents)
             body = json.dumps(documents).encode('utf-8')
         except (KeyError, TypeError, ValueError):
             body = None
