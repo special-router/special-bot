@@ -75,7 +75,11 @@ python3 - "$scale_readiness" <<'PY'
 import json, sys
 report = json.loads(sys.argv[1])
 assert report['subscription_coverage_complete'] is True
-assert report['monitoring_complete'] is True
+assert report['monitoring_complete'] is False
+assert report['provider_monitor_required'] is True
+assert report['provider_monitor_configured'] is True
+assert report['paging_configured'] is False
+assert report['paging_delivery_verified'] is False
 assert report['duplicate_sub_ids'] == 0
 assert report['redundancy_ready'] is False
 assert report['legacy_retirement_ready'] is False
