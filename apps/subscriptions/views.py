@@ -993,6 +993,62 @@ def _xray_outbound_from_link(link: str, tag: str) -> dict | None:
     return outbound
 
 
+_GLOBAL_AUTO_REMARK = '🌐 Автовыбор'
+
+
+def _global_mirror_xray_profile(links: list[str], allow_hysteria: bool) -> dict | None:
+    """Один профиль, выбирающий лучшую живую точку из всех provider links."""
+    outbounds = []
+    outbound_fingerprints = set()
+    for position, link in enumerate(links):
+        outbound = _xray_outbound_from_link(link, f'AUTO-s{position}')
+        if outbound is None:
+            continue
+        if outbound['protocol'] == 'hysteria' and not allow_hysteria:
+            continue
+        fingerprint = json.dumps(
+            {key: value for key, value in outbound.items() if key != 'tag'},
+            sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+        if fingerprint in outbound_fingerprints:
+            continue
+        outbound_fingerprints.add(fingerprint)
+        outbounds.append(outbound)
+
+    if len(outbounds) < 2:
+        return None
+
+    members = [outbound['tag'] for outbound in outbounds]
+    balancer = {
+        'tag': 'AUTO-best',
+        'selector': members,
+        'strategy': {'type': 'leastLoad', 'settings': {'expected': 1}},
+    }
+    return {
+        'remarks': _GLOBAL_AUTO_REMARK,
+        'log': {'loglevel': 'warning'},
+        'inbounds': _xray_json_inbounds(),
+        'dns': _xray_json_dns(),
+        'routing': _xray_json_routing(
+            [balancer], [], ('balancerTag', balancer['tag'])),
+        'outbounds': outbounds + [
+            {'tag': 'direct', 'protocol': 'freedom'},
+            {'tag': 'block', 'protocol': 'blackhole'},
+            _DNS_OUTBOUND,
+        ],
+        'burstObservatory': {
+            'subjectSelector': ['AUTO-s'],
+            'pingConfig': {
+                'connectivity': 'https://one.one.one.one/',
+                'destination': 'https://one.one.one.one/media/content-filter.png',
+                'httpMethod': 'GET',
+                'interval': '10s',
+                'timeout': '10s',
+                'sampling': 1,
+            },
+        },
+    }
+
+
 def _mirror_xray_profiles(links: list[str], allow_hysteria: bool) -> list[dict]:
     """Профиль на страну: автопул серверов внутри транспортной лестницы.
 
@@ -1413,6 +1469,7 @@ def subscription_proxy(request, sub_id: str):
                 uuid_str, params, direct_host, direct_port, relay_host, relay_port, flow,
                 own_outbounds=_panel_outbounds(own_links, direct_host) if panel_links else None)
             provider_documents = []
+            global_auto_document = None
             if _is_backup_test_user(user_vpn.id):
                 native_profiles = _native_mirror_profiles() \
                     if _native_mirror_profiles_enabled(user_agent) else None
@@ -1421,14 +1478,23 @@ def subscription_proxy(request, sub_id: str):
                 else:
                     # Native failure costs only fidelity, never availability:
                     # retain the already-shipped bounded endpoint profiles.
+                    backup_links = _backup_links() or []
+                    allow_hysteria = _wants_hysteria_outbound(user_agent)
+                    if getattr(
+                            settings_relays(),
+                            'SUBSCRIPTION_XRAY_JSON_GLOBAL_AUTO_PROFILE_ENABLED', False):
+                        global_auto_document = _global_mirror_xray_profile(
+                            backup_links, allow_hysteria)
                     provider_documents.extend(_mirror_xray_profiles(
-                        _backup_links() or [], _wants_hysteria_outbound(user_agent)))
+                        backup_links, allow_hysteria))
             # The owned NL origin may be hidden from Happ while it is blocked,
             # but only when external profiles were actually built. A provider
             # outage must never turn the subscription into an empty document.
             include_own = getattr(settings_relays(), 'SUBSCRIPTION_XRAY_JSON_INCLUDE_OWN_PROFILE', True)
             documents = []
-            if include_own or not provider_documents:
+            if global_auto_document is not None:
+                documents.append(global_auto_document)
+            if include_own or (not provider_documents and global_auto_document is None):
                 documents.append(own_document)
             documents.extend(provider_documents)
             body = json.dumps(documents).encode('utf-8')

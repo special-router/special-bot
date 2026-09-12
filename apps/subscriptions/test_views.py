@@ -688,6 +688,30 @@ class XrayJsonSubscriptionTests(SimpleTestCase):
                        'support-url', 'profile-web-page-url', 'Profile-Update-Interval'):
             self.assertEqual(json_response.get(header), base64_response.get(header))
 
+    @override_settings(
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,
+        SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED=True,
+        SUBSCRIPTION_XRAY_JSON_GLOBAL_AUTO_PROFILE_ENABLED=True,
+    )
+    @patch('apps.subscriptions.views._backup_links', return_value=[
+        'vless://11111111-2222-3333-4444-555555555555@a-service.example:443'
+        '?type=tcp&security=reality&pbk=KEY&sni=a-service.example#Germany',
+        'vless://11111111-2222-3333-4444-555555555555@vpnstar.example:443'
+        '?type=grpc&security=reality&pbk=KEY&sni=vpnstar.example&serviceName=edge#Poland',
+    ])
+    def test_global_provider_auto_profile_is_first(self, backup_links, _params):
+        documents = json.loads(self._response('Happ/2.0').content)
+
+        self.assertEqual(documents[0]['remarks'], '🌐 Автовыбор')
+        self.assertEqual(documents[1]['routing']['balancers'][0]['tag'], 'own-l1')
+        addresses = {
+            outbound['settings']['vnext'][0]['address']
+            for outbound in documents[0]['outbounds']
+            if outbound['protocol'] == 'vless'
+        }
+        self.assertEqual(addresses, {'a-service.example', 'vpnstar.example'})
+        backup_links.assert_called_once_with()
+
 
     @override_settings(
         SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=True,

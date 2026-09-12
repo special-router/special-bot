@@ -444,6 +444,8 @@ SUBSCRIPTION_XRAY_JSON_ALL_USERS_ENABLED = env.bool(
     'SUBSCRIPTION_XRAY_JSON_ALL_USERS_ENABLED', False)
 SUBSCRIPTION_XRAY_JSON_INCLUDE_OWN_PROFILE = env.bool(
     'SUBSCRIPTION_XRAY_JSON_INCLUDE_OWN_PROFILE', True)
+SUBSCRIPTION_XRAY_JSON_GLOBAL_AUTO_PROFILE_ENABLED = env.bool(
+    'SUBSCRIPTION_XRAY_JSON_GLOBAL_AUTO_PROFILE_ENABLED', False)
 # Клиенты, на которых формат уже проверен вручную и потому раскатан всем:
 # ``happ``, ``v2rayng``. Список отдельный от выкатки по людям, потому что риск
 # здесь другой — не «этому человеку рано», а «этот клиент читает документ своим

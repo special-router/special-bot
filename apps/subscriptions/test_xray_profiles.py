@@ -3,8 +3,10 @@ import json
 from django.test import SimpleTestCase, override_settings
 
 from apps.subscriptions.views import (
+    _GLOBAL_AUTO_REMARK,
     _build_xray_json,
     _cascade,
+    _global_mirror_xray_profile,
     _mirror_xray_profiles,
     _native_profile,
     _sanitize_native_profiles,
@@ -175,6 +177,50 @@ class LinkToOutboundTests(SimpleTestCase):
 
     def test_unknown_scheme_is_refused(self):
         self.assertIsNone(_xray_outbound_from_link('ss://x@1.2.3.4:443#x', 't3'))
+
+
+class GlobalMirrorProfileTests(SimpleTestCase):
+    LINKS = [
+        'vless://' + _UUID + '@a-service.example:443?type=tcp&security=reality&pbk=KEY'
+        '&sni=a-service.example#A-Service',
+        'vless://' + _UUID + '@vpnstar.example:443?type=grpc&security=reality&pbk=KEY'
+        '&sni=vpnstar.example&serviceName=edge#VPNStar',
+    ]
+
+    def test_one_profile_balances_every_provider_outbound(self):
+        profile = _global_mirror_xray_profile(self.LINKS, allow_hysteria=False)
+
+        self.assertEqual(profile['remarks'], _GLOBAL_AUTO_REMARK)
+        balancer = profile['routing']['balancers'][0]
+        self.assertEqual(balancer['tag'], 'AUTO-best')
+        self.assertEqual(balancer['selector'], ['AUTO-s0', 'AUTO-s1'])
+        self.assertEqual(balancer['strategy'], {
+            'type': 'leastLoad', 'settings': {'expected': 1},
+        })
+        self.assertNotIn('maxRTT', balancer['strategy']['settings'])
+        self.assertEqual(profile['burstObservatory']['subjectSelector'], ['AUTO-s'])
+        addresses = {
+            outbound['settings']['vnext'][0]['address']
+            for outbound in profile['outbounds']
+            if outbound['protocol'] == 'vless'
+        }
+        self.assertEqual(addresses, {'a-service.example', 'vpnstar.example'})
+
+    def test_duplicate_outbounds_are_not_added_twice(self):
+        profile = _global_mirror_xray_profile(
+            [self.LINKS[0], self.LINKS[0], self.LINKS[1]], allow_hysteria=False)
+
+        proxy_outbounds = [
+            outbound for outbound in profile['outbounds']
+            if outbound['tag'].startswith('AUTO-s')
+        ]
+        self.assertEqual(len(proxy_outbounds), 2)
+        self.assertEqual(profile['routing']['balancers'][0]['selector'],
+                         ['AUTO-s0', 'AUTO-s2'])
+
+    def test_one_valid_outbound_does_not_create_a_duplicate_profile(self):
+        self.assertIsNone(_global_mirror_xray_profile(
+            [self.LINKS[0]], allow_hysteria=False))
 
 
 class MirrorProfileTests(SimpleTestCase):
