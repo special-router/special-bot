@@ -4,7 +4,12 @@ from apps.telegram_bot import icons
 from apps.telegram_bot.ui import back_button, button
 
 
-async def get_reply_markup_devices(devices, *, can_drop: bool = False) -> InlineKeyboardMarkup:
+async def get_reply_markup_devices(
+    devices,
+    *,
+    can_add: bool = True,
+    can_drop: bool = False,
+) -> InlineKeyboardMarkup:
     """Клавиатура экрана устройств.
 
     Отвязка идёт отдельной кнопкой на каждое устройство, а не одной на все:
@@ -16,12 +21,12 @@ async def get_reply_markup_devices(devices, *, can_drop: bool = False) -> Inline
     «Убрать место» появляется только когда есть платное место: на бесплатных
     она отказывала бы в том, чего не обещала.
     """
-    buttons: list[list[InlineKeyboardButton]] = [
-        [
+    buttons: list[list[InlineKeyboardButton]] = []
+    if can_add:
+        buttons.append([
             button('Добавить место', 'add_device_slot', icon=icons.KEY),
             *([button('Убрать место', 'drop_device_slot', icon=icons.TRASH)] if can_drop else []),
-        ],
-    ]
+        ])
 
     buttons += [
         [button(f'Отвязать {index}', f'unbind_device:{device.id}', icon=icons.REFRESH)]

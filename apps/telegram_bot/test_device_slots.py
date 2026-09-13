@@ -9,7 +9,12 @@ from apps.payments.choices import TransactionSourceChoices, TransactionStatusCho
 from apps.payments.models import Transaction
 from apps.servers.models import Server, TariffServer
 from apps.subscriptions.models import SubscriptionDevice
-from apps.telegram_bot.handlers.devices import add_device_slot, drop_device_slot, unbind_one_device
+from apps.telegram_bot.handlers.devices import (
+    add_device_slot,
+    build_devices_screen,
+    drop_device_slot,
+    unbind_one_device,
+)
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 
@@ -116,3 +121,35 @@ class DeviceSlotTests(TransactionTestCase):
 
         self.assertIsNone(self._limit())
         self.assertFalse(Transaction.objects.filter(source=TransactionSourceChoices.BUY).exists())
+
+    def test_billing_exempt_limit_cannot_be_bought_or_changed(self):
+        self.subscription.device_limit = 32
+        self.subscription.device_billing_exempt = True
+        self.subscription.save(update_fields=['device_limit', 'device_billing_exempt'])
+
+        add_update = _update('add_device_slot')
+        asyncio.run(add_device_slot(add_update, None))
+        drop_update = _update('drop_device_slot')
+        asyncio.run(drop_device_slot(drop_update, None))
+
+        self.assertEqual(self._limit(), 32)
+        self.assertFalse(Transaction.objects.filter(source=TransactionSourceChoices.BUY).exists())
+        self.assertIn('без доплаты', add_update.callback_query.answer.await_args.kwargs['text'])
+        self.assertIn('администратором', drop_update.callback_query.answer.await_args.kwargs['text'])
+
+    def test_billing_exempt_screen_has_no_slot_controls(self):
+        self.subscription.device_limit = 32
+        self.subscription.device_billing_exempt = True
+        self.subscription.save(update_fields=['device_limit', 'device_billing_exempt'])
+
+        text, keyboard = asyncio.run(build_devices_screen(self.user))
+        callbacks = {
+            button.callback_data
+            for row in keyboard.inline_keyboard
+            for button in row
+            if button.callback_data
+        }
+
+        self.assertIn('без доплаты', text)
+        self.assertNotIn('add_device_slot', callbacks)
+        self.assertNotIn('drop_device_slot', callbacks)

@@ -13,9 +13,10 @@ from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 
 
-def _subscription(device_limit=None, price='7.00'):
+def _subscription(device_limit=None, price='7.00', device_billing_exempt=False):
     return SimpleNamespace(
         device_limit=device_limit,
+        device_billing_exempt=device_billing_exempt,
         server=SimpleNamespace(tariff=SimpleNamespace(price=Decimal(price))),
     )
 
@@ -35,6 +36,12 @@ class DevicePricingTests(TestCase):
     def test_a_limit_below_the_free_allowance_never_makes_it_cheaper(self):
         """Иначе клиент удешевлял бы подписку, отказываясь от того, что и так входит."""
         self.assertEqual(daily_price(_subscription(device_limit=1)), Decimal('7.00'))
+
+    def test_billing_exemption_keeps_the_base_tariff_at_the_system_ceiling(self):
+        subscription = _subscription(device_limit=32, device_billing_exempt=True)
+
+        self.assertEqual(paid_device_slots(subscription), 0)
+        self.assertEqual(daily_price(subscription), Decimal('7.00'))
 
 
 @override_settings(SUBSCRIPTION_DEVICE_LIMIT=2, SUBSCRIPTION_FREE_DEVICE_SLOTS=2)
@@ -82,3 +89,23 @@ class DailyBillingWithSlotsTests(TestCase):
         self.assertFalse(Transaction.objects.filter_by_source(TransactionSourceChoices.EVERYDAY_SYSTEM).exists())
         disable.assert_awaited_once()
         self.assertEqual(disable.await_args.args[0].id, subscription.id)
+
+    @patch('apps.subscriptions.tasks.time.sleep', MagicMock())
+    @patch('apps.subscriptions.tasks.Bot')
+    @patch('apps.subscriptions.tasks.disable_vpn_user_from_server', new_callable=AsyncMock)
+    def test_exempt_subscription_is_charged_only_the_base_tariff(self, disable, bot_class):
+        bot_class.return_value.send_message = AsyncMock()
+        user = self._user(2003, '10.00')
+        subscription = UserVPN.objects.create(
+            user=user,
+            server=self.server,
+            device_limit=32,
+            device_billing_exempt=True,
+        )
+
+        update_user_vpn()
+
+        charge = Transaction.objects.filter_by_source(TransactionSourceChoices.EVERYDAY_SYSTEM).get()
+        self.assertEqual(charge.user_vpn_id, subscription.id)
+        self.assertEqual(charge.amount, Decimal('-7.00'))
+        disable.assert_not_awaited()

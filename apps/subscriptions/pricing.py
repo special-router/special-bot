@@ -37,7 +37,14 @@ def free_device_slots() -> int:
 
 def paid_device_slots(user_vpn) -> int:
     """Места сверх бесплатных — то, за что берётся надбавка."""
+    if device_billing_exempt(user_vpn):
+        return 0
     return max(0, device_limit_for(user_vpn) - free_device_slots())
+
+
+def device_billing_exempt(user_vpn) -> bool:
+    """Whether this subscription pays only the base tariff at any device limit."""
+    return bool(getattr(user_vpn, 'device_billing_exempt', False))
 
 
 def daily_price(user_vpn) -> Decimal:

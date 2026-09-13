@@ -21,7 +21,12 @@ from telegram.ext import ContextTypes
 from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
 from apps.payments.models import Transaction
 from apps.subscriptions.devices import bound_devices, device_limit_for, set_device_limit, unbind_device
-from apps.subscriptions.pricing import free_device_slots, slot_price
+from apps.subscriptions.pricing import (
+    device_billing_exempt,
+    free_device_slots,
+    paid_device_slots,
+    slot_price,
+)
 from apps.telegram_bot.handlers.balance import build_balance_screen
 from apps.telegram_bot.inline_buttons.devices import get_reply_markup_devices
 from apps.telegram_bot.ui import answer_query, bold, render_screen, screen
@@ -61,21 +66,29 @@ async def build_devices_screen(user: TelegramUser, *, notice: str | None = None)
     devices = await sync_to_async(bound_devices)(user_vpn)
     limit = device_limit_for(user_vpn)
     free = free_device_slots()
-    paid = max(0, limit - free)
+    paid = paid_device_slots(user_vpn)
+    billing_exempt = device_billing_exempt(user_vpn)
 
     lines = [
         f'{bold(f"{index}.")} {html.escape(device_display_name(device))}'
         for index, device in enumerate(devices, start=1)
     ]
     price = slot_price(user_vpn)
-    state = [
-        f'Мест: {limit}, занято {len(devices)}',
-        f'Из них платных: {paid} по {price} руб. в сутки' if paid else f'Все {free} входят в подписку',
-    ]
+    state = [f'Мест: {limit}, занято {len(devices)}']
+    if billing_exempt:
+        state.append('Дополнительные места предоставлены без доплаты')
+    else:
+        state.append(
+            f'Из них платных: {paid} по {price} руб. в сутки'
+            if paid else f'Все {free} входят в подписку')
 
     return (
         screen('Устройства', state=state, body=[notice, *lines] if lines else [notice, EMPTY_HINT]),
-        await get_reply_markup_devices(devices, can_drop=limit > free),
+        await get_reply_markup_devices(
+            devices,
+            can_add=not billing_exempt,
+            can_drop=not billing_exempt and limit > free,
+        ),
     )
 
 
@@ -99,6 +112,10 @@ async def add_device_slot(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_vpn = await _subscription(user)
     if user_vpn is None:
         await answer_query(update, 'Сначала подключите подписку.')
+        return
+
+    if device_billing_exempt(user_vpn):
+        await answer_query(update, 'Дополнительные места уже предоставлены без доплаты.')
         return
 
     price = slot_price(user_vpn)
@@ -132,6 +149,10 @@ async def drop_device_slot(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     user_vpn = await _subscription(user)
     if user_vpn is None:
         await answer_query(update, 'Сначала подключите подписку.')
+        return
+
+    if device_billing_exempt(user_vpn):
+        await answer_query(update, 'Лимит установлен администратором и не изменяется.')
         return
 
     limit = device_limit_for(user_vpn)

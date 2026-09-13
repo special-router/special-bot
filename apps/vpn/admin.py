@@ -10,12 +10,13 @@ class UserVPNAdmin(admin.ModelAdmin):
     # переживает и скриншоты, и демонстрацию экрана. Искать по нему по-прежнему
     # можно — `search_fields` принимает его целиком.
     list_display = ['user_info', 'server_name', 'enabled_status', 'created_at']
-    list_filter = ['enabled', 'server', 'created_at']
+    list_filter = ['enabled', 'device_billing_exempt', 'server', 'created_at']
     search_fields = ['user__username', 'user__telegram_id', 'server__name', 'vpn_uuid']
     readonly_fields = ['vpn_uuid', 'created_at', 'updated_at']
 
     fieldsets = (
         ('Основная информация', {'fields': ('user', 'server', 'enabled')}),
+        ('Устройства', {'fields': ('device_limit', 'device_billing_exempt')}),
         ('VPN данные', {'fields': ('vpn_key', 'vpn_uuid')}),
         ('Системная информация', {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
     )

@@ -51,6 +51,11 @@ class UserVPN(models.Model):
         blank=True,
     )
 
+    device_billing_exempt = models.BooleanField(
+        'Дополнительные устройства без доплаты',
+        default=False,
+    )
+
     created_at = models.DateTimeField(
         'Время создания записи',
         auto_now_add=True,

@@ -12,6 +12,10 @@ sells *device slots* against it. The daily charge is
 `apps/subscriptions/pricing.py`. Before this, a second device meant a second
 subscription, and nine accounts had done exactly that; `manage.py
 collapse_subscriptions` is the one-off that merged them at an unchanged price.
+`UserVPN.device_billing_exempt` is the explicit administrative exception: it
+removes only the extra-slot surcharge while the base tariff and device ceiling
+remain in force. Never emulate it by raising `device_limit` alone, because that
+silently multiplies the next daily charge.
 
 Read this file, then [`docs/CONTEXT-MAP.md`](docs/CONTEXT-MAP.md) for the task
 you were actually given. Together they are two minutes and replace an hour of
