@@ -18,13 +18,13 @@ tar -C "$ROOT" -cf - \
   ops/config_edge_cache.py \
   ops/systemd/special-config-edge.service \
   ops/nginx/special-wifi.link.conf |
-  "${SSH[@]}" sudo -n bash -c '
+  "${SSH[@]}" "sudo -n bash -c '
     set -euo pipefail
-    upload=$1
-    [[ $upload =~ ^/tmp/special-config-edge-upload-[0-9]+$ ]]
-    mkdir -m 0700 "$upload"
-    tar -xf - -C "$upload"
-  ' -- "$upload"
+    upload=\$1
+    [[ \$upload =~ ^/tmp/special-config-edge-upload-[0-9]+\$ ]]
+    mkdir -m 0700 \"\$upload\"
+    tar -xf - -C \"\$upload\"
+  ' -- $upload"
 
 "${SSH[@]}" sudo -n bash -s -- "$upload" <<'REMOTE'
 set -euo pipefail
