@@ -72,7 +72,10 @@ install -o root -g root -m 0755 "$work/ops/config_edge_cache.py" "$script"
 install -o root -g root -m 0644 "$work/ops/systemd/special-config-edge.service" "$unit"
 install -o root -g root -m 0644 "$work/ops/nginx/special-wifi.link.conf" "$nginx"
 systemctl daemon-reload
-systemctl enable --now special-config-edge.service >/dev/null
+systemctl enable special-config-edge.service >/dev/null
+# A restart is also the explicit release-time cache invalidation boundary: an
+# already running service would otherwise keep both old code and stale bodies.
+systemctl restart special-config-edge.service
 for _ in $(seq 1 20); do
   curl -fsS --max-time 2 http://127.0.0.1:18081/_health >/dev/null && break
   sleep 1
