@@ -9,9 +9,8 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: bot.settings
       RUN_MIGRATIONS: "false"
-      SUBSCRIPTION_BACKUP_SECRET_FILE: /run/secrets/subscription-backup.json
     volumes:
-      - ${SUBSCRIPTION_BACKUP_SECRET_HOST_PATH:-/dev/null}:/run/secrets/subscription-backup.json:ro
+      - provider_snapshots:/run/provider-snapshots:ro
     ports:
       - "72.56.23.226:8001:8001"
     restart: unless-stopped
@@ -54,11 +53,35 @@ services:
       SUBSCRIPTION_BACKUP_SECRET_FILE: /run/secrets/subscription-backup.json
     volumes:
       - ${SUBSCRIPTION_BACKUP_SECRET_HOST_PATH:-/dev/null}:/run/secrets/subscription-backup.json:ro
+      - provider_snapshots:/run/provider-snapshots:ro
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+
+  provider_ingest:
+    image: vpnbot:latest
+    command: ["sh", "-c", "./entrypoint.sh sh -c 'while true; do python manage.py refresh_provider_delivery_snapshots; sleep 300; done'"]
+    env_file: [.environment]
+    environment:
+      DJANGO_SETTINGS_MODULE: bot.settings
+      RUN_MIGRATIONS: "false"
+      SUBSCRIPTION_BACKUP_SECRET_FILE: /run/secrets/subscription-backup.json
+    volumes:
+      - ${SUBSCRIPTION_BACKUP_SECRET_HOST_PATH:-/dev/null}:/run/secrets/subscription-backup.json:ro
+      - provider_snapshots:/run/provider-snapshots
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
 networks:
   default:
     external: true
     name: vpn_bot_default
+
+volumes:
+  provider_snapshots:

@@ -21,7 +21,7 @@ from apps.subscriptions.devices import device_limit_for
 
 # Места, входящие в тариф. Совпадает с лимитом по умолчанию не случайно: пока
 # клиент не купил ни одного места, подписка стоит ровно тариф, как и раньше.
-DEFAULT_FREE_DEVICE_SLOTS = 2
+DEFAULT_FREE_DEVICE_SLOTS = 5
 
 
 def free_device_slots() -> int:

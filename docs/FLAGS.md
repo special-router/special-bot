@@ -94,8 +94,8 @@ Rollout phase lives here. See [`OPEN-ITEMS.md`](OPEN-ITEMS.md#device-binding-pha
 
 | Setting | Type | Default | Prod | What it does |
 |---|---|---|---|---|
-| `SUBSCRIPTION_DEVICE_LIMIT` | int | `2` | `2` | Distinct `x-hwid` values per subscription. `UserVPN.device_limit` overrides it per record, and since 2026-08-14 that override is what a customer buys — it is no longer only a support lever. |
-| `SUBSCRIPTION_FREE_DEVICE_SLOTS` | int | `2` | unset | Slots included in the tariff. Every slot above this multiplies the daily charge: `daily_price = tariff × (1 + max(0, limit − free))`. Raising it makes existing paid slots free retroactively, because the daily run reads it fresh. |
+| `SUBSCRIPTION_DEVICE_LIMIT` | int | `5` | pending deploy | Distinct `x-hwid` values per subscription. `UserVPN.device_limit` may add slots but cannot reduce this included floor, so rollback needs no irreversible data rewrite. |
+| `SUBSCRIPTION_FREE_DEVICE_SLOTS` | int | `5` | pending deploy | Slots included in the tariff. Every slot above this multiplies the daily charge; raising two to five makes existing 3–5 slots free and never increases a debit. |
 | `SUBSCRIPTION_HWID_STRICT` | bool | `False` | `false` | Refuse clients that send no usable identifier. Keep false until the fleet sends one. |
 | `SUBSCRIPTION_DENIAL_PLACEHOLDER_ENABLED` | bool | `False` | **`true`** | For an existing subscription link, return HTTP 200 with one deliberately dead profile naming the actionable reason: device limit, device not bound, expired balance, or manual disable. Happ/v2rayNG receive a one-profile Xray JSON document routed only to `blackhole`; other clients receive one loopback VLESS line; browsers receive a page without the bearer URL. Unknown ids remain generic 404. False restores the old indistinguishable 404 contract. |
 | `SUBSCRIPTION_DEVICE_BINDING_WINDOW_REQUIRED` | bool | **`True`** | **`false`** | Whether binding a *new* device needs a window opened from the bot. **The code default is `true`; phase 1 is running only because `.environment` explicitly sets it false.** False is a launch state, never the steady state — it is what lets a leaked `sub_id` spend the slots. |
@@ -114,6 +114,10 @@ environment; they come from a mode-0600 JSON file on the host.
 | `SUBSCRIPTION_BACKUP_TEST_USER_IDS` | json | `[]` | `[801]`, inert | Allowlist of `UserVPN.id` during rollout. |
 | `SUBSCRIPTION_BACKUP_ALL_USERS_ENABLED` | bool | `False` | **`true`** | Every subscription receives third-party endpoints, and `SUBSCRIPTION_BACKUP_TEST_USER_IDS` stops mattering. Full rollout is its own state because an allowlist listing today's customers silently excludes tomorrow's — the day nobody remembers to extend it, a new customer gets a shorter subscription than the person beside them and nothing reports it. |
 | `SUBSCRIPTION_BACKUP_SECRET_FILE` | str | empty | container path | Path to the legacy request-path mirror secret. Compose binds `/dev/null` when unset. It accepts `upstream_urls` or its older `adapter=subscription` manifest, never the separate `PROVIDER_SOURCE_SECRET_FILE` schema. |
+| `SUBSCRIPTION_PROVIDER_SNAPSHOTS_ENABLED` | bool | `False` | pending deploy | Makes public subscription and router paths read only verified immutable LKG artifacts; network refresh moves to `provider_ingest`. |
+| `SUBSCRIPTION_PROVIDER_SNAPSHOT_DIR` | str | `/run/provider-snapshots` | pending deploy | Owner-only volume containing content-addressed artifacts and atomic current pointers. |
+| `SUBSCRIPTION_PROVIDER_SNAPSHOT_MAX_AGE_SECONDS` | int | `86400` | pending deploy | Maximum accepted LKG age. Expired or incomplete sets fail closed to the owned emergency profile. |
+| `SUBSCRIPTION_BASE64_RELAY_ENABLED` | bool | `True` | pending `false` | Rollback gate for the obsolete generic/base64 relay line. Happ provider JSON is unaffected. |
 | `SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS` | json | `None` | three exact provider hosts | Exact DNS hostname allowlist. Absent permits a controlled rollout; present but malformed denies everything. |
 | `SUBSCRIPTION_BACKUP_CONNECT_TIMEOUT_SECONDS` | float | `3` | ? | Per-source connect timeout. |
 | `SUBSCRIPTION_BACKUP_READ_TIMEOUT_SECONDS` | float | `5` | ? | Per-source read timeout. |
@@ -217,6 +221,7 @@ Not a redundant mirror: every candidate is on the same NL origin.
 |---|---|---|---|---|
 | `ROUTER_PROVISIONING_API_TOKEN` | str | empty | set | Dedicated bearer for the narrow operator endpoint that provisions an existing Telegram customer and returns only that customer's router credential. It is not a Remnawave token. Never log or commit it. |
 | `ROUTER_PROVISIONING_PUBLIC_BASE_URL` | str | empty | set | Public HTTPS origin used in the returned router config URL. Empty falls back to the request origin; production should set it explicitly behind the trusted reverse proxy. |
+| `ROUTER_PROVIDER_SNAPSHOT_ENABLED` | bool | `False` | pending deploy | Serves authenticated routers one multi-country sing-box document from the verified provider LKG; global auto is first and no owned Direct profile is inserted. |
 
 ## Remnawave control plane
 

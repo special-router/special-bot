@@ -73,6 +73,8 @@ rollback() {
       docker tag "$previous_image" vpnbot:latest 2>/dev/null || true
       docker compose -f "$compose_file" stop broadcast >/dev/null 2>&1 || true
       docker compose -f "$compose_file" rm -sf broadcast >/dev/null 2>&1 || true
+      docker compose -f "$compose_file" stop provider_ingest >/dev/null 2>&1 || true
+      docker compose -f "$compose_file" rm -sf provider_ingest >/dev/null 2>&1 || true
       docker run --rm --network vpn_bot_default --env-file .environment redis:7 \
         sh -c 'redis-cli -u "$REDIS_URL" DEL safe_broadcast_v1 >/dev/null' || true
       echo "BROADCAST_QUARANTINED: rollback removed broadcast worker and purged safe_broadcast_v1 only; generic celery queue untouched" >&2
@@ -93,6 +95,48 @@ rollback() {
   exit "$rc"
 }
 trap rollback EXIT
+
+# One atomic product contract: five included devices, provider I/O removed from
+# requests, legacy relay off, router snapshot on. The backup above restores the
+# exact prior file if any later gate fails. Values only; no secret is printed.
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+path = Path('.environment')
+updates = {
+    'SUBSCRIPTION_DEVICE_LIMIT': '5',
+    'SUBSCRIPTION_FREE_DEVICE_SLOTS': '5',
+    'SUBSCRIPTION_PROVIDER_SNAPSHOTS_ENABLED': 'true',
+    'SUBSCRIPTION_PROVIDER_SNAPSHOT_DIR': '/run/provider-snapshots',
+    'SUBSCRIPTION_PROVIDER_SNAPSHOT_MAX_AGE_SECONDS': '86400',
+    'SUBSCRIPTION_BASE64_RELAY_ENABLED': 'false',
+    'ROUTER_PROVIDER_SNAPSHOT_ENABLED': 'true',
+}
+lines = path.read_text(encoding='utf-8').splitlines()
+seen = set()
+result = []
+for line in lines:
+    key = line.split('=', 1)[0].strip() if '=' in line and not line.lstrip().startswith('#') else ''
+    if key in updates:
+        if key in seen:
+            continue
+        result.append(f'{key}={updates[key]}')
+        seen.add(key)
+    else:
+        result.append(line)
+for key, value in updates.items():
+    if key not in seen:
+        result.append(f'{key}={value}')
+temporary = path.with_name(f'.environment.next.{os.getpid()}')
+descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+    stream.write('\n'.join(result) + '\n')
+    stream.flush()
+    os.fsync(stream.fileno())
+os.replace(temporary, path)
+path.chmod(0o600)
+PY
 
 timeout 90 docker exec special-bot-web-1 python -c '
 import asyncio, os, django
@@ -134,7 +178,11 @@ docker build -t vpnbot:latest .
 # Observed 2026-08-13 — the host was on the new commit, the containers on the
 # old image, and no error anywhere.
 docker compose -f "$compose_file" run --rm -T -e RUN_MIGRATIONS=false web python manage.py migrate --noinput </dev/null
-docker compose -f "$compose_file" up -d --no-deps --force-recreate web celery celery_beat monitoring
+# The first verified LKG must exist before public requests switch to snapshot
+# mode. A provider failure aborts the release and leaves the old web running.
+docker compose -f "$compose_file" run --rm -T -e RUN_MIGRATIONS=false \
+  provider_ingest python manage.py refresh_provider_delivery_snapshots --require-all </dev/null
+docker compose -f "$compose_file" up -d --no-deps --force-recreate web celery celery_beat monitoring provider_ingest
 if docker run --rm --network vpn_bot_default --env-file .environment \
   -e DJANGO_SETTINGS_MODULE=bot.settings vpnbot:latest python -c 'import django; django.setup(); from apps.telegram_bot.tasks import safe_broadcast_v1; assert safe_broadcast_v1.name == "apps.telegram_bot.tasks.safe_broadcast_v1"' >/dev/null; then
   docker compose -f "$compose_file" up -d --no-deps --force-recreate broadcast

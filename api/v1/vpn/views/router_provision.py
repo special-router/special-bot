@@ -16,6 +16,7 @@ from apps.servers.models import Server
 from apps.users.models import TelegramUser
 from apps.vpn.models import UserVPN
 from apps.vpn.services.add_vpn_to_user import add_vpn_to_user
+from apps.subscriptions.tokens import rotate_access_token
 
 
 logger = logging.getLogger(__name__)
@@ -92,9 +93,10 @@ class RouterProvisioningView(GenericAPIView):
             'router_provision succeeded user_id=%s server_id=%s created=%s',
             user.id, user_vpn.server_id, created,
         )
+        device_token, _token_record = rotate_access_token(user_vpn.id)
         response = Response({
-            'vpn_uuid': str(user_vpn.vpn_uuid),
-            'config_url': self._config_url(request, user_vpn),
+            'device_token': device_token,
+            'config_url': self._config_url(request),
             'created': created,
         }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
         response['Cache-Control'] = 'private, no-store'
@@ -109,8 +111,8 @@ class RouterProvisioningView(GenericAPIView):
         return servers.first()
 
     @staticmethod
-    def _config_url(request, user_vpn):
-        path = f'/api/v1/vpn/box/{user_vpn.vpn_uuid}/config/'
+    def _config_url(request):
+        path = '/api/v1/vpn/router/config/'
         base = str(getattr(settings, 'ROUTER_PROVISIONING_PUBLIC_BASE_URL', '')).strip()
         if base:
             return urljoin(base.rstrip('/') + '/', path.lstrip('/'))

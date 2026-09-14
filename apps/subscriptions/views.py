@@ -1508,8 +1508,11 @@ def subscription_proxy(request, sub_id: str):
             provider_documents = []
             global_auto_document = None
             if _is_backup_test_user(user_vpn.id):
+                # LKG mode never contacts a provider from a customer request.
+                snapshot_mode = bool(getattr(
+                    settings_relays(), 'SUBSCRIPTION_PROVIDER_SNAPSHOTS_ENABLED', False))
                 native_profiles = _native_mirror_profiles() \
-                    if _native_mirror_profiles_enabled(user_agent) else None
+                    if not snapshot_mode and _native_mirror_profiles_enabled(user_agent) else None
                 if native_profiles:
                     provider_documents.extend(native_profiles)
                 else:
@@ -1534,7 +1537,7 @@ def subscription_proxy(request, sub_id: str):
             if include_own or (not provider_documents and global_auto_document is None):
                 documents.append(own_document)
             documents.extend(provider_documents)
-            body = json.dumps(documents).encode('utf-8')
+            body = json.dumps(documents, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
         except (KeyError, TypeError, ValueError):
             body = None
         if body is not None:
@@ -1563,14 +1566,19 @@ def subscription_proxy(request, sub_id: str):
     # Панель, когда отвечает, и есть их описание: те же четыре точки, но
     # заведённые там, где их правят. Настройки остаются запасным путём, а не
     # вторым источником — иначе правка хостов расходилась бы с выдачей молча.
+    relay_enabled = bool(getattr(
+        settings_relays(), 'SUBSCRIPTION_BASE64_RELAY_ENABLED', True))
     if panel_links:
-        links.extend(own_links)
+        links.extend(
+            link for link in own_links
+            if relay_enabled or urlsplit(link).hostname != relay_host
+        )
     else:
         # 2) Direct NL primary.
         links.append(_build_vless(uuid_str, direct_host, direct_port,
                                   _endpoint_label(_OWN_REGION_CODE), params, flow=flow))
         # 3) RU relay (only if configured).
-        if relay_host:
+        if relay_enabled and relay_host:
             links.append(_build_vless(uuid_str, relay_host, relay_port,
                                       _endpoint_label(_OWN_REGION_CODE, whitelisted=True),
                                       params, flow=flow))
@@ -1587,7 +1595,7 @@ def subscription_proxy(request, sub_id: str):
         grpc_link = _grpc_link(uuid_str, direct_host)
         if grpc_link:
             links.append(grpc_link)
-    if canary_relay_link and not any(
+    if relay_enabled and canary_relay_link and not any(
             urlsplit(link).hostname == urlsplit(canary_relay_link).hostname
             and urlsplit(link).port == urlsplit(canary_relay_link).port
             for link in links):
@@ -1836,6 +1844,33 @@ def _backup_links() -> list[str] | None:
     if not getattr(settings, 'SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED', False):
         _clear_backup_cache()
         return None
+    if getattr(settings, 'SUBSCRIPTION_PROVIDER_SNAPSHOTS_ENABLED', False):
+        from apps.subscriptions.provider_snapshots import provider_snapshot_lines, snapshot_provider_ids
+        by_provider = provider_snapshot_lines()
+        provider_ids = snapshot_provider_ids()
+        if not provider_ids or any(provider_id not in by_provider for provider_id in provider_ids):
+            return None
+        links = []
+        seen = set()
+        line_limit = min(
+            int(_bounded_number(getattr(settings, 'SUBSCRIPTION_BACKUP_AGGREGATE_MAX_LINES', 256),
+                                default=256, lower=1, upper=2048)),
+            int(_bounded_number(getattr(settings, 'SUBSCRIPTION_BACKUP_MAX_MIRROR_ENTRIES', 16),
+                                default=16, lower=1, upper=2048)),
+        )
+        byte_limit = int(_bounded_number(
+            getattr(settings, 'SUBSCRIPTION_BACKUP_AGGREGATE_MAX_BYTES', 262144),
+            default=262144, lower=1, upper=_BACKUP_RESPONSE_HARD_MAX_BYTES))
+        total_bytes = 0
+        for provider_id in provider_ids:
+            for link in by_provider[provider_id]:
+                encoded = link.encode('utf-8')
+                if link in seen or len(links) >= line_limit or total_bytes + len(encoded) > byte_limit:
+                    continue
+                seen.add(link)
+                links.append(link)
+                total_bytes += len(encoded)
+        return links or None
     urls = getattr(settings, 'SUBSCRIPTION_BACKUP_UPSTREAM_URLS', [])
     if not isinstance(urls, list):
         _clear_backup_cache()

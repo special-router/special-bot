@@ -183,6 +183,18 @@ def run_provider_inventory_probe() -> LayerResult:
         return LayerResult(
             layer='provider', ok=False, error_class='provider_source_invalid',
             immediate=True, details=details)
+    if getattr(settings, 'SUBSCRIPTION_PROVIDER_SNAPSHOTS_ENABLED', False):
+        from apps.subscriptions.provider_snapshots import provider_snapshot_status
+        snapshot = provider_snapshot_status()
+        details.update({
+            'snapshot_ready_sources': snapshot.ready_sources,
+            'snapshot_configured_sources': snapshot.configured_sources,
+            'snapshot_oldest_age_seconds': snapshot.oldest_age_seconds,
+        })
+        if not snapshot.ready:
+            return LayerResult(
+                layer='provider', ok=False, error_class='provider_snapshot_unavailable',
+                immediate=True, details=details)
     if not getattr(settings, 'SUBSCRIPTION_BACKUP_LIVENESS_ENABLED', False):
         return LayerResult(
             layer='provider', ok=False, error_class='provider_liveness_disabled',

@@ -26,7 +26,7 @@ from apps.subscriptions.models import (
 from apps.vpn.models import UserVPN
 
 
-DEFAULT_DEVICE_LIMIT = 2
+DEFAULT_DEVICE_LIMIT = 5
 # The reset is an authenticated action and no longer the only way out of a
 # lockout, so it need not be rationed by the day.
 DEFAULT_RESET_COOLDOWN_HOURS = 1
@@ -78,11 +78,13 @@ def hwid_strict() -> bool:
 
 
 def device_limit_for(user_vpn) -> int:
-    """Per-subscription override wins over the global default when set."""
+    """An override may add slots, but cannot remove the included allowance."""
+    included = _bounded_limit(getattr(
+        settings, 'SUBSCRIPTION_DEVICE_LIMIT', DEFAULT_DEVICE_LIMIT))
     override = getattr(user_vpn, 'device_limit', None)
     if isinstance(override, int) and not isinstance(override, bool) and override > 0:
-        return override
-    return _bounded_limit(getattr(settings, 'SUBSCRIPTION_DEVICE_LIMIT', DEFAULT_DEVICE_LIMIT))
+        return max(included, _bounded_limit(override))
+    return included
 
 
 def binding_window() -> timedelta:

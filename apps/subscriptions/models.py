@@ -308,3 +308,21 @@ class SubscriptionAccessToken(models.Model):
 
     def __str__(self):
         return f'{self.subscription_id}:{self.token_hint}'
+
+
+class RouterActivationCode(models.Model):
+    subscription = models.ForeignKey(
+        'vpn.UserVPN', on_delete=models.CASCADE, related_name='router_activation_codes')
+    code_hash = models.CharField(max_length=64, unique=True, validators=(TOKEN_SHA256_VALIDATOR,))
+    code_hint = models.CharField(max_length=12, db_index=True)
+    expires_at = models.DateTimeField()
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.CheckConstraint(
+            condition=models.Q(expires_at__gt=models.F('created_at')),
+            name='router_activation_expiry_after_creation')]
+
+    def __str__(self):
+        return f'{self.subscription_id}:{self.code_hint}'

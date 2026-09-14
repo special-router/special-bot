@@ -73,7 +73,7 @@ class TelegramUserAdminPageTests(TestCase):
         self.assertIn('Нидерланды', content)
         self.assertIn('Базовый', content)
         self.assertIn('Активна', content)
-        self.assertIn('устройств: 2 из 2', content)
+        self.assertIn('устройств: 2 из 5', content)
 
     def test_the_page_shows_recent_transactions(self):
         content = self._page()

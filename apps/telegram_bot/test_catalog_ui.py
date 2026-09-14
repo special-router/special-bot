@@ -148,7 +148,7 @@ class CatalogScreenTests(IsolatedAsyncioTestCase):
 
         # Устройство без модели называется своей ОС, а не пропадает из списка:
         # место оно занимает такое же.
-        self.assertIn('<b>Устройства (2 из 2):</b> iPhone 15 Pro, Android', message)
+        self.assertIn('<b>Устройства (2 из 5):</b> iPhone 15 Pro, Android', message)
 
     @patch('apps.telegram_bot.handlers.show_keys.get_reply_markup_manage_keys', new_callable=AsyncMock)
     @patch('apps.telegram_bot.handlers.show_keys.get_user_access_url', new_callable=AsyncMock)
@@ -165,7 +165,7 @@ class CatalogScreenTests(IsolatedAsyncioTestCase):
 
         message, _keyboard = await build_keys_screen(self.user)
 
-        self.assertIn('<b>Устройства (0 из 2):</b> ещё ни одного, подключите приложение', message)
+        self.assertIn('<b>Устройства (0 из 5):</b> ещё ни одного, подключите приложение', message)
 
     @patch('apps.telegram_bot.handlers.show_keys.get_reply_markup_manage_keys', new_callable=AsyncMock)
     @patch('apps.telegram_bot.handlers.show_keys.get_user_access_url', new_callable=AsyncMock)

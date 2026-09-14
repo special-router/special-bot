@@ -110,6 +110,9 @@ What the script does on the host, in order:
   python manage.py migrate`. Every long-running service has
   `RUN_MIGRATIONS=false`, so this container is the sole migration owner;
 - force-recreates `web celery celery_beat monitoring`;
+- refreshes every enabled provider into a verified content-addressed LKG volume
+  before recreating the web service, then starts the isolated `provider_ingest`
+  loop. The web container has the volume read-only and no provider bearer mount;
 - proves the new image actually contains `safe_broadcast_v1`, and only then
   force-recreates `broadcast`. If the proof fails, the broadcast worker is
   stopped and removed and the deploy says `BROADCAST_QUARANTINED` — an old image
@@ -157,6 +160,15 @@ committing a running container.
 | `broadcast` | worker, `--pool=solo --concurrency=1` | `safe_broadcast_v1` |
 | `celery_beat` | beat | — |
 | `monitoring` | worker, `--pool=solo`, `no-new-privileges` | `monitoring` |
+| `provider_ingest` | five-minute immutable LKG refresh loop, read-only rootfs | — |
+
+The existing RU config-delivery host runs `special-config-edge.service` behind
+the tracked nginx site. It keeps only digest-keyed successful responses in
+memory: fresh documents avoid the BOT hop and a warm document may be served for
+up to 24 hours when origin health fails. It is not a second independent origin;
+an unseen subscription and a host restart still require BOT. Deploy it with
+`ops/scripts/deploy_config_edge.sh`; the script rolls back service and nginx
+files on any health or syntax failure.
 
 Solo pools everywhere: the prefork children were the source of the earlier OOM
 pressure. The published port is pinned to the BOT public IPv4, and persistent

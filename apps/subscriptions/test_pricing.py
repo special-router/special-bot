@@ -7,6 +7,7 @@ from django.test import TestCase, override_settings
 from apps.payments.choices import TransactionSourceChoices, TransactionStatusChoices
 from apps.payments.models import Transaction
 from apps.servers.models import Server, TariffServer
+from apps.subscriptions.devices import device_limit_for
 from apps.subscriptions.pricing import daily_price, paid_device_slots
 from apps.subscriptions.tasks import update_user_vpn
 from apps.users.models import TelegramUser
@@ -19,6 +20,22 @@ def _subscription(device_limit=None, price='7.00', device_billing_exempt=False):
         device_billing_exempt=device_billing_exempt,
         server=SimpleNamespace(tariff=SimpleNamespace(price=Decimal(price))),
     )
+
+
+@override_settings(SUBSCRIPTION_DEVICE_LIMIT=5, SUBSCRIPTION_FREE_DEVICE_SLOTS=5)
+class IncludedDeviceFloorTests(TestCase):
+    def test_legacy_smaller_override_cannot_reduce_the_included_allowance(self):
+        subscription = _subscription(device_limit=2)
+
+        self.assertEqual(device_limit_for(subscription), 5)
+        self.assertEqual(paid_device_slots(subscription), 0)
+        self.assertEqual(daily_price(subscription), Decimal('7.00'))
+
+    def test_larger_override_remains_a_paid_extra_slot(self):
+        subscription = _subscription(device_limit=6)
+
+        self.assertEqual(device_limit_for(subscription), 6)
+        self.assertEqual(paid_device_slots(subscription), 1)
 
 
 @override_settings(SUBSCRIPTION_DEVICE_LIMIT=2, SUBSCRIPTION_FREE_DEVICE_SLOTS=2)

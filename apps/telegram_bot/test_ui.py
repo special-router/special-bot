@@ -40,7 +40,7 @@ EXPECTED_CALLBACK_DATA = frozenset(
         'profile',
         'referral',
         'add_device_slot',
-        'drop_device_slot',
+        'router_activation',
         'show_balance',
         'show_keys',
         'show_devices',

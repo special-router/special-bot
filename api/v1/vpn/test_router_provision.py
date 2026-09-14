@@ -35,12 +35,16 @@ class RouterProvisioningViewTests(TestCase):
         cls.other_vpn = UserVPN.objects.create(user=cls.other, server=cls.server, enabled=True)
 
     def post(self, data, token='service-secret'):
-        return self.client.post(
-            reverse('router-provision'),
-            data=data,
-            content_type='application/json',
-            HTTP_AUTHORIZATION=f'Bearer {token}',
-        )
+        with patch(
+            'api.v1.vpn.views.router_provision.rotate_access_token',
+            return_value=('sp1_' + 'A' * 43, object()),
+        ):
+            return self.client.post(
+                reverse('router-provision'),
+                data=data,
+                content_type='application/json',
+                HTTP_AUTHORIZATION=f'Bearer {token}',
+            )
 
     def test_missing_or_wrong_service_token_is_401(self):
         missing = self.client.post(
@@ -57,8 +61,8 @@ class RouterProvisioningViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {
-            'vpn_uuid': str(self.existing.vpn_uuid),
-            'config_url': f'https://router.example.test/api/v1/vpn/box/{self.existing.vpn_uuid}/config/',
+            'device_token': 'sp1_' + 'A' * 43,
+            'config_url': 'https://router.example.test/api/v1/vpn/router/config/',
             'created': False,
         })
         self.assertNotIn(str(self.other_vpn.vpn_uuid), response.content.decode())
@@ -113,7 +117,8 @@ class RouterProvisioningViewTests(TestCase):
 
         self.assertEqual(ambiguous.status_code, 409)
         self.assertEqual(explicit.status_code, 200)
-        self.assertEqual(explicit.json()['vpn_uuid'], str(self.existing.vpn_uuid))
+        self.assertEqual(explicit.json()['device_token'], 'sp1_' + 'A' * 43)
+        self.assertNotIn('vpn_uuid', explicit.json())
 
     @patch('api.v1.vpn.views.router_provision.add_vpn_to_user', new_callable=AsyncMock)
     def test_backend_failure_is_secret_safe(self, add_vpn):

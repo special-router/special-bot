@@ -10,11 +10,12 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.subscriptions.models import SubscriptionAccessToken
+from apps.subscriptions.models import RouterActivationCode, SubscriptionAccessToken
 from apps.vpn.models import UserVPN
 
 
 _TOKEN_RE = re.compile(r'^sp1_[A-Za-z0-9_-]{32,96}$')
+_ACTIVATION_RE = re.compile(r'^ra1_[A-Za-z0-9_-]{16,40}$')
 MAX_ROTATION_OVERLAP = timedelta(hours=1)
 
 
@@ -115,3 +116,44 @@ def revoke_access_tokens(subscription_id: int) -> int:
         subscription_id=subscription_id,
         revoked_at__isnull=True,
     ).update(revoked_at=timezone.now())
+
+
+def _activation_digest(raw_code: str) -> str:
+    if not isinstance(raw_code, str) or not _ACTIVATION_RE.fullmatch(raw_code):
+        raise ValidationError('invalid_activation_code')
+    return hashlib.sha256(raw_code.encode('ascii')).hexdigest()
+
+
+@transaction.atomic
+def issue_router_activation_code(subscription: UserVPN) -> tuple[str, RouterActivationCode]:
+    subscription = UserVPN.objects.select_for_update().get(pk=subscription.pk, enabled=True)
+    now = timezone.now()
+    RouterActivationCode.objects.filter(
+        subscription=subscription, consumed_at__isnull=True, expires_at__gt=now,
+    ).update(consumed_at=now)
+    raw_code = f'ra1_{secrets.token_urlsafe(15)}'
+    digest = _activation_digest(raw_code)
+    return raw_code, RouterActivationCode.objects.create(
+        subscription=subscription, code_hash=digest, code_hint=digest[:12],
+        expires_at=now + timedelta(minutes=10),
+    )
+
+
+@transaction.atomic
+def exchange_router_activation_code(raw_code: str) -> tuple[str, SubscriptionAccessToken] | None:
+    try:
+        digest = _activation_digest(raw_code)
+    except ValidationError:
+        return None
+    now = timezone.now()
+    code = (
+        RouterActivationCode.objects.select_for_update().select_related('subscription')
+        .filter(code_hash=digest, consumed_at__isnull=True, expires_at__gt=now,
+                subscription__enabled=True)
+        .first()
+    )
+    if code is None:
+        return None
+    code.consumed_at = now
+    code.save(update_fields=('consumed_at',))
+    return issue_access_token(code.subscription)

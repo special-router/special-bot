@@ -23,6 +23,7 @@ from django.utils.timezone import now
 
 from apps.servers.models import Server
 from apps.servers.remnawave import RemnawaveAPI, RemnawaveError
+from apps.subscriptions.devices import device_limit_for
 from apps.vpn.models import UserVPN
 
 
@@ -160,7 +161,7 @@ class RemnawaveVPNClient:
         return await self._api.get_user_by_username(username)
 
     async def _create(self, user_vpn: UserVPN) -> dict:
-        limit = user_vpn.device_limit or getattr(settings, 'SUBSCRIPTION_DEVICE_LIMIT', 0)
+        limit = device_limit_for(user_vpn)
         username, telegram_id = await panel_identity(user_vpn)
         sub_id = await _ensure_sub_id(user_vpn)
         created = await self._api.create_user(

@@ -18,6 +18,7 @@ URLs, Reality parameters, credentials, or raw client payloads.
 | L1 | 1 min | TCP/TLS/SNI reachability from the permanent bot-host region; record only endpoint label, regions, port, transport, latency and coarse error class. |
 | L2 | 5 min | Protected subscription/direct-key import and HTTPS-egress E2E for the internal canary. |
 | Host | every 5 minutes | Container-visible `MemAvailable`, swap, load-per-CPU and kernel OOM counter; aggregate values only. |
+| Provider LKG | every 5 minutes | Require every enabled source to have a verified, unexpired immutable snapshot; source refresh failures retain the prior pointer. |
 | L3 | on alert | Manual correlation of nginx, Xray, relay and control-plane state; no automated remediation. |
 
 L0/L1/L2/Host transition state is intended for sanitized durable storage. L2 and Host must run

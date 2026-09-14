@@ -84,6 +84,8 @@ MIDDLEWARE = [
     # Сразу за security и до всего остального — так рекомендует WhiteNoise:
     # файл отдаётся, не доходя до сессий, аутентификации и URLconf.
     'whitenoise.middleware.WhiteNoiseMiddleware',
+    'bot.middleware.ConfigDeliveryObservabilityMiddleware',
+    'django.middleware.gzip.GZipMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -324,11 +326,11 @@ LIMIT_IP = env.int('LIMIT_IP', 2)
 # Per-subscription device binding. The panel's own limit_ip cannot be enforced
 # here (xray sees only the SNI stream proxy and keeps no access log), so the
 # subscription endpoint counts distinct client ``x-hwid`` values instead.
-SUBSCRIPTION_DEVICE_LIMIT = env.int('SUBSCRIPTION_DEVICE_LIMIT', 2)
+SUBSCRIPTION_DEVICE_LIMIT = env.int('SUBSCRIPTION_DEVICE_LIMIT', 5)
 # Места, входящие в тариф. Каждое сверх них умножает суточную плату, поэтому
 # поднять это значение — значит задним числом раздать уже оплаченные места
 # бесплатно: ежедневное списание читает настройку на каждом прогоне.
-SUBSCRIPTION_FREE_DEVICE_SLOTS = env.int('SUBSCRIPTION_FREE_DEVICE_SLOTS', 2)
+SUBSCRIPTION_FREE_DEVICE_SLOTS = env.int('SUBSCRIPTION_FREE_DEVICE_SLOTS', 5)
 # Clients that send no usable identifier are served until the fleet has caught
 # up; enabling strict mode refuses them like an unknown device.
 SUBSCRIPTION_HWID_STRICT = env.bool('SUBSCRIPTION_HWID_STRICT', False)
@@ -741,6 +743,21 @@ SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_MODEL = env.str('SUBSCRIPTION_BACKUP_UPSTREA
 # stay out of subscriptions until an operator accepts that specific trade-off.
 SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS = env.bool(
     'SUBSCRIPTION_BACKUP_ALLOW_PLAINTEXT_ENDPOINTS', False)
+
+# Provider network I/O belongs to the isolated ingestion service. Public
+# subscription and router requests read only verified immutable LKG artifacts.
+SUBSCRIPTION_PROVIDER_SNAPSHOTS_ENABLED = env.bool(
+    'SUBSCRIPTION_PROVIDER_SNAPSHOTS_ENABLED', False)
+SUBSCRIPTION_PROVIDER_SNAPSHOT_DIR = env.str(
+    'SUBSCRIPTION_PROVIDER_SNAPSHOT_DIR', '/run/provider-snapshots')
+SUBSCRIPTION_PROVIDER_SNAPSHOT_MAX_AGE_SECONDS = env.int(
+    'SUBSCRIPTION_PROVIDER_SNAPSHOT_MAX_AGE_SECONDS', 86400)
+# Emergency rollback switch. Production disables the obsolete generic/base64
+# relay while keeping it available as a single-variable rollback.
+SUBSCRIPTION_BASE64_RELAY_ENABLED = env.bool(
+    'SUBSCRIPTION_BASE64_RELAY_ENABLED', True)
+ROUTER_PROVIDER_SNAPSHOT_ENABLED = env.bool(
+    'ROUTER_PROVIDER_SNAPSHOT_ENABLED', False)
 
 # Out-of-band provider ingestion. The mode-0600 file contains upstream bearer
 # URLs/API tokens and is never read by the public subscription request path.
