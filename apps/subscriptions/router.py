@@ -95,10 +95,19 @@ def build_router_config() -> dict | None:
             countries.setdefault(country, []).append(endpoint_tag)
     if not endpoints:
         return None
-    selectors = [
-        {'type': 'selector', 'tag': country, 'outbounds': tags}
-        for country, tags in countries.items() if len(tags) > 1
-    ]
+    selectors = []
+    selector_tags = set(used)
+    for country, tags in countries.items():
+        if len(tags) < 2:
+            continue
+        label = f'COUNTRY {country}'[:64]
+        selector_tag = label
+        suffix = 2
+        while selector_tag in selector_tags:
+            selector_tag = f'{label[:60]} {suffix}'
+            suffix += 1
+        selector_tags.add(selector_tag)
+        selectors.append({'type': 'selector', 'tag': selector_tag, 'outbounds': tags})
     return {
         'log': {'level': 'warn', 'timestamp': True},
         'outbounds': [

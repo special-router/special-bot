@@ -76,6 +76,17 @@ class ProviderSnapshotTests(SimpleTestCase):
         self.assertNotIn('xhttp', transports)
         self.assertEqual(config['outbounds'][0]['tag'], 'GLOBAL AUTO')
 
+    def test_country_selector_tags_never_collide_with_endpoint_tags(self):
+        second_germany = LINE_A.replace('192.0.2.10', '192.0.2.12')
+        provider_snapshots._publish('a-service', [LINE_A, second_germany])
+        provider_snapshots._publish_scope(('a-service',))
+
+        config = build_router_config()
+        tags = [item['tag'] for item in config['outbounds']]
+
+        self.assertEqual(len(tags), len(set(tags)))
+        self.assertIn('COUNTRY 🇩🇪Germany', tags)
+
     def test_tampered_artifact_fails_closed(self):
         provider_snapshots._publish('a-service', [LINE_A])
         pointer = json.loads((Path(self.directory.name) / 'current-a-service.json').read_text())
