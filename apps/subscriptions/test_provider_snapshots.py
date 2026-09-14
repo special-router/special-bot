@@ -65,6 +65,17 @@ class ProviderSnapshotTests(SimpleTestCase):
         self.assertNotIn('direct', {item['type'] for item in config['outbounds']})
         self.assertEqual(config['route']['final'], 'GLOBAL AUTO')
 
+    def test_router_snapshot_omits_xray_only_xhttp_transport(self):
+        xhttp = LINE_A.replace('type=tcp', 'type=xhttp')
+        provider_snapshots._publish('a-service', [xhttp, LINE_A])
+        provider_snapshots._publish_scope(('a-service',))
+
+        config = build_router_config()
+
+        transports = [item.get('transport', {}).get('type') for item in config['outbounds']]
+        self.assertNotIn('xhttp', transports)
+        self.assertEqual(config['outbounds'][0]['tag'], 'GLOBAL AUTO')
+
     def test_tampered_artifact_fails_closed(self):
         provider_snapshots._publish('a-service', [LINE_A])
         pointer = json.loads((Path(self.directory.name) / 'current-a-service.json').read_text())

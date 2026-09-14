@@ -26,9 +26,13 @@ def _vless(link: str, tag: str) -> dict | None:
     if query.get('flow'):
         outbound['flow'] = query['flow']
     network = query.get('type', 'tcp')
+    # XHTTP is an Xray transport. sing-box 1.14 has no matching transport
+    # schema, so emitting it would invalidate the whole router document.
+    if network == 'xhttp':
+        return None
     if network == 'grpc':
         outbound['transport'] = {'type': 'grpc', 'service_name': query.get('serviceName', '')}
-    elif network in ('xhttp', 'httpupgrade', 'ws'):
+    elif network in ('httpupgrade', 'ws'):
         outbound['transport'] = {'type': network, 'path': query.get('path', '/')}
         if query.get('host'):
             outbound['transport']['headers'] = {'Host': query['host']}
