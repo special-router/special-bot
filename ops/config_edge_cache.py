@@ -12,6 +12,7 @@ import hashlib
 import http.client
 import os
 import re
+import secrets
 import threading
 import time
 from collections import OrderedDict
@@ -34,7 +35,8 @@ RETURN = ('content-type', 'content-encoding', 'profile-update-interval',
           'subscription-userinfo', 'routing-enable', 'x-hwid-active',
           'x-hwid-limit', 'x-hwid-max-devices-reached', 'x-hwid-not-supported',
           'x-hwid-status', 'profile-title', 'support-url',
-          'profile-web-page-url', 'announce', 'cache-control', 'pragma')
+          'profile-web-page-url', 'announce', 'cache-control', 'pragma',
+          'x-request-id')
 
 
 def cache_key(handler: BaseHTTPRequestHandler) -> str:
@@ -94,10 +96,14 @@ class Handler(BaseHTTPRequestHandler):
     def send(self, status: int, headers: dict[str, str], body: bytes, edge: str):
         self.send_response(status)
         for name, value in headers.items():
-            self.send_header(name, value)
+            if name != 'x-request-id':
+                self.send_header(name, value)
         request_id = self.headers.get('X-Request-ID', '')
-        if re.fullmatch(r'[A-Za-z0-9_-]{16,64}', request_id):
-            self.send_header('X-Request-ID', request_id)
+        if not re.fullmatch(r'[A-Za-z0-9_-]{16,64}', request_id):
+            request_id = headers.get('x-request-id', '')
+        if not re.fullmatch(r'[A-Za-z0-9_-]{16,64}', request_id):
+            request_id = secrets.token_hex(16)
+        self.send_header('X-Request-ID', request_id)
         self.send_header('X-Config-Edge', edge)
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Connection', 'close')
