@@ -1571,7 +1571,7 @@ def subscription_proxy(request, sub_id: str):
     if panel_links:
         links.extend(
             link for link in own_links
-            if relay_enabled or urlsplit(link).hostname != relay_host
+            if relay_enabled or _panel_outbound_tag(link, direct_host) != 'proxy-ru-relay'
         )
     else:
         # 2) Direct NL primary.

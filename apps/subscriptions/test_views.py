@@ -303,6 +303,44 @@ class LegacySubscriptionTests(SimpleTestCase):
     @override_settings(
         SUBSCRIPTION_BASE_URL='https://direct.example/sub',
         SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=False,
+        SUBSCRIPTION_BASE64_RELAY_ENABLED=False,
+        SUBSCRIPTION_STATUS_ENTRY_ENABLED=True,
+    )
+    @patch('apps.subscriptions.views._panel_links')
+    @patch('apps.subscriptions.views._get_params')
+    @patch('apps.subscriptions.views.TelegramUser.objects')
+    @patch('apps.subscriptions.views.UserVPN.objects')
+    def test_relay_retirement_filters_the_panel_managed_tcp_relay(
+        self, user_vpn_objects, telegram_user_objects, get_params, panel_links,
+    ):
+        user_vpn_objects.select_related.return_value.get.return_value = SimpleNamespace(
+            id=1, enabled=True,
+            server=SimpleNamespace(
+                id=1, inbound_id=5, client_vpn_host='configured-relay.example:443',
+                tariff=None, vpn_url='direct.example', ip_address='192.0.2.1'),
+            user_id=1, vpn_uuid='synthetic-local-id',
+        )
+        telegram_user_objects.annotate_balance.return_value.filter.return_value.first.return_value = None
+        get_params.return_value = {
+            'public_key': 'synthetic-public-key', 'server_name': 'sni.example',
+            'short_ids': ['synthetic-short-id'], 'port': 8443, 'network': 'tcp',
+        }
+        direct = ('vless://synthetic-local-id@direct.example:443?type=tcp&security=reality'
+                  '&pbk=synthetic-public-key&sni=sni.example#direct')
+        relay = direct.replace('direct.example', 'stale-relay.example').replace('#direct', '#relay')
+        xhttp = direct.replace('type=tcp', 'type=xhttp').replace('#direct', '#xhttp')
+        panel_links.return_value = [direct, relay, xhttp]
+
+        response = views.subscription_proxy(RequestFactory().get('/sub/synthetic'), 'synthetic')
+        links = base64.b64decode(response.content).decode().splitlines()
+
+        self.assertEqual([urlsplit(link).hostname for link in links[1:]],
+                         ['direct.example', 'direct.example'])
+        self.assertNotIn('stale-relay.example', '\n'.join(links))
+
+    @override_settings(
+        SUBSCRIPTION_BASE_URL='https://direct.example/sub',
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=False,
         # Pinned: production advertises 443, and an ambient value would other-
         # wise decide what this test asserts about the default inbound port.
         SUBSCRIPTION_DIRECT_ADVERTISED_PORT=0,
