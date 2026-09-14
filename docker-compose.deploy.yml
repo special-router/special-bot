@@ -1,12 +1,21 @@
 # Deploy-only compose: app services join the existing vpn_bot_default network.
 # Postgres and Redis are intentionally NOT declared here; they are owned by the
 # vpn_bot project. Declaring them would hijack their network aliases.
+x-no-provider-source: &no-provider-source
+  SUBSCRIPTION_BACKUP_UPSTREAM_URLS: ""
+  SUBSCRIPTION_BACKUP_UPSTREAM_HWID: ""
+  SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_OS: ""
+  SUBSCRIPTION_BACKUP_UPSTREAM_OS_VERSION: ""
+  SUBSCRIPTION_BACKUP_UPSTREAM_DEVICE_MODEL: ""
+  SUBSCRIPTION_BACKUP_UPSTREAM_USER_AGENT: ""
+
 services:
   web:
     image: vpnbot:latest
     command: ["sh", "-c", "./entrypoint.sh sh -c 'gunicorn bot.wsgi:application --bind 0.0.0.0:8001 --workers 1 --threads 4 --log-level warning & python manage.py start_bot'"]
     env_file: [.environment]
     environment:
+      <<: *no-provider-source
       DJANGO_SETTINGS_MODULE: bot.settings
       RUN_MIGRATIONS: "false"
     volumes:
@@ -20,6 +29,7 @@ services:
     command: ["sh", "-c", "./entrypoint.sh celery -A bot.celery_app worker --loglevel=INFO --queues=celery --pool=solo"]
     env_file: [.environment]
     environment:
+      <<: *no-provider-source
       DJANGO_SETTINGS_MODULE: bot.settings
       RUN_MIGRATIONS: "false"
     restart: unless-stopped
@@ -29,6 +39,7 @@ services:
     command: ["sh", "-c", "./entrypoint.sh celery -A bot.celery_app worker --loglevel=INFO --queues=safe_broadcast_v1 --pool=solo --concurrency=1"]
     env_file: [.environment]
     environment:
+      <<: *no-provider-source
       DJANGO_SETTINGS_MODULE: bot.settings
       RUN_MIGRATIONS: "false"
     restart: unless-stopped
@@ -38,6 +49,7 @@ services:
     command: ["sh", "-c", "./entrypoint.sh celery -A bot.celery_app beat --loglevel=INFO"]
     env_file: [.environment]
     environment:
+      <<: *no-provider-source
       DJANGO_SETTINGS_MODULE: bot.settings
       RUN_MIGRATIONS: "false"
     restart: unless-stopped
