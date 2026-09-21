@@ -55,6 +55,12 @@ class ProviderSnapshotTests(SimpleTestCase):
         self.assertNotIn('secret detail', json.dumps(result))
         self.assertEqual((Path(self.directory.name) / 'current-a-service.json').read_bytes(), before)
 
+    def test_public_reader_keeps_ready_provider_when_another_is_unavailable(self):
+        provider_snapshots._publish('vpnstar', [LINE_B])
+        provider_snapshots._publish_scope(('a-service', 'vpnstar'))
+
+        self.assertEqual(views._backup_links(), [LINE_B])
+
     def test_router_snapshot_has_global_auto_first_and_no_direct(self):
         provider_snapshots._publish('a-service', [LINE_A])
         provider_snapshots._publish('vpnstar', [LINE_B])

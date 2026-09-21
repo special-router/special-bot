@@ -26,6 +26,7 @@ import ssl
 import subprocess
 import threading
 import time
+import zlib
 from functools import lru_cache
 from urllib.parse import parse_qs, parse_qsl, quote, unquote, unquote_to_bytes, urlencode, urlsplit
 
@@ -1848,7 +1849,7 @@ def _backup_links() -> list[str] | None:
         from apps.subscriptions.provider_snapshots import provider_snapshot_lines, snapshot_provider_ids
         by_provider = provider_snapshot_lines()
         provider_ids = snapshot_provider_ids()
-        if not provider_ids or any(provider_id not in by_provider for provider_id in provider_ids):
+        if not provider_ids or not by_provider:
             return None
         links = []
         seen = set()
@@ -1863,7 +1864,7 @@ def _backup_links() -> list[str] | None:
             default=262144, lower=1, upper=_BACKUP_RESPONSE_HARD_MAX_BYTES))
         total_bytes = 0
         for provider_id in provider_ids:
-            for link in by_provider[provider_id]:
+            for link in by_provider.get(provider_id, ()):
                 encoded = link.encode('utf-8')
                 if link in seen or len(links) >= line_limit or total_bytes + len(encoded) > byte_limit:
                     continue
@@ -2397,6 +2398,22 @@ def _host_header(host: str, port: int) -> str:
     return host if port == 443 else f'{host}:{port}'
 
 
+def _decompress_gzip_payload(payload: bytes, max_bytes: int) -> bytes:
+    try:
+        decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        decoded = decompressor.decompress(payload, max_bytes + 1)
+        if len(decoded) > max_bytes or decompressor.unconsumed_tail:
+            raise ValueError('upstream_response_too_large')
+        decoded += decompressor.flush(max_bytes + 1 - len(decoded))
+    except zlib.error as error:
+        raise ValueError('upstream_invalid_compressed_response') from error
+    if len(decoded) > max_bytes:
+        raise ValueError('upstream_response_too_large')
+    if not decompressor.eof or decompressor.unused_data:
+        raise ValueError('upstream_invalid_compressed_response')
+    return decoded
+
+
 def _fetch_upstream_payload(url: str, *, user_agent: str | None = None) -> tuple[dict[str, str], bytes]:
     """Fetch identity bytes over TLS pinned to one pre-resolved public IP.
 
@@ -2458,7 +2475,7 @@ def _fetch_upstream_payload(url: str, *, user_agent: str | None = None) -> tuple
         if status != 200:
             raise ValueError('upstream_http_status')
         encoding = headers.get('content-encoding', '').casefold()
-        if encoding not in ('', 'identity'):
+        if encoding not in ('', 'identity', 'gzip'):
             raise ValueError('upstream_compressed_response')
         transfer_encoding = headers.get('transfer-encoding', '').casefold()
         if transfer_encoding not in ('', 'identity', 'chunked'):
@@ -2472,6 +2489,11 @@ def _fetch_upstream_payload(url: str, *, user_agent: str | None = None) -> tuple
             raise ValueError('upstream_response_too_large')
         if declared_size is not None and len(body) != declared_size:
             raise ValueError('upstream_incomplete_response')
+        if encoding == 'gzip':
+            body = _decompress_gzip_payload(bytes(body), max_bytes)
+            headers = dict(headers)
+            headers.pop('content-encoding', None)
+            headers.pop('content-length', None)
         return headers, bytes(body)
     finally:
         if tls_socket is not None:

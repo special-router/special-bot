@@ -1,6 +1,7 @@
 import base64
 import copy
 import datetime
+import gzip
 import hashlib
 import io
 import json
@@ -1387,8 +1388,44 @@ class ExternalSubscriptionTests(SimpleTestCase):
     @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
     @patch('apps.subscriptions.views.ssl.create_default_context')
     @patch('apps.subscriptions.views.socket.create_connection')
-    def test_compressed_response_is_rejected(self, create_connection, create_context, resolve):
-        tls_socket = _FakeTLSSocket(b'HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\n\r\n')
+    def test_gzip_response_is_decoded_within_size_limit(self, create_connection, create_context, resolve):
+        compressed = gzip.compress(b'vless://payload')
+        tls_socket = _FakeTLSSocket(
+            b'HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: '
+            + str(len(compressed)).encode('ascii') + b'\r\n\r\n' + compressed)
+        create_connection.return_value = Mock()
+        create_context.return_value.wrap_socket.return_value = tls_socket
+
+        headers, payload = views._fetch_upstream_payload('https://subscription.example/')
+
+        self.assertEqual(payload, b'vless://payload')
+        self.assertNotIn('content-encoding', headers)
+        self.assertNotIn('content-length', headers)
+        self.assertTrue(tls_socket.closed)
+
+    @override_settings(SUBSCRIPTION_BACKUP_RESPONSE_MAX_BYTES=5)
+    @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
+    @patch('apps.subscriptions.views.ssl.create_default_context')
+    @patch('apps.subscriptions.views.socket.create_connection')
+    def test_gzip_response_size_cap_applies_after_decompression(
+        self, create_connection, create_context, resolve,
+    ):
+        compressed = gzip.compress(b'123456')
+        tls_socket = _FakeTLSSocket(
+            b'HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\n\r\n' + compressed)
+        create_connection.return_value = Mock()
+        create_context.return_value.wrap_socket.return_value = tls_socket
+
+        with self.assertRaisesRegex(ValueError, 'too_large'):
+            views._fetch_upstream_payload('https://subscription.example/')
+
+        self.assertTrue(tls_socket.closed)
+
+    @patch('apps.subscriptions.views._resolve_public_upstream', return_value={'8.8.8.8'})
+    @patch('apps.subscriptions.views.ssl.create_default_context')
+    @patch('apps.subscriptions.views.socket.create_connection')
+    def test_unsupported_compression_is_rejected(self, create_connection, create_context, resolve):
+        tls_socket = _FakeTLSSocket(b'HTTP/1.1 200 OK\r\nContent-Encoding: br\r\n\r\n')
         create_connection.return_value = Mock()
         create_context.return_value.wrap_socket.return_value = tls_socket
 
