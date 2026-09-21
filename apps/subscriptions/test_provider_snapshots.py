@@ -61,6 +61,17 @@ class ProviderSnapshotTests(SimpleTestCase):
 
         self.assertEqual(views._backup_links(), [LINE_B])
 
+    def test_public_reader_removes_snapshot_endpoint_with_fresh_dead_verdict(self):
+        provider_snapshots._publish('a-service', [LINE_A])
+        provider_snapshots._publish('vpnstar', [LINE_B])
+        provider_snapshots._publish_scope(('a-service', 'vpnstar'))
+
+        with patch.object(views, '_liveness_verdicts', return_value={
+            ('192.0.2.10', 443): False,
+            ('192.0.2.11', 443): True,
+        }):
+            self.assertEqual(views._backup_links(), [LINE_B])
+
     def test_router_snapshot_has_global_auto_first_and_no_direct(self):
         provider_snapshots._publish('a-service', [LINE_A])
         provider_snapshots._publish('vpnstar', [LINE_B])

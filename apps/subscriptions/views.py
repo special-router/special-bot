@@ -1871,7 +1871,7 @@ def _backup_links() -> list[str] | None:
                 seen.add(link)
                 links.append(link)
                 total_bytes += len(encoded)
-        return links or None
+        return _filter_snapshot_links_by_liveness(links) or None
     urls = getattr(settings, 'SUBSCRIPTION_BACKUP_UPSTREAM_URLS', [])
     if not isinstance(urls, list):
         _clear_backup_cache()
@@ -3502,6 +3502,23 @@ def _liveness_verdicts() -> dict[tuple[str, int], bool]:
         # every refresh otherwise.
         logger.warning('mirror liveness lookup failed; selection falls back to the blind choice')
         return {}
+
+
+def _filter_snapshot_links_by_liveness(links: list[str]) -> list[str]:
+    verdicts = _liveness_verdicts()
+    if not verdicts:
+        return links
+    filtered = []
+    for link in links:
+        try:
+            parts = urlsplit(link)
+            endpoint = (parts.hostname, parts.port)
+        except ValueError:
+            filtered.append(link)
+            continue
+        if None in endpoint or verdicts.get(endpoint, True):
+            filtered.append(link)
+    return filtered
 
 
 def _numbered_mirror_endpoints(endpoints: list[dict]) -> list[dict]:
