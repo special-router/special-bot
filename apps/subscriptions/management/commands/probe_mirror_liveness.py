@@ -162,11 +162,7 @@ class Command(BaseCommand):
                     sources_ready=sources_ready)
                 raise CommandError('provider inventory probe found no live endpoint')
             return
-        if required and sources_ready != len(valid_source_keys):
-            self._record_source_state(
-                'partial', configured, valid, targets=len(targets), probed=len(probed),
-                alive=len(alive), loaded=source_status['loaded'], sources_ready=sources_ready)
-            raise CommandError('provider inventory has no live endpoint for every configured source')
+        partial_sources = required and sources_ready != len(valid_source_keys)
         if options['dry_run']:
             self.stdout.write('dry run: no verdict written')
             return
@@ -200,9 +196,11 @@ class Command(BaseCommand):
         self.stdout.write(f'current={current} alive={alive_now}')
         if required:
             self._record_source_state(
-                'ready', configured, valid, targets=len(targets),
-                probed=len(probed), alive=len(alive), loaded=source_status['loaded'],
-                sources_ready=sources_ready)
+                'partial' if partial_sources else 'ready', configured, valid,
+                targets=len(targets), probed=len(probed), alive=len(alive),
+                loaded=source_status['loaded'], sources_ready=sources_ready)
+        if partial_sources:
+            raise CommandError('provider inventory has no live endpoint for every configured source')
 
     def _source_urls(self) -> tuple[list[str], list[str]]:
         urls = getattr(settings, 'SUBSCRIPTION_BACKUP_UPSTREAM_URLS', [])

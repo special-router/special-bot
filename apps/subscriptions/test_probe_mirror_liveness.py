@@ -12,6 +12,7 @@ from apps.subscriptions.management.commands.probe_mirror_liveness import (
     Command, _fetch_through_socks, _xray_config,
 )
 from apps.subscriptions.models import MirrorEndpointLiveness
+from apps.subscriptions.views import _backup_cache_key
 
 
 ENDPOINT = {
@@ -147,6 +148,33 @@ class ProbeMirrorLivenessTests(TestCase):
         self.assertEqual(source_state.details['loaded_sources'], 1)
         self.assertEqual(source_state.details['ready_sources'], 1)
         self.assertNotIn('provider.example', repr(source_state.details))
+
+    def test_partial_provider_failure_writes_verdicts_before_reporting_degraded(self):
+        urls = ['https://one.example/sub/token', 'https://two.example/sub/token']
+        targets = [
+            dict(ENDPOINT, host='live.example', source_keys={_backup_cache_key(urls[0])}),
+            dict(ENDPOINT, host='dead.example', source_keys={_backup_cache_key(urls[1])}),
+        ]
+        with override_settings(
+                SPECIAL_MONITOR_PROVIDER_ENABLED=True,
+                SUBSCRIPTION_BACKUP_UPSTREAM_URLS=urls,
+                SUBSCRIPTION_BACKUP_UPSTREAM_HOSTS=['one.example', 'two.example']), \
+                patch.object(Command, '_targets', return_value=targets), \
+                patch.object(Command, '_probe_one', side_effect=[
+                    ('live.example', 443, True, ''),
+                    ('dead.example', 443, False, 'timeout'),
+                ]):
+            with self.assertRaisesRegex(CommandError, 'no live endpoint for every'):
+                call_command('probe_mirror_liveness', stdout=io.StringIO())
+
+        self.assertEqual(
+            dict(MirrorEndpointLiveness.objects.values_list('host', 'alive')),
+            {'live.example': True, 'dead.example': False},
+        )
+        source_state = MonitorState.objects.get(layer='provsrc')
+        self.assertFalse(source_state.last_ok)
+        self.assertEqual(source_state.details['status'], 'partial')
+        self.assertEqual(source_state.details['ready_sources'], 1)
 
     @override_settings(
         SUBSCRIPTION_BACKUP_UPSTREAM_URLS=['https://provider.example/sub/token'],

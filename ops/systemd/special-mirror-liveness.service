@@ -1,0 +1,10 @@
+[Unit]
+Description=Dial every mirror endpoint and record which ones answered
+Documentation=https://github.com/special-router/special-bot/blob/main/docs/MIRROR-PROVIDER-AUDIT.md
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+TimeoutStartSec=600
+ExecStart=/usr/bin/docker exec special-bot-monitoring-1 python manage.py probe_mirror_liveness
