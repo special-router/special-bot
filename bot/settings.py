@@ -35,7 +35,12 @@ SECRET_KEY = env.str('SECRET_KEY', 'django-insecure-local-development-only')
 DEBUG = env.bool('DEBUG', False)
 ALLOWED_HOSTS = env.list(
     'ALLOWED_HOSTS',
-    default=['localhost', '127.0.0.1', '0.0.0.0', 'sub.special-wifi.ru', 'cfg.special-wifi.ru'],
+    default=[
+        'localhost', '127.0.0.1', '0.0.0.0',
+        'special-wifi.link', 'panel.special-wifi.link', 'vpn.special-wifi.link',
+        # Compatibility-only until the seven-day zero-traffic retirement gate.
+        'sub.special-wifi.ru', 'cfg.special-wifi.ru',
+    ],
 )
 
 # TLS терминирует nginx на другом хосте, поэтому до gunicorn запрос доезжает
@@ -55,7 +60,10 @@ ALLOWED_HOSTS = env.list(
 # DOCKER-USER на BOT пропускает 8001 только с адреса NL и localhost, остальное
 # DROP. Откроется порт наружу — заголовок станет подделываемым.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=['https://sub.special-wifi.ru'])
+CSRF_TRUSTED_ORIGINS = env.list(
+    'CSRF_TRUSTED_ORIGINS',
+    default=['https://panel.special-wifi.link', 'https://sub.special-wifi.ru'],
+)
 
 
 # Application definition
@@ -392,6 +400,11 @@ BOT_ADMIN_TELEGRAM_IDS = env.list('BOT_ADMIN_TELEGRAM_IDS', cast=int, default=[]
 SUBSCRIPTION_CONNECTOR_ENABLED = env.bool('SUBSCRIPTION_CONNECTOR_ENABLED', False)
 SUBSCRIPTION_DELIVERY_ENABLED = env.bool('SUBSCRIPTION_DELIVERY_ENABLED', False)
 SUBSCRIPTION_BASE_URL = env.str('SUBSCRIPTION_BASE_URL', env.str('SUB_URL', ''))
+
+# Public data-plane host for the locally rendered direct fallback. This must
+# never be inferred from ``Server.vpn_url``: that field is the control-plane
+# panel URL and may move independently or carry a private path.
+SUBSCRIPTION_DIRECT_VPN_HOST = env.str('SUBSCRIPTION_DIRECT_VPN_HOST', '')
 
 # Port advertised for the direct NL endpoint. The inbound itself may listen on
 # a private port behind the shared SNI-routed 443 listener, so what clients are

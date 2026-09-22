@@ -242,6 +242,16 @@ class ScreenGuaranteesTests(IsolatedAsyncioTestCase):
         self.assertEqual(emitted, set(EXPECTED_CALLBACK_DATA))
 
     @override_settings(TELEGRAM_BUTTON_ICONS_ENABLED=False)
+    async def test_subscription_screen_exposes_router_code_navigation(self):
+        _text, keyboard = (await self.build_every_screen())['subscription']
+        buttons = [button for row in keyboard.inline_keyboard for button in row]
+
+        router = [button for button in buttons if button.callback_data == 'router_activation']
+        self.assertEqual(len(router), 1)
+        self.assertEqual(router[0].text, 'Код для роутера')
+        self.assertEqual(buttons[-1].callback_data, 'show_keys')
+
+    @override_settings(TELEGRAM_BUTTON_ICONS_ENABLED=False)
     async def test_screens_escape_markup_characters_in_values(self):
         """Режим HTML: неэкранированный `&` в ссылке ломает всё сообщение."""
         screens = await self.build_every_screen()

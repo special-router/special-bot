@@ -1460,14 +1460,26 @@ def subscription_proxy(request, sub_id: str):
     if canary_relay_link:
         canary_parts = urlsplit(canary_relay_link)
         relay_host, relay_port = canary_parts.hostname or '', canary_parts.port or params['port']
-    # Config delivery and the VPN data plane deliberately use different hosts.
-    # ``SUBSCRIPTION_BASE_URL`` is CDN-fronted and cannot terminate Reality,
-    # XHTTP or gRPC. The VPN host comes from the server/control-plane record.
+    # Config delivery, panel control-plane and VPN data-plane deliberately use
+    # different hosts. ``SUBSCRIPTION_BASE_URL`` is CDN-fronted and cannot
+    # terminate Reality, XHTTP or gRPC. ``Server.vpn_url`` is the panel URL and
+    # must never leak into a locally rendered client fallback.
     sub_domain = settings_relays().SUBSCRIPTION_BASE_URL.split('/')[2].split(':')[0]
-    direct_host = str(getattr(server, 'vpn_url', '') or '').strip()
+    configured_direct_host = str(
+        getattr(settings_relays(), 'SUBSCRIPTION_DIRECT_VPN_HOST', '') or '').strip()
+    direct_host = ''
     try:
-        parsed_vpn_url = urlsplit(direct_host if '://' in direct_host else f'https://{direct_host}')
-        direct_host = parsed_vpn_url.hostname or ''
+        parsed_direct_host = urlsplit(
+            configured_direct_host
+            if '://' in configured_direct_host
+            else f'//{configured_direct_host}'
+        )
+        if not (
+            parsed_direct_host.username or parsed_direct_host.password
+            or parsed_direct_host.path not in ('', '/')
+            or parsed_direct_host.query or parsed_direct_host.fragment
+        ):
+            direct_host = parsed_direct_host.hostname or ''
     except ValueError:
         direct_host = ''
     if not direct_host:

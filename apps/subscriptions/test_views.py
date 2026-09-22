@@ -302,6 +302,45 @@ class BackupGateTests(SimpleTestCase):
 
 class LegacySubscriptionTests(SimpleTestCase):
     @override_settings(
+        SUBSCRIPTION_BASE_URL='https://delivery.example/sub',
+        SUBSCRIPTION_DIRECT_VPN_HOST='vpn.data.example',
+        SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=False,
+        SUBSCRIPTION_BASE64_RELAY_ENABLED=False,
+        SUBSCRIPTION_STATUS_ENTRY_ENABLED=False,
+    )
+    @patch('apps.subscriptions.views._panel_links', return_value=None)
+    @patch('apps.subscriptions.views._get_params')
+    @patch('apps.subscriptions.views.TelegramUser.objects')
+    @patch('apps.subscriptions.views.UserVPN.objects')
+    def test_direct_fallback_never_uses_the_control_plane_url(
+        self, user_vpn_objects, telegram_user_objects, get_params, _panel_links,
+    ):
+        user_vpn_objects.select_related.return_value.get.return_value = SimpleNamespace(
+            id=1, enabled=True,
+            server=SimpleNamespace(
+                id=1, inbound_id=5, client_vpn_host='', tariff=None,
+                vpn_url='https://panel.control.example/private-path',
+                ip_address='192.0.2.10',
+            ),
+            user_id=1,
+            vpn_uuid='synthetic-local-id',
+        )
+        telegram_user_objects.annotate_balance.return_value.filter.return_value.first.return_value = None
+        get_params.return_value = {
+            'public_key': 'synthetic-public-key', 'server_name': 'sni.example',
+            'short_ids': ['synthetic-short-id'], 'port': 8443, 'network': 'tcp',
+        }
+
+        response = views.subscription_proxy(
+            RequestFactory().get('/sub/synthetic'), 'synthetic')
+        document = base64.b64decode(response.content).decode()
+        links = document.splitlines()
+
+        self.assertEqual(urlsplit(links[0]).hostname, 'vpn.data.example')
+        self.assertNotIn('panel.control.example', document)
+        self.assertNotIn('delivery.example', document)
+
+    @override_settings(
         SUBSCRIPTION_BASE_URL='https://direct.example/sub',
         SUBSCRIPTION_BACKUP_ENDPOINTS_ENABLED=False,
         SUBSCRIPTION_BASE64_RELAY_ENABLED=False,

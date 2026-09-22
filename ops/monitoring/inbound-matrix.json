@@ -17,8 +17,22 @@
     "target_region": "nl-main",
     "host": "sub.special-wifi.ru",
     "port": 443,
-    "transport": "https-subscription-sni",
-    "name": "subscription-sni"
+    "transport": "https-compatibility-sni",
+    "name": "old-domain-compatibility"
+  },
+  {
+    "target_region": "nl-main",
+    "host": "panel.special-wifi.link",
+    "port": 8843,
+    "transport": "https-remnawave-control-plane",
+    "name": "remnawave-panel"
+  },
+  {
+    "target_region": "nl-main",
+    "host": "vpn.special-wifi.link",
+    "port": 443,
+    "transport": "vpn-data-plane-sni",
+    "name": "vpn-data-plane"
   },
   {
     "target_region": "nl-main",

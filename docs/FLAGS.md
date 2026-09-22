@@ -20,8 +20,8 @@ Shipped-but-inert features are listed together in
 |---|---|---|---|---|
 | `SECRET_KEY` | str | `django-insecure-local-development-only` | ? | Django signing key. The default is a development placeholder and must never run in production. |
 | `DEBUG` | bool | `False` | `false` | Django debug mode. |
-| `ALLOWED_HOSTS` | list | `localhost,127.0.0.1,0.0.0.0,sub.special-wifi.ru` | ? | Host header allowlist. The subscription hostname is in the default because NL proxies to BOT with that `Host`. |
-| `CSRF_TRUSTED_ORIGINS` | list | `https://sub.special-wifi.ru` | default | Origins allowed to POST. **Without the entry, the admin login answers 403 CSRF** — the browser sends `Origin: https://…` and nothing matches. `ALLOWED_HOSTS` does not cover it: Django compares the whole origin, scheme included. Add a new admin hostname here at the same time as there. |
+| `ALLOWED_HOSTS` | list | canonical `.link` hosts plus old compatibility hosts | ? | Host header allowlist. Old hosts stay only until the seven-day zero-traffic gate in `DOMAIN-RETIREMENT.md`. |
+| `CSRF_TRUSTED_ORIGINS` | list | new panel origin plus old compatibility origin | default | Origins allowed to POST. **Without the entry, the admin login answers 403 CSRF** — the browser sends `Origin: https://…` and nothing matches. `ALLOWED_HOSTS` does not cover it: Django compares the whole origin, scheme included. |
 | `DATABASE_URL` | db url | `postgres://vpnbot:vpnbot@:5432/vpnbot` | ? | Tests override this with `sqlite:///:memory:`. |
 | `TIME_ZONE` | str | `UTC` | ? | Read only to set `CELERY_TIMEZONE`; Django's own `TIME_ZONE` is hardcoded `UTC`. |
 | `DJANGO_LOG_LEVEL` | str | `INFO` | ? | Root logger level. `httpx`, `httpcore`, `py3xui` and `urllib3` stay pinned at `WARNING` regardless — they log the secret panel path at `INFO`. |
@@ -70,6 +70,7 @@ Shipped-but-inert features are listed together in
 | `SUBSCRIPTION_CONNECTOR_ENABLED` | bool | `False` | `true` | Allows creating/assigning `subId` in 3x-ui. `prepare_xui_subscriptions --apply` refuses without it. |
 | `SUBSCRIPTION_DELIVERY_ENABLED` | bool | `False` | `true` | Makes the bot issue subscription URLs instead of direct `vless://` keys, and registers the `/subscription` handler. Off falls back to the stored direct key. |
 | `SUBSCRIPTION_BASE_URL` | str | falls back to `SUB_URL`, then empty | `https://cfg.special-wifi.ru/sub/` | Public config-delivery base, CDN-proxied and deliberately separate from VPN endpoints. `subscription_proxy` takes the Direct hostname from it only when panel endpoints are disabled. |
+| `SUBSCRIPTION_DIRECT_VPN_HOST` | str | empty | `vpn.special-wifi.link` | Public owned data-plane hostname for locally rendered Direct fallbacks. Never derived from `Server.vpn_url`, which is the panel control-plane URL. |
 | `SUB_URL` | str | empty | ? | Legacy alias, read only as the fallback for `SUBSCRIPTION_BASE_URL`. |
 | `SUBSCRIPTION_DIRECT_ADVERTISED_PORT` | int | `0` | ? | Port advertised for NL Direct. Zero advertises the inbound's own port. Exists because xray may bind privately behind the shared SNI-routed `:443`. |
 | `MIRROR_INBOUND_IDS` | json | `[]` | **`[]`** | Inbound ids whose client `enable`/`subId` state mirrors the primary inbound. Add/remove/enable/disable propagate to every id listed. **Read from the running container 2026-08-13: empty, not `[14]` as this row claimed.** Inbound 14 is disabled and holds 79 clients with no email; nothing mirrors to it today. |
