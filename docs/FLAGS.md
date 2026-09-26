@@ -148,8 +148,9 @@ environment; they come from a mode-0600 JSON file on the host.
 
 ## Provider aggregator ingestion
 
-This is the new out-of-band A-Service/VPNStar path. It writes quarantined
-canonical inventory and never fetches an upstream inside a customer request.
+This is the separate provider-inventory path. Public A-Service, VPNStar and
+Lunaire delivery instead uses immutable snapshots refreshed every five minutes
+by `provider_ingest`; customer requests never fetch an upstream.
 
 | Setting | Type | Default | Prod | What it does |
 |---|---|---|---|---|
@@ -272,7 +273,7 @@ Live since **2026-08-21**; see [`REMNAWAVE-MIGRATION.md`](REMNAWAVE-MIGRATION.md
 | `SUBSCRIPTION_XRAY_JSON_ROLLED_OUT_CLIENTS` | json | `[]` | set | Client apps the format is confirmed on (`happ`, `v2rayng`). Separate from the per-person list because the risk differs: not "too early for this person" but "this app parses the document its own way". |
 | `SUBSCRIPTION_XRAY_JSON_ALL_USERS_ENABLED` | bool | `False` | **`true`** | Opens the format to everyone. Deliberately a separate flag so it is never turned on merely as a side effect of enabling the branch. |
 | `SUBSCRIPTION_XRAY_JSON_INCLUDE_OWN_PROFILE` | bool | `True` | **`false`** | Keeps the owned NL profile in Happ/v2rayNG JSON. When disabled, the renderer hides it only after at least one provider profile was built; an empty or failed provider set restores the owned profile so the subscription response cannot become empty. |
-| `SUBSCRIPTION_XRAY_JSON_GLOBAL_AUTO_PROFILE_ENABLED` | bool | `False` | **`true`** | Prepends one `🌐 Автовыбор` profile whose `leastLoad` balancer chooses across every admitted live outbound from the reconstructed A-Service and VPNStar pool. It has no `maxRTT`, so a fresh client's still-unmeasured candidates do not collapse the profile to N/A. With fewer than two valid outbounds the profile is omitted; country profiles and the owned emergency fallback remain unchanged. Native third-party profile graphs are not merged into it. |
+| `SUBSCRIPTION_XRAY_JSON_GLOBAL_AUTO_PROFILE_ENABLED` | bool | `False` | **`true`** | Prepends one `🌐 Автовыбор` profile whose `leastLoad` balancer chooses across every admitted live outbound from all enabled provider snapshots. It has no `maxRTT`, so a fresh client's still-unmeasured candidates do not collapse the profile to N/A. With fewer than two valid outbounds the profile is omitted; country profiles and the owned emergency fallback remain unchanged. Native third-party profile graphs are not merged into it. |
 | `SUBSCRIPTION_XRAY_JSON_NATIVE_MIRRORS_ENABLED` | bool | `False` | `false` | For Happ only, preserve every validated upstream Xray profile as a complete graph — DNS, local client adapters, routing rules, balancers, loopback fallback, observatory and provider outbounds — instead of rebuilding country profiles from extracted links. Failure falls back to the bounded reconstructed profiles; it never shortens the response. Separate default-off gate because this is executable third-party configuration and must be canaried independently of the raw-JSON format itself. |
 | `SUBSCRIPTION_XRAY_JSON_NATIVE_MIRROR_USER_AGENT` | str | `Happ/2.9.0` | unset | Fixed validated format selector used only for the provider fetch. It is never copied from the customer's request; malformed or non-Happ values disable native preservation rather than selecting an arbitrary upstream format. |
 

@@ -13,6 +13,8 @@ LINE_A = ('vless://11111111-2222-3333-4444-555555555555@192.0.2.10:443?'
           'type=tcp&security=reality&sni=example.test&pbk=public-key&sid=abcdef01#%F0%9F%87%A9%F0%9F%87%AA+Germany')
 LINE_B = ('vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@192.0.2.11:443?'
           'type=tcp&security=reality&sni=example.test&pbk=public-key&sid=abcdef01#%F0%9F%87%AF%F0%9F%87%B5+Japan')
+LINE_C = ('vless://12345678-1234-1234-1234-123456789abc@192.0.2.12:443?'
+          'type=tcp&security=reality&sni=example.test&pbk=public-key&sid=abcdef01#%F0%9F%87%AB%F0%9F%87%B7+France')
 MANIFEST = [
     {'id': 'a-service', 'adapter': 'subscription', 'host': 'a.example', 'enabled': True},
     {'id': 'vpnstar', 'adapter': 'subscription', 'host': 'b.example', 'enabled': True},
@@ -60,6 +62,42 @@ class ProviderSnapshotTests(SimpleTestCase):
         provider_snapshots._publish_scope(('a-service', 'vpnstar'))
 
         self.assertEqual(views._backup_links(), [LINE_B])
+
+    def test_three_sources_keep_independent_last_known_good_on_refresh_failure(self):
+        manifest = MANIFEST + [
+            {'id': 'lunaire', 'adapter': 'subscription', 'host': 'c.example', 'enabled': True},
+        ]
+        with override_settings(
+            SUBSCRIPTION_BACKUP_PROVIDER_MANIFEST=manifest,
+            SUBSCRIPTION_BACKUP_UPSTREAM_URLS=[
+                'https://a.example/sub/a', 'https://b.example/sub/b', 'https://c.example/sub/c',
+            ],
+            SUBSCRIPTION_BACKUP_MAX_MIRROR_ENTRIES=192,
+        ):
+            provider_snapshots._publish('a-service', [LINE_A])
+            provider_snapshots._publish('vpnstar', [LINE_B])
+            provider_snapshots._publish('lunaire', [LINE_C])
+            provider_snapshots._publish_scope(('a-service', 'vpnstar', 'lunaire'))
+            before = (Path(self.directory.name) / 'current-lunaire.json').read_bytes()
+
+            def fetch(url, *, user_agent):
+                if url.endswith('/c'):
+                    raise OSError('provider bearer detail')
+                return {}, b'a' if url.endswith('/a') else b'b'
+
+            with patch.object(views, '_fetch_upstream_payload', side_effect=fetch), \
+                    patch.object(views, '_sanitize_upstream_payload',
+                                 side_effect=lambda payload, headers: [LINE_A if payload == b'a' else LINE_B]):
+                result = provider_snapshots.refresh_provider_snapshots()
+
+            self.assertEqual([result[key]['ok'] for key in ('a-service', 'vpnstar', 'lunaire')],
+                             [True, True, False])
+            self.assertNotIn('provider bearer detail', json.dumps(result))
+            self.assertEqual((Path(self.directory.name) / 'current-lunaire.json').read_bytes(), before)
+            self.assertEqual(views._backup_links(), [LINE_A, LINE_B, LINE_C])
+            router = build_router_config()
+            self.assertEqual(router['outbounds'][0]['tag'], 'GLOBAL AUTO')
+            self.assertEqual(len(router['outbounds'][0]['outbounds']), 3)
 
     def test_public_reader_removes_snapshot_endpoint_with_fresh_dead_verdict(self):
         provider_snapshots._publish('a-service', [LINE_A])

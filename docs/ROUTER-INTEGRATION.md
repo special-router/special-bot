@@ -3,7 +3,7 @@
 Status: **frozen v1**. Canonical base URL: `https://special-wifi.link`.
 
 The router consumes a ready-to-run sing-box JSON document. It never downloads,
-parses, merges, or assigns trust to A-Service, VPNStar, panel subscriptions, or
+parses, merges, or assigns trust to A-Service, VPNStar, Lunaire, panel subscriptions, or
 any other provider format. Provider ingestion and filtering are server-side
 responsibilities.
 
